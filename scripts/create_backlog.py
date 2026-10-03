@@ -7,6 +7,7 @@ Usage:
 Requires the GitHub CLI (`gh auth login` with repo scope). Idempotent for labels
 and milestones; issues are created once, so run it against an empty issue list.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -22,7 +23,8 @@ BACKLOG = Path(__file__).with_name("backlog.json")
 def gh(args: list[str], dry_run: bool) -> str:
     cmd = ["gh", *args]
     if dry_run:
-        print("DRY  " + " ".join(cmd if len(" ".join(cmd)) < 200 else cmd[:6] + ["..."]))
+        shown = cmd if len(" ".join(cmd)) < 200 else [*cmd[:6], "..."]
+        print("DRY  " + " ".join(shown))
         return ""
     out = subprocess.run(cmd, check=True, capture_output=True, text=True)
     return out.stdout.strip()
@@ -30,8 +32,21 @@ def gh(args: list[str], dry_run: bool) -> str:
 
 def ensure_labels(repo: str, labels: list[dict], dry_run: bool) -> None:
     for label in labels:
-        gh(["label", "create", label["name"], "--repo", repo, "--color", label["color"],
-            "--description", label["description"], "--force"], dry_run)
+        gh(
+            [
+                "label",
+                "create",
+                label["name"],
+                "--repo",
+                repo,
+                "--color",
+                label["color"],
+                "--description",
+                label["description"],
+                "--force",
+            ],
+            dry_run,
+        )
 
 
 def ensure_milestones(repo: str, milestones: list[dict], dry_run: bool) -> None:
@@ -42,13 +57,36 @@ def ensure_milestones(repo: str, milestones: list[dict], dry_run: bool) -> None:
     for m in milestones:
         if m["title"] in existing:
             continue
-        gh(["api", f"repos/{repo}/milestones", "-f", f"title={m['title']}",
-            "-f", f"due_on={m['due']}T23:59:59Z", "-f", f"description={m['description']}"], dry_run)
+        gh(
+            [
+                "api",
+                f"repos/{repo}/milestones",
+                "-f",
+                f"title={m['title']}",
+                "-f",
+                f"due_on={m['due']}T23:59:59Z",
+                "-f",
+                f"description={m['description']}",
+            ],
+            dry_run,
+        )
 
 
-def create_issue(repo: str, title: str, body: str, labels: list[str], milestone: str, dry_run: bool) -> int:
-    args = ["issue", "create", "--repo", repo, "--title", title, "--body", body,
-            "--milestone", milestone]
+def create_issue(
+    repo: str, title: str, body: str, labels: list[str], milestone: str, dry_run: bool
+) -> int:
+    args = [
+        "issue",
+        "create",
+        "--repo",
+        repo,
+        "--title",
+        title,
+        "--body",
+        body,
+        "--milestone",
+        milestone,
+    ]
     for label in labels:
         args += ["--label", label]
     url = gh(args, dry_run)
@@ -73,30 +111,59 @@ def main() -> int:
     milestone_by_phase = {e["phase"]: e["milestone"] for e in data["epics"]}
     epic_numbers: dict[int, int] = {}
     for epic in data["epics"]:
-        number = create_issue(args.repo, epic["title"], epic["body"],
-                              [f"phase:{epic['phase']}", "type:epic"], epic["milestone"], args.dry_run)
+        number = create_issue(
+            args.repo,
+            epic["title"],
+            epic["body"],
+            [f"phase:{epic['phase']}", "type:epic"],
+            epic["milestone"],
+            args.dry_run,
+        )
         epic_numbers[epic["phase"]] = number
 
     children: dict[int, list[tuple[int, str]]] = {p: [] for p in milestone_by_phase}
     for issue in data["issues"]:
-        labels = [f"phase:{issue['phase']}", f"type:{issue['type']}", f"size:{issue['size']}",
-                  f"model:{issue['model']}", "status:ready"]
-        epic_ref = f"\n\nEpic: #{epic_numbers[issue['phase']]}" if not args.dry_run else ""
-        number = create_issue(args.repo, issue["title"], issue["body"] + epic_ref, labels,
-                              milestone_by_phase[issue["phase"]], args.dry_run)
+        labels = [
+            f"phase:{issue['phase']}",
+            f"type:{issue['type']}",
+            f"size:{issue['size']}",
+            f"model:{issue['model']}",
+            "status:ready",
+        ]
+        epic_ref = "" if args.dry_run else f"\n\nEpic: #{epic_numbers[issue['phase']]}"
+        number = create_issue(
+            args.repo,
+            issue["title"],
+            issue["body"] + epic_ref,
+            labels,
+            milestone_by_phase[issue["phase"]],
+            args.dry_run,
+        )
         children[issue["phase"]].append((number, issue["title"]))
         print(f"created #{number or issue['id']}: {issue['title']}")
 
     if args.dry_run:
-        print(f"\nDry run: {len(data['epics'])} epics, {len(data['issues'])} issues, "
-              f"{len(data['labels'])} labels, {len(data['milestones'])} milestones.")
+        print(
+            f"\nDry run: {len(data['epics'])} epics, {len(data['issues'])} issues, "
+            f"{len(data['labels'])} labels, {len(data['milestones'])} milestones."
+        )
         return 0
 
     for phase, epic_number in epic_numbers.items():
         epic = next(e for e in data["epics"] if e["phase"] == phase)
         task_list = "\n".join(f"- [ ] #{n} {t}" for n, t in children[phase])
-        gh(["issue", "edit", str(epic_number), "--repo", args.repo,
-            "--body", epic["body"] + "\n\n## Children\n\n" + task_list], False)
+        gh(
+            [
+                "issue",
+                "edit",
+                str(epic_number),
+                "--repo",
+                args.repo,
+                "--body",
+                epic["body"] + "\n\n## Children\n\n" + task_list,
+            ],
+            False,
+        )
         print(f"linked {len(children[phase])} children to epic #{epic_number}")
     return 0
 

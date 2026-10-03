@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Bootstrap the Cograil repository on GitHub: labels, milestones, epics, issues, project board, rulesets.
-# Prerequisites: gh auth login (scopes: repo, project, workflow); an empty public repo already created.
+# Prerequisites: gh auth login -h github.com -s project,workflow; the repo already pushed.
 # Usage: scripts/bootstrap_github.sh cognitive-builder/cograil
 set -euo pipefail
 
@@ -8,11 +8,20 @@ REPO="${1:-cognitive-builder/cograil}"
 OWNER="${REPO%%/*}"
 TITLE="Cograil Roadmap"
 
+# Refuse before creating anything if gh lacks the project scope (issues are not idempotent).
+auth_info="$(gh auth status 2>&1 || true)"
+case "$auth_info" in
+  *"'project'"*) ;;
+  *) echo "gh is missing the 'project' scope. Run: gh auth refresh -h github.com -s project,workflow"; exit 1 ;;
+esac
+if [ -n "$(gh issue list --repo "$REPO" --state all --limit 1 --json number --jq '.[].number')" ]; then
+  echo "$REPO already has issues; this script creates the backlog once. Stopping so nothing is duplicated."; exit 1
+fi
+
 echo "== 1. backlog: labels, milestones, epics, issues"
 python3 "$(dirname "$0")/create_backlog.py" --repo "$REPO"
 
 echo "== 2. project board"
-gh auth refresh -s project --hostname github.com >/dev/null 2>&1 || true
 PROJECT_NUMBER=$(gh project list --owner "$OWNER" --format json --limit 50 \
   | python3 -c "import json,sys; ps=[p for p in json.load(sys.stdin).get('projects',[]) if p['title']=='$TITLE']; print(ps[0]['number'] if ps else '')")
 if [ -z "$PROJECT_NUMBER" ]; then
@@ -38,11 +47,12 @@ gh issue list --repo "$REPO" --state open --limit 200 --json url --jq '.[].url' 
 done
 
 echo "== 5. ruleset on main (require PR, CI and review checks)"
-gh api -X POST "repos/$REPO/rulesets" --input - >/dev/null 2>&1 << 'JSON' || echo "ruleset exists or needs admin; configure in Settings > Rules"
+gh api -X POST "repos/$REPO/rulesets" --input - >/dev/null << 'JSON' || echo "ruleset not created (see error above); configure it in Settings > Rules"
 {
   "name": "main",
   "target": "branch",
   "enforcement": "active",
+  "bypass_actors": [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}],
   "conditions": {"ref_name": {"include": ["refs/heads/main"], "exclude": []}},
   "rules": [
     {"type": "deletion"},

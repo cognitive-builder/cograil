@@ -4,6 +4,7 @@ Vocabulary: Workspace, Colleague, Protocol, Step, Tool, Connection, Audience,
 Trigger, Run, Gate, Approval, AuditEvent, KnowledgeSource, Chunk.
 Issue 1 completes this module; the shapes below are the contract.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -18,7 +19,7 @@ class Entity(BaseModel):
 
 
 class Connection(Entity):
-    """How a Tool authenticates. Secrets are referenced by environment variable name, never stored."""
+    """How a Tool authenticates. Secrets are referenced by env var name, never stored."""
 
     name: str
     auth: Literal["none", "api_key", "oauth_client_credentials", "oidc_on_behalf_of"]
@@ -140,8 +141,16 @@ class AuditEvent(Entity):
     at: datetime
     principal_id: str
     kind: Literal[
-        "run.started", "tool.called", "decision.evaluated", "gate.paused", "gate.resumed",
-        "tier.escalated", "loop.bounded", "run.escalated", "run.completed", "run.failed",
+        "run.started",
+        "tool.called",
+        "decision.evaluated",
+        "gate.paused",
+        "gate.resumed",
+        "tier.escalated",
+        "loop.bounded",
+        "run.escalated",
+        "run.completed",
+        "run.failed",
     ]
     detail: dict[str, Any] = Field(default_factory=dict)
 

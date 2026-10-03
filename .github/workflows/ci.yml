@@ -40,4 +40,5 @@ jobs:
       - name: Unit tests
         run: uv run pytest -q -m "not integration and not live"
       - name: Integration tests
-        run: uv run pytest -q -m integration
+        # pytest exits 5 when no tests match; that is fine until integration tests exist
+        run: uv run pytest -q -m integration || [ $? -eq 5 ]
