@@ -39,10 +39,26 @@ body:
     validations:
       required: true
   - type: dropdown
-    id: model
+    id: lane
     attributes:
-      label: Suggested model
-      options: ["sonnet (default)", "opus (architecture or tricky logic)"]
+      label: Lane
+      description: Decides the model, the effort and where the work runs (CLAUDE.md, Lanes and Helpers).
+      options:
+        - "Lane 2: Sonnet 5.5, high (standard feature)"
+        - "Lane 1: Opus 5.5, Ultracode (runner, gates, registry, access, evals, security)"
+        - "Lane 3: GLM via @claude on GitHub (docs and small chores)"
+    validations:
+      required: true
+  - type: dropdown
+    id: testing
+    attributes:
+      label: Testing needed
+      description: Proportionate testing (CLAUDE.md, Testing Budget). GitHub runs the full suite on every pull request.
+      options:
+        - "Tests for the touched modules (default)"
+        - "Safety tests required (runner, gates, registry, access filtering)"
+        - "End-to-end required (also add the needs:e2e label)"
+        - "No tests (docs or config only)"
   - type: textarea
     id: out
     attributes:

@@ -50,6 +50,10 @@ src/cograil/
   knowledge/       loaders, chunking, pgvector search with ACL pre-filter
   observability.py OpenTelemetry spans and cost attributes
   cli.py           cograil run | validate | approve | eval
+.claude/
+  agents/          role helpers with their models (scout, checker, reviewer, writer, architect)
+  hooks/           test_budget.py: the per-session test budget guard
+scripts/check.sh   the one test command for sessions
 workspaces/        example packs (never real client data)
 tests/             mirrors src/; evals/ holds JSONL golden sets
 docs/              Product Plan, architecture, ADRs, MkDocs site
@@ -59,13 +63,49 @@ docs/              Product Plan, architecture, ADRs, MkDocs site
 
 ```bash
 uv sync                                   # install
-uv run ruff format . && uv run ruff check .
-uv run mypy src/
-uv run pytest -q                          # unit tests, no Postgres needed
-docker compose up -d postgres && uv run pytest -q -m integration
+scripts/check.sh quick                    # while working: changed files only
+scripts/check.sh full                     # once, before the pull request
+scripts/check.sh e2e                      # only when the issue is labelled needs:e2e
+docker compose up -d postgres && uv run pytest -m integration   # local only; GitHub runs these
 uv run cograil validate workspaces/example-smb
 uv run cograil run workspaces/example-smb --protocol leave_request --as alice@example.com
 ```
+
+## Lanes and Helpers
+
+Every task carries a lane label. Use the model and effort the lane names, and never change either during a session: both are part of the saved-context key, and switching makes the session pay to re-read everything.
+
+| Lane | Session | For |
+| --- | --- | --- |
+| `lane:1` | Opus 5.5, Ultracode | runner, gates, registry, access filtering, evals, security |
+| `lane:2` | Sonnet 5.5, high (the repo default) | standard features |
+| `lane:3` | GLM via `@claude` on GitHub, no cloud session | docs and small chores |
+
+Delegate to the helpers in `.claude/agents/` instead of doing their work in the main session:
+
+- `scout` (Haiku): finds and reads code; returns a short brief with paths.
+- `checker` (Haiku): runs `scripts/check.sh`; returns a short pass or fail summary.
+- `reviewer` (Sonnet): reviews the diff against this file before the pull request.
+- `writer` (Sonnet): documentation and ADR prose.
+- `architect` (Opus): only for decisions that would change an ADR or cross modules.
+
+When calling a helper without a definition, pass `model: haiku` for reading or searching and `model: sonnet` for implementation pieces. Read only what the issue links to; do not read `docs/Product Plan.md` unless the issue links a section of it. Stop when the pull request is open.
+
+## Testing Budget
+
+Test in proportion to the change. GitHub runs the full suite, the integration tests and the end-to-end tests on every pull request at no cost to the credit, so a session runs the smallest check that proves its change.
+
+| Change | While working | Once, before the pull request | End-to-end |
+| --- | --- | --- | --- |
+| Docs or config only | nothing | `scripts/check.sh quick` | never |
+| Small fix | that module's tests | `scripts/check.sh quick` | never |
+| Feature | tests for the touched modules | `scripts/check.sh full` | only if labelled `needs:e2e`, once |
+| Safety core (runner, gates, registry, access filtering) | touched modules plus safety tests | `scripts/check.sh full` | only to fix a failure GitHub reported |
+| Tests against real models | never | never | GitHub, on releases |
+
+Writing tests: one test per acceptance criterion; the safety tests (`GateRequired`, `ToolNotAllowed`, access pre-filter) whenever those areas change; no tests of what a library already guarantees; parametrize instead of copying; no new end-to-end tests unless the issue is labelled `needs:e2e`.
+
+Running tests: always through `scripts/check.sh`, preferably via the `checker` helper. A guard (`.claude/hooks/test_budget.py`) blocks runs beyond this session's budget in `.claude/test-budget.json`: 20 targeted, 5 repeats of one command, 2 full, 1 end-to-end, 0 real-model. When it blocks, push and let GitHub run the rest, or stop and report in the pull request. If the same failure survives three attempts, stop and describe it under "Open questions".
 
 ## Coding standards
 
@@ -89,7 +129,7 @@ uv run cograil run workspaces/example-smb --protocol leave_request --as alice@ex
 ## Definition of done
 
 - Acceptance criteria in the issue are checked off in the PR description, each with evidence.
-- `ruff`, `mypy`, `pytest` pass locally; CI is green.
+- `scripts/check.sh full` passes (`quick` for docs or config changes); CI is green.
 - Docs updated when behaviour changed (`docs/`, docstrings, CLI help).
 - An ADR added under `docs/adr/` when a decision in the Product Plan changed; otherwise none.
 - PR title: `<type>: <summary> (#N)` where type is feat, fix, chore, docs, test or refactor.
@@ -101,6 +141,7 @@ uv run cograil run workspaces/example-smb --protocol leave_request --as alice@ex
 - Do not add a dependency without naming it and its licence in the PR body.
 - Do not commit generated files, credentials, `.env` files or client workspaces.
 - Do not push to `main`. Do not force-push.
+- Do not edit `.claude/settings.json`, `.claude/hooks/`, `.claude/test-budget.json` or `.claude/agents/` unless the issue asks for it.
 - Do not call real external systems from tests.
 - Do not implement a Teams adapter, multi-tenancy, a no-code editor or a Temporal backend before v0.5 unless an issue in that milestone asks for it.
 

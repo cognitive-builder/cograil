@@ -201,6 +201,8 @@ sequenceDiagram
 | 0010 | Model tiers, small first | Cost per resolved run and data residency become configuration |
 | 0011 | Protocols compile to explicit graphs | The shape of the work is reviewable without code |
 | 0012 | The harness is versioned configuration | Runs are reproducible; the harness is the unit of improvement |
+| 0013 | Runtime cost discipline | Cheap by default, cost per resolved run as the headline, a cap per client |
+| 0014 | Proportionate testing in build sessions | The credit pays for building; GitHub runs the full test suite for free |
 
 ---
 
@@ -375,6 +377,12 @@ sequenceDiagram
 - The `@claude` workflows (`claude.yml`, `claude-code-review.yml`) run on GitHub Actions and authenticate with either an Anthropic API key or a Claude subscription OAuth token; they are not covered by the promotional credit. Use the OAuth token so reviews count against the Max plan quota rather than API spend, and keep review prompts short.
 - Routines and Projects on claude.ai/code are excluded from the promotional credit per the offer terms, so scheduled automation waits until after November 4.
 - Measure after the first three sessions: note the balance, compute cost per issue by size, and rebalance the per-phase budget. The plan assumes a medium issue costs single-digit dollars and a large one costs low double digits; treat that as a hypothesis until measured.
+
+### Lanes, Helpers and Test Budget (Change 03)
+
+Every task carries a lane. Lane 1 (10 tasks: runner, gates, registry, access filtering, evals, security) runs on Opus 5.5 with Ultracode. Lane 2 (27 tasks) runs on Sonnet 5.5 at high effort, the repo default. Lane 3 (11 tasks: docs and small chores) runs through `@claude` on GitHub with GLM, using none of the credit. Inside sessions, role helpers in `.claude/agents/` do the cheap work: scout and checker on Haiku, reviewer and writer on Sonnet, architect on Opus for rare design questions. Testing follows the Testing Budget in `CLAUDE.md`, enforced by `.claude/hooks/test_budget.py` (ADR 0014).
+
+Credit targets, to be replaced by measured numbers after the first three sessions: Lane 1 about $11 per task, Lane 2 about $3.75, Lane 3 $0, with $40 held in reserve. Every session's cost goes in the pinned Credit Ledger issue.
 
 ### Session hygiene
 

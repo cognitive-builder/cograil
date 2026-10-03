@@ -33,7 +33,14 @@ mcp = ["fastmcp>=2.0"]
 cograil = "cograil.cli:app"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6", "mypy>=1.11", "types-PyYAML"]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.24",
+  "pytest-timeout>=2.3",
+  "ruff>=0.6",
+  "mypy>=1.11",
+  "types-PyYAML",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -56,8 +63,19 @@ plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Quiet, short and bounded by default; expensive kinds run only when named (ADR 0014).
+addopts = [
+  "-q",
+  "--tb=short",
+  "--maxfail=3",
+  "--disable-warnings",
+  "-m",
+  "not integration and not e2e and not live",
+]
+timeout = 60
 markers = [
   "integration: needs DATABASE_URL",
-  "live: calls a real model provider",
+  "e2e: end to end through the CLI, API and store; GitHub runs these on every pull request",
+  "live: calls a real model provider; releases only",
 ]
 testpaths = ["tests"]
