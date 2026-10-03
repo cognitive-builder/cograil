@@ -1,0 +1,21 @@
+{
+  "model": "sonnet",
+  "effortLevel": "high",
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/test_budget.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

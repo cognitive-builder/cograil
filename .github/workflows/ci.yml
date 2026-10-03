@@ -37,8 +37,12 @@ jobs:
         run: uv run ruff format --check . && uv run ruff check .
       - name: Types
         run: uv run mypy src/
+      # Sessions test in proportion (ADR 0014); GitHub runs everything, in full, for free.
+      # --maxfail=0 lifts the session default of stopping after three failures.
+      # pytest exits 5 when no tests match; that is fine until those tests exist.
       - name: Unit tests
-        run: uv run pytest -q -m "not integration and not live"
+        run: uv run pytest --maxfail=0
       - name: Integration tests
-        # pytest exits 5 when no tests match; that is fine until integration tests exist
-        run: uv run pytest -q -m integration || [ $? -eq 5 ]
+        run: uv run pytest -m integration --maxfail=0 || [ $? -eq 5 ]
+      - name: End-to-end tests
+        run: uv run pytest -m e2e --maxfail=0 || [ $? -eq 5 ]

@@ -1,18 +1,11 @@
 Implement GitHub issue #$ARGUMENTS in this repository.
 
-Before writing code:
-1. Read CLAUDE.md in full.
-2. Read the issue, its acceptance criteria, its Epic, and any ADR or Product Plan section it links.
+1. Read CLAUDE.md, then the issue. Read only the documents the issue links to.
+2. Check the issue's lane label against this session's model and effort (CLAUDE.md, Lanes). If they differ, say so in one line and continue.
 3. Create the branch `claude/issue-$ARGUMENTS-<short-slug>` from `main`.
-
-While working:
-- Stay inside the issue's scope. If you find a second problem, open a new issue and leave it.
-- Follow the Vocabulary and Coding standards sections of CLAUDE.md exactly.
-- Add or update tests first for GateRequired and ToolNotAllowed paths when the change touches the runner, gates or registry.
-- Run `uv run ruff format . && uv run ruff check . && uv run mypy src/ && uv run pytest -q` before opening the PR.
-
-When done:
-- Open a pull request titled `<type>: <summary> (#$ARGUMENTS)` using .github/pull_request_template.md.
-- Tick each acceptance criterion with evidence (command and output summary).
-- List any dependency added with its licence, and any open questions.
-- Do not edit CLAUDE.md, docs/Product Plan.md or ADRs unless the issue asks for it.
+4. Ask the scout helper for the files you need instead of reading widely.
+5. Make the change, with tests in proportion to it (CLAUDE.md, Testing Budget).
+6. Ask the checker helper to run `scripts/check.sh quick` while working, and `scripts/check.sh full` once before the pull request (`quick` only, for docs or config changes).
+7. Ask the reviewer helper to review the diff, and fix everything it marks MUST FIX.
+8. Open the pull request titled `<type>: <summary> (#$ARGUMENTS)` using the template, ticking each acceptance criterion with evidence.
+9. Stop. Do not start other work in this session.

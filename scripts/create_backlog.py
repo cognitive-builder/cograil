@@ -127,9 +127,11 @@ def main() -> int:
             f"phase:{issue['phase']}",
             f"type:{issue['type']}",
             f"size:{issue['size']}",
-            f"model:{issue['model']}",
+            f"lane:{issue['lane']}",
             "status:ready",
         ]
+        if issue.get("e2e"):
+            labels.append("needs:e2e")
         epic_ref = "" if args.dry_run else f"\n\nEpic: #{epic_numbers[issue['phase']]}"
         number = create_issue(
             args.repo,
