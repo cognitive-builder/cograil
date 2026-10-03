@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+*.egg-info/
+dist/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+workspaces/*/.secrets/
+!workspaces/example-*/
+!.env.example

@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: cograil
+          POSTGRES_PASSWORD: cograil
+          POSTGRES_DB: cograil
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U cograil"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+asyncpg://cograil:cograil@localhost:5432/cograil
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --all-extras --dev
+      - name: Lint
+        run: uv run ruff format --check . && uv run ruff check .
+      - name: Types
+        run: uv run mypy src/
+      - name: Unit tests
+        run: uv run pytest -q -m "not integration and not live"
+      - name: Integration tests
+        run: uv run pytest -q -m integration

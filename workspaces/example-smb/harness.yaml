@@ -1,0 +1,21 @@
+version: 1
+loop:
+  max_turns: 6
+  token_budget_per_step: 12000
+  usd_budget_per_run: 0.50
+tiers:
+  small: claude-haiku-4-5
+  standard: claude-sonnet-5-5
+  strong: claude-opus-5-5
+# Alternative provider block for issue 44: the Anthropic SDK honours a base_url, so a
+# "zai" provider is the same adapter pointed at https://api.z.ai/api/anthropic with
+# small: glm-5.1, standard: glm-5.3, strong: glm-5.3.
+context:
+  default_prior_steps: 1
+  compression_threshold_tokens: 2000
+defaults:
+  classification_tier: small
+  judgment_tier: standard
+retry:
+  tool_attempts: 2
+  backoff_seconds: 1

@@ -1,0 +1,26 @@
+name: Bug
+description: Something behaves differently from the Product Plan or CLAUDE.md
+title: "fix: <summary>"
+labels: ["type:bug"]
+body:
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour, with the command and output
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [domain, parser, workspace, registry, runner, gates, store, providers, api, channels, knowledge, observability, cli, docs, ci]

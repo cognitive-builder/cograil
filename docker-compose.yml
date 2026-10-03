@@ -1,0 +1,11 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: cograil
+      POSTGRES_PASSWORD: cograil
+      POSTGRES_DB: cograil
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+volumes:
+  pgdata: {}

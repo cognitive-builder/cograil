@@ -1,0 +1,6 @@
+name: harper
+role: HR Operations Assistant
+escalation_contact: hr-ops@example.com
+model_policy: claude-sonnet-5-5
+audiences: [all-employees]
+protocols: [leave_request, policy_question]

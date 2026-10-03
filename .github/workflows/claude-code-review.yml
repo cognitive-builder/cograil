@@ -1,0 +1,44 @@
+name: Code Review (GLM via Z.AI)
+
+# Reviews every pull request against CLAUDE.md. Required check on main (job id: review).
+# Provider toggle: the env block routes Claude Code at Z.AI's Anthropic-compatible endpoint.
+# To review with Claude instead, delete the env block and set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY.
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+jobs:
+  review:
+    # Fork PRs have no secrets; skip them rather than fail. Review them manually or ask @claude after pulling the branch.
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Review
+        uses: anthropics/claude-code-action@v1
+        env:
+          ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ZAI_API_KEY }}
+          ANTHROPIC_DEFAULT_OPUS_MODEL: glm-5.3
+          ANTHROPIC_DEFAULT_SONNET_MODEL: glm-5.3
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: glm-5.1
+          API_TIMEOUT_MS: "3000000"
+        with:
+          anthropic_api_key: ${{ secrets.ZAI_API_KEY }}
+          prompt: |
+            Review this pull request against CLAUDE.md. Check, in this order:
+            1. Scope: does the PR do only what its linked issue asks?
+            2. Rails: can the model ever call a tool outside the current Step's whitelist, or skip a gate?
+            3. Tests: is every behaviour change covered, including GateRequired and ToolNotAllowed paths?
+            4. Secrets, dependencies, and anything client-specific in src/.
+            5. Naming against the Vocabulary section.
+            Post concise review comments. Approve only if all five pass. Keep it under 300 words.
+          claude_args: "--max-turns 10"

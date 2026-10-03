@@ -1,0 +1,5 @@
+audiences:
+  - name: all-employees
+    groups: [all-employees]
+  - name: managers
+    groups: [managers]

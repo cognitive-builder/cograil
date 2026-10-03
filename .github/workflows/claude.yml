@@ -1,0 +1,48 @@
+name: Claude Code
+
+# Mention @claude in an issue or PR comment to get help, a fix, or an implementation.
+# Provider toggle: routed at Z.AI's Anthropic-compatible endpoint (GLM) via the env block.
+# To use Claude instead, delete the env block and set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  issues:
+    types: [opened, assigned]
+
+jobs:
+  claude:
+    # Public repo: only the owner, members and collaborators may trigger a session that spends quota.
+    if: |
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association || github.event.review.author_association || github.event.issue.author_association) && (
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude'))) )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Run Claude Code
+        uses: anthropics/claude-code-action@v1
+        env:
+          ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ZAI_API_KEY }}
+          ANTHROPIC_DEFAULT_OPUS_MODEL: glm-5.3
+          ANTHROPIC_DEFAULT_SONNET_MODEL: glm-5.3
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: glm-5.1
+          API_TIMEOUT_MS: "3000000"
+        with:
+          anthropic_api_key: ${{ secrets.ZAI_API_KEY }}
+          claude_args: "--max-turns 25"

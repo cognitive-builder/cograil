@@ -1,0 +1,36 @@
+tools:
+  - name: hris.get_balance
+    kind: python
+    scope: read
+    description: Leave balances by type for a principal.
+    args_schema: {type: object, properties: {employee: {type: string}}, required: [employee]}
+  - name: hris.submit_leave
+    kind: python
+    scope: write
+    confirm_before_write: true
+    description: Submit a leave request. Idempotent on request_id.
+    args_schema:
+      type: object
+      properties:
+        employee: {type: string}
+        start: {type: string, format: date}
+        end: {type: string, format: date}
+        leave_type: {type: string}
+        request_id: {type: string}
+      required: [employee, start, end, leave_type, request_id]
+  - name: notify.send
+    kind: python
+    scope: write
+    confirm_before_write: false
+    description: Send a message to a principal or the escalation contact.
+    args_schema: {type: object, properties: {to: {type: string}, message: {type: string}}, required: [to, message]}
+  - name: knowledge.search
+    kind: knowledge
+    scope: read
+    description: Search the policy library with ACL pre-filter.
+    args_schema: {type: object, properties: {query: {type: string}}, required: [query]}
+  - name: decide.approval_routing
+    kind: decision
+    scope: read
+    description: Approval tier from duration, leave type and role (decisions/approval_routing.yaml).
+    args_schema: {type: object, properties: {duration_days: {type: integer}, leave_type: {type: string}, requester_role: {type: string}}, required: [duration_days, leave_type, requester_role]}

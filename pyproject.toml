@@ -1,0 +1,63 @@
+[project]
+name = "cograil"
+version = "0.0.1"
+description = "AI colleagues on process rails: Markdown runbooks executed with tool whitelists, approval gates and an audit trail."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+authors = [{ name = "Shashi (cognitive-builder)" }]
+keywords = ["agents", "runbook", "workflow", "llm", "approval", "audit"]
+dependencies = [
+  "pydantic>=2.9",
+  "httpx>=0.27",
+  "anthropic>=0.40",
+  "langgraph>=0.3",
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "typer>=0.12",
+  "pyyaml>=6.0",
+  "sqlalchemy[asyncio]>=2.0",
+  "asyncpg>=0.29",
+  "alembic>=1.13",
+  "pgvector>=0.3",
+  "opentelemetry-api>=1.27",
+  "opentelemetry-sdk>=1.27",
+]
+
+[project.optional-dependencies]
+slack = ["slack-bolt>=1.21"]
+oidc = ["authlib>=1.3", "itsdangerous>=2.2"]
+mcp = ["fastmcp>=2.0"]
+
+[project.scripts]
+cograil = "cograil.cli:app"
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6", "mypy>=1.11", "types-PyYAML"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cograil"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+  "integration: needs DATABASE_URL",
+  "live: calls a real model provider",
+]
+testpaths = ["tests"]

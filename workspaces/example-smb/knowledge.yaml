@@ -1,0 +1,4 @@
+knowledge:
+  - name: policy-library
+    path: knowledge/policies
+    acl_groups: [all-employees]

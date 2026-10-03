@@ -1,0 +1,50 @@
+name: Task
+description: A unit of work for one Claude Code session
+title: "<type>: <summary>"
+labels: ["status:ready"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: One or two sentences. What exists after this is done?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Links to the Epic, ADRs, the Product Plan section, and anything the session must read first.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Checkboxes. Each one must be verifiable by a test, a command, or a screenshot.
+      value: |
+        - [ ] 
+        - [ ] 
+        - [ ] Tests added or updated
+        - [ ] Docs updated if behaviour changed
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Files likely touched
+  - type: dropdown
+    id: size
+    attributes:
+      label: Size
+      options: ["S (under 1 hour)", "M (half a day)", "L (a day)"]
+    validations:
+      required: true
+  - type: dropdown
+    id: model
+    attributes:
+      label: Suggested model
+      options: ["sonnet (default)", "opus (architecture or tricky logic)"]
+  - type: textarea
+    id: out
+    attributes:
+      label: Out of scope
+      description: What this issue must not do, so the session does not widen scope.

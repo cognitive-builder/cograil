@@ -1,0 +1,581 @@
+{
+  "milestones": [
+    {
+      "title": "v0.1 Rails",
+      "due": "2026-10-13",
+      "description": "First colleague runs end to end locally with a mock HRIS, pauses at a gate, resumes, writes audit rows."
+    },
+    {
+      "title": "v0.2 Gates and Knowledge",
+      "due": "2026-10-20",
+      "description": "Deployed to Cloud Run with Neon, OIDC login, audiences, approval links, knowledge tool with ACL pre-filter."
+    },
+    {
+      "title": "v0.3 Channels and Ops",
+      "due": "2026-10-27",
+      "description": "Slack adapter, OpenTelemetry traces, eval suite with promotion gate, docs site, enterprise example workspace."
+    },
+    {
+      "title": "v0.4 Launch",
+      "due": "2026-11-03",
+      "description": "Security review clean, README, demo, GitHub release, launch post."
+    }
+  ],
+  "labels": [
+    {
+      "name": "phase:0",
+      "color": "ededed",
+      "description": "Bootstrap"
+    },
+    {
+      "name": "phase:1",
+      "color": "0e8a16",
+      "description": "Rails"
+    },
+    {
+      "name": "phase:2",
+      "color": "1d76db",
+      "description": "Gates and Knowledge"
+    },
+    {
+      "name": "phase:3",
+      "color": "5319e7",
+      "description": "Channels and Ops"
+    },
+    {
+      "name": "phase:4",
+      "color": "d93f0b",
+      "description": "Launch"
+    },
+    {
+      "name": "type:epic",
+      "color": "000000",
+      "description": "Phase epic with a task list of child issues"
+    },
+    {
+      "name": "type:feature",
+      "color": "a2eeef",
+      "description": "New behaviour"
+    },
+    {
+      "name": "type:bug",
+      "color": "d73a4a",
+      "description": "Behaviour differs from the plan"
+    },
+    {
+      "name": "type:chore",
+      "color": "fef2c0",
+      "description": "Build, CI, tooling"
+    },
+    {
+      "name": "type:docs",
+      "color": "0075ca",
+      "description": "Documentation"
+    },
+    {
+      "name": "type:spike",
+      "color": "e4e669",
+      "description": "Time-boxed investigation"
+    },
+    {
+      "name": "size:S",
+      "color": "c2e0c6",
+      "description": "Under an hour of session time"
+    },
+    {
+      "name": "size:M",
+      "color": "fbca04",
+      "description": "Half a day"
+    },
+    {
+      "name": "size:L",
+      "color": "b60205",
+      "description": "A day"
+    },
+    {
+      "name": "model:sonnet",
+      "color": "bfdadc",
+      "description": "Default model for the session"
+    },
+    {
+      "name": "model:opus",
+      "color": "6f42c1",
+      "description": "Architecture or tricky logic"
+    },
+    {
+      "name": "status:ready",
+      "color": "0e8a16",
+      "description": "Ready for a session"
+    },
+    {
+      "name": "status:blocked",
+      "color": "b60205",
+      "description": "Waiting on something"
+    },
+    {
+      "name": "good-first-issue",
+      "color": "7057ff",
+      "description": "Good for contributors"
+    }
+  ],
+  "epics": [
+    {
+      "phase": 1,
+      "milestone": "v0.1 Rails",
+      "title": "Epic: Phase 1 Rails (v0.1)",
+      "body": "Exit criteria: `cograil run workspaces/example-smb --protocol leave_request` executes end to end locally with a mock HRIS, pauses at a gate, resumes, writes audit rows; CI green; 80 percent coverage on domain, parser, runner, gates. Credit budget $90. Post the credit balance here after every third merged PR. Phase 1 also carries the harness foundations: bounded loops, per-step context, graph rendering (#40 to #42)."
+    },
+    {
+      "phase": 2,
+      "milestone": "v0.2 Gates and Knowledge",
+      "title": "Epic: Phase 2 Gates and Knowledge (v0.2)",
+      "body": "Exit criteria: deployed to Cloud Run with Neon; OIDC login; audiences enforced; approval page and email link; knowledge tool with ACL pre-filter; run history page. Credit budget $70. Phase 2 adds decision tables, model tiers with a local small-model provider, and compression (#43 to #45)."
+    },
+    {
+      "phase": 3,
+      "milestone": "v0.3 Channels and Ops",
+      "title": "Epic: Phase 3 Channels and Ops (v0.3)",
+      "body": "Exit criteria: Slack adapter; traces in Phoenix; 25 eval cases with a promotion gate in CI; MkDocs site; enterprise example workspace. Credit budget $50. Scope-cut order: Slack adapter, run history page, second workspace."
+    },
+    {
+      "phase": 4,
+      "milestone": "v0.4 Launch",
+      "title": "Epic: Phase 4 Launch (v0.4)",
+      "body": "Exit criteria: security review clean; README with architecture, decisions and limits; 3-minute demo; GitHub release with changelog; launch post. Credit budget $30. Credits expire November 4."
+    }
+  ],
+  "issues": [
+    {
+      "id": 1,
+      "phase": 1,
+      "type": "feature",
+      "size": "M",
+      "model": "sonnet",
+      "title": "feat: domain model in src/cograil/domain.py",
+      "body": "Goal: Pydantic v2 models for Workspace, Colleague, Protocol, Step, Tool, Connection, Audience, Trigger, Run, ToolCall, Approval, AuditEvent, KnowledgeSource, Chunk, with extra=forbid.\n\nAcceptance criteria:\n- [ ] Every entity in docs/Product Plan.md section 3 exists with the fields shown in the ERD\n- [ ] Tool.scope is Literal['read','write']; confirm_before_write defaults to True\n- [ ] Run.status is an Enum: received, planned, running, awaiting_approval, escalated, completed, failed\n- [ ] Round-trip tests: model_dump then model_validate for each entity\n- [ ] mypy --strict clean"
+    },
+    {
+      "id": 2,
+      "phase": 1,
+      "type": "feature",
+      "size": "M",
+      "model": "sonnet",
+      "title": "feat: Protocol parser from Markdown",
+      "body": "Goal: parse a Protocol Markdown file (see workspaces/example-smb/protocols/leave_request.md) into a Protocol.\n\nAcceptance criteria:\n- [ ] Header lines (Protocol, Audience, Manual execution, Scheduled execution, Helpers) parsed into fields\n- [ ] Numbered `N. Step \"Name\": ...` lines parsed into Step with number, name, instruction, tools from @refs\n- [ ] Optional trailing step directive `(context: steps 1, 2; model: small; turns: 4)` parsed into Step.context_steps, Step.model_tier, Step.max_turns (ADR 0011)\n- [ ] `Error handling:` and `Guardrails:` sections captured as lists\n- [ ] Unknown tool references are reported by name, not silently dropped\n- [ ] Tests cover a valid file, a file with no steps, and a step with two tools"
+    },
+    {
+      "id": 3,
+      "phase": 1,
+      "type": "feature",
+      "size": "M",
+      "model": "sonnet",
+      "title": "feat: workspace loader",
+      "body": "Goal: load a workspace folder (colleagues/*.yaml, protocols/*.md, tools.yaml, connections.yaml) into a Workspace.\n\nAcceptance criteria:\n- [ ] Missing required files produce a typed WorkspaceError naming the file\n- [ ] Every @tool referenced by a protocol must exist in tools.yaml, else validation fails with the step and tool name\n- [ ] `cograil validate <path>` exits non-zero on failure\n- [ ] Tests use workspaces/example-smb and a broken fixture"
+    },
+    {
+      "id": 4,
+      "phase": 1,
+      "type": "feature",
+      "size": "L",
+      "model": "opus",
+      "title": "feat: tool registry with python, rest and mcp kinds",
+      "body": "Goal: a registry that resolves a tool name to an invokable with JSON-schema argument validation.\n\nAcceptance criteria:\n- [ ] kind=python resolves a dotted path inside the workspace or cograil.tools\n- [ ] kind=rest wraps the enterprise connector pattern (OAuth client credentials, pagination, retry with backoff, structured logging)\n- [ ] kind=mcp connects to an MCP server over stdio or HTTP and lists its tools under a prefix\n- [ ] Arguments validated against args_schema before invoke; failures raise ToolArgumentError\n- [ ] Every invoke records a ToolCall through the RunStore"
+    },
+    {
+      "id": 5,
+      "phase": 1,
+      "type": "feature",
+      "size": "S",
+      "model": "sonnet",
+      "title": "feat: mock HRIS tool pack for the example workspace",
+      "body": "Goal: deterministic in-memory HRIS with get_balance, submit_leave, get_manager for alice, bob and carol.\n\nAcceptance criteria:\n- [ ] submit_leave is scope=write with confirm_before_write=true\n- [ ] Balances decrease on submit; a second submit with the same request_id is idempotent\n- [ ] Registered in workspaces/example-smb/tools.yaml"
+    },
+    {
+      "id": 6,
+      "phase": 1,
+      "type": "feature",
+      "size": "L",
+      "model": "opus",
+      "title": "feat: runner with one LangGraph node per Step",
+      "body": "Goal: execute a Protocol step by step; the model may only call tools listed in the current Step.\n\nAcceptance criteria:\n- [ ] A call to a tool not in Step.tools raises ToolNotAllowed and the run fails closed\n- [ ] Context accumulates step outputs; the cursor advances only after a step completes\n- [ ] Provider interface injected; FakeProvider drives unit tests\n- [ ] End-to-end test runs leave_request with FakeProvider to completion"
+    },
+    {
+      "id": 7,
+      "phase": 1,
+      "type": "feature",
+      "size": "L",
+      "model": "opus",
+      "title": "feat: gates (confirm, approve, escalate, thresholds)",
+      "body": "Goal: pause points the runner enforces from tool metadata and protocol error handling.\n\nAcceptance criteria:\n- [ ] A write tool with confirm_before_write pauses the run as awaiting_approval and persists state\n- [ ] `cograil approve <token>` resumes exactly at the paused step\n- [ ] Declined or timed-out approvals escalate to the Colleague's escalation_contact\n- [ ] Failure thresholds from the Error handling section stop the run and escalate\n- [ ] Tests for every path, including GateRequired"
+    },
+    {
+      "id": 8,
+      "phase": 1,
+      "type": "feature",
+      "size": "M",
+      "model": "sonnet",
+      "title": "feat: Postgres RunStore with Alembic migrations",
+      "body": "Goal: persist runs, tool calls, approvals and audit events.\n\nAcceptance criteria:\n- [ ] RunStore is a Protocol class; PostgresRunStore and InMemoryRunStore implement it\n- [ ] Alembic migration creates the tables; CI runs migrations against the service container\n- [ ] Audit events are append-only; no update or delete path exists\n- [ ] Integration tests marked `integration`, skipped without DATABASE_URL"
+    },
+    {
+      "id": 9,
+      "phase": 1,
+      "type": "feature",
+      "size": "M",
+      "model": "sonnet",
+      "title": "feat: CLI (run, validate, approve)",
+      "body": "Goal: a Typer CLI for local use and demos.\n\nAcceptance criteria:\n- [ ] `cograil run <workspace> --protocol <name> --as <principal>` streams step progress\n- [ ] `cograil validate <workspace>` reports every problem, not just the first\n- [ ] `cograil approve <token>` resumes a paused run\n- [ ] Exit codes documented in --help"
+    },
+    {
+      "id": 10,
+      "phase": 1,
+      "type": "feature",
+      "size": "M",
+      "model": "sonnet",
+      "title": "feat: Anthropic provider and FakeProvider",
+      "body": "Goal: one Provider interface with tool-use support.\n\nAcceptance criteria:\n- [ ] Provider.plan(step, context, tools) returns text plus structured tool calls\n- [ ] Anthropic provider uses the official SDK; model name comes from Protocol.model or the Colleague.model_policy\n- [ ] Token usage returned on every call for cost telemetry\n- [ ] FakeProvider replays scripted tool calls for tests"
+    },
+    {
+      "id": 11,
+      "phase": 1,
+      "type": "chore",
+      "size": "S",
+      "model": "sonnet",
+      "title": "chore: CI with ruff, mypy, pytest and a Postgres service",
+      "body": "Goal: .github/workflows/ci.yml green on main.\n\nAcceptance criteria:\n- [ ] ruff format --check, ruff check, mypy --strict, pytest unit, pytest integration\n- [ ] uv cache enabled; total runtime under 4 minutes\n- [ ] Ruleset on main requires CI and Claude Code Review"
+    },
+    {
+      "id": 12,
+      "phase": 1,
+      "type": "docs",
+      "size": "S",
+      "model": "sonnet",
+      "title": "docs: architecture.md and ADRs 0001 to 0004",
+      "body": "Goal: developer docs that match the code as built.\n\nAcceptance criteria:\n- [ ] docs/architecture.md with the layer diagram and request path\n- [ ] ADRs 0001 to 0004 reviewed against what shipped; status set to Accepted"
+    },
+    {
+      "id": 13,
+      "phase": 2,
+      "type": "feature",
+      "size": "M",
+      "model": "sonnet",
+      "title": "feat: FastAPI service (/chat, /runs, /approvals, /audit, /health)",
+      "body": "Acceptance criteria:\n- [ ] /chat accepts a message and streams step events over SSE\n- [ ] /runs lists runs for the principal; /runs/{id} shows steps, calls, gates\n- [ ] /approvals/{token} GET renders context, POST approves or declines\n- [ ] /audit paginated, filterable by run and principal\n- [ ] OpenAPI docs served at /docs"
+    },
+    {
+      "id": 14,
+      "phase": 2,
+      "type": "feature",
+      "size": "M",
+      "model": "sonnet",
+      "title": "feat: static HTML web chat with streaming and approval cards",
+      "body": "Acceptance criteria:\n- [ ] Single HTML file, no framework, served by FastAPI\n- [ ] Streams step progress; shows tool calls as collapsible rows\n- [ ] Renders an approval card with approve and decline\n- [ ] Works on a phone"
+    },
+    {
+      "id": 15,
+      "phase": 2,
+      "type": "feature",
+      "size": "L",
+      "model": "opus",
+      "title": "feat: OIDC login (Google first, Entra ID second) with a dev principal",
+      "body": "Acceptance criteria:\n- [ ] COGRAIL_AUTH=dev uses a configurable fake principal with groups\n- [ ] COGRAIL_AUTH=oidc performs the code flow with authlib; session cookie signed\n- [ ] Group claims mapped to Audience names via workspace config\n- [ ] Documented setup for Google and Entra ID app registrations"
+    },
+    {
+      "id": 16,
+      "phase": 2,
+      "type": "feature",
+      "size": "S",
+      "model": "sonnet",
+      "title": "feat: audience checks in the orchestrator",
+      "body": "Acceptance criteria:\n- [ ] A principal outside a Protocol's audiences gets a refusal with the escalation contact, not an error\n- [ ] Audience intersection when a Colleague and Protocol both declare audiences\n- [ ] Tests for allowed, denied and scheduled (system actor) cases"
+    },
+    {
+      "id": 17,
+      "phase": 2,
+      "type": "feature",
+      "size": "M",
+      "model": "sonnet",
+      "title": "feat: orchestrator intent classification and refusal path",
+      "body": "Acceptance criteria:\n- [ ] claude-haiku-4-5 classifies a message to a Colleague and Protocol or to `none`\n- [ ] `none` returns a helpful refusal listing what the workspace can do\n- [ ] Classification is logged with confidence for later evals"
+    },
+    {
+      "id": 18,
+      "phase": 2,
+      "type": "feature",
+      "size": "M",
+      "model": "sonnet",
+      "title": "feat: knowledge source loader with chunking and acl_groups",
+      "body": "Acceptance criteria:\n- [ ] Loads a folder of Markdown and PDF; chunk size and overlap configurable\n- [ ] acl_groups read from a sidecar file or folder convention and stored on every Chunk\n- [ ] `cograil knowledge sync <workspace>` is idempotent"
+    },
+    {
+      "id": 19,
+      "phase": 2,
+      "type": "feature",
+      "size": "M",
+      "model": "opus",
+      "title": "feat: knowledge tool with pgvector search and ACL pre-filter",
+      "body": "Acceptance criteria:\n- [ ] The SQL filter on acl_groups is applied before similarity search, never after\n- [ ] Results include source_uri and a verbatim passage for citation\n- [ ] A test proves a principal cannot retrieve a chunk outside their groups"
+    },
+    {
+      "id": 20,
+      "phase": 2,
+      "type": "feature",
+      "size": "M",
+      "model": "sonnet",
+      "title": "feat: approval by email link and in-chat card",
+      "body": "Acceptance criteria:\n- [ ] Approver receives an email (SMTP or Resend) with a single-use signed link\n- [ ] Link expiry configurable; expired links escalate\n- [ ] Approval decision and approver identity recorded as an AuditEvent"
+    },
+    {
+      "id": 21,
+      "phase": 2,
+      "type": "chore",
+      "size": "M",
+      "model": "sonnet",
+      "title": "chore: Dockerfile, Cloud Run deploy, Neon connection",
+      "body": "Acceptance criteria:\n- [ ] Multi-stage Dockerfile under 300 MB\n- [ ] deploy.yml deploys on tag using workload identity, no JSON keys\n- [ ] DATABASE_URL and secrets from Cloud Run environment\n- [ ] Scale to zero verified; cold start measured and documented"
+    },
+    {
+      "id": 22,
+      "phase": 2,
+      "type": "feature",
+      "size": "S",
+      "model": "sonnet",
+      "title": "feat: run history page",
+      "body": "Acceptance criteria:\n- [ ] Read-only HTML page listing runs with status, protocol, principal, cost\n- [ ] Drill-down shows steps, tool calls, gates and timings"
+    },
+    {
+      "id": 23,
+      "phase": 3,
+      "type": "feature",
+      "size": "L",
+      "model": "sonnet",
+      "title": "feat: Slack adapter with Bolt",
+      "body": "Acceptance criteria:\n- [ ] Messages to the bot start or continue a run; one thread per run\n- [ ] Approval buttons post decisions to /approvals\n- [ ] Slack user mapped to a principal and groups via workspace config"
+    },
+    {
+      "id": 24,
+      "phase": 3,
+      "type": "feature",
+      "size": "M",
+      "model": "sonnet",
+      "title": "feat: OpenTelemetry spans per run and step",
+      "body": "Acceptance criteria:\n- [ ] GenAI semantic convention attributes on model spans (model, tokens, cost)\n- [ ] Console exporter by default; OTLP when OTEL_EXPORTER_OTLP_ENDPOINT is set\n- [ ] A screenshot of a run in Arize Phoenix in docs/"
+    },
+    {
+      "id": 25,
+      "phase": 3,
+      "type": "feature",
+      "size": "S",
+      "model": "sonnet",
+      "title": "feat: cost telemetry per run and protocol",
+      "body": "Acceptance criteria:\n- [ ] Tokens and dollars per model call summed per run\n- [ ] /runs shows cost; `cograil runs --cost` prints a table by protocol"
+    },
+    {
+      "id": 26,
+      "phase": 3,
+      "type": "feature",
+      "size": "M",
+      "model": "opus",
+      "title": "feat: eval harness with JSONL golden set",
+      "body": "Acceptance criteria:\n- [ ] Case format: prompt, principal, expected tool calls (name and key args), expected gates, expected status\n- [ ] `cograil eval <workspace>` runs cases with the live provider when COGRAIL_LIVE=1, else FakeProvider\n- [ ] 25 cases for the SMB workspace committed under tests/evals/"
+    },
+    {
+      "id": 27,
+      "phase": 3,
+      "type": "chore",
+      "size": "S",
+      "model": "sonnet",
+      "title": "chore: promotion gate in CI",
+      "body": "Acceptance criteria:\n- [ ] Changing a protocol file requires its eval cases to pass\n- [ ] Protocol version bumped in the header; released versions recorded in the workspace"
+    },
+    {
+      "id": 28,
+      "phase": 3,
+      "type": "feature",
+      "size": "M",
+      "model": "sonnet",
+      "title": "feat: scheduled triggers running as a system actor",
+      "body": "Acceptance criteria:\n- [ ] Cron expressions in colleagues/*.yaml; APScheduler in v0.x\n- [ ] Runs as a named system principal with an explicit audience\n- [ ] Only protocols with Scheduled execution: allowed may be scheduled"
+    },
+    {
+      "id": 29,
+      "phase": 3,
+      "type": "docs",
+      "size": "M",
+      "model": "sonnet",
+      "title": "docs: MkDocs Material site on GitHub Pages",
+      "body": "Acceptance criteria:\n- [ ] Quickstart, Concepts, Writing a Protocol, Adding a Tool, Deploying\n- [ ] Published from docs/ by a Pages workflow"
+    },
+    {
+      "id": 30,
+      "phase": 3,
+      "type": "feature",
+      "size": "M",
+      "model": "sonnet",
+      "title": "feat: example-enterprise workspace",
+      "body": "Acceptance criteria:\n- [ ] Two colleagues, SSO config, SharePoint-style knowledge folder, Jira tool via rest kind\n- [ ] No real credentials; connections.yaml references environment variables"
+    },
+    {
+      "id": 31,
+      "phase": 3,
+      "type": "feature",
+      "size": "M",
+      "model": "sonnet",
+      "title": "feat: example protocol library",
+      "body": "Acceptance criteria:\n- [ ] leave_request, it_access_request, policy_question (with citations) in both workspaces\n- [ ] Each has eval cases"
+    },
+    {
+      "id": 32,
+      "phase": 4,
+      "type": "chore",
+      "size": "M",
+      "model": "opus",
+      "title": "chore: security review and threat model",
+      "body": "Acceptance criteria:\n- [ ] anthropics/claude-code-security-review run; findings fixed or documented\n- [ ] docs/threat-model.md: prompt injection via knowledge, tool argument injection, approval link replay, secret handling"
+    },
+    {
+      "id": 33,
+      "phase": 4,
+      "type": "feature",
+      "size": "M",
+      "model": "sonnet",
+      "title": "feat: hardening (rate limits, size caps, secret scanning)",
+      "body": "Context: injection defence for retrieved content moved to #47 (Phase 3); this issue covers the rest.\n\nAcceptance criteria:\n- [ ] Per-principal rate limit on /chat\n- [ ] Message and knowledge chunk size caps\n- [ ] gitleaks or GitHub secret scanning enabled"
+    },
+    {
+      "id": 34,
+      "phase": 4,
+      "type": "docs",
+      "size": "M",
+      "model": "opus",
+      "title": "docs: README rewrite for launch",
+      "body": "Acceptance criteria:\n- [ ] Vision, 90-second quickstart, architecture diagram, design decisions, limits, roadmap\n- [ ] Screenshots of web chat, approval email, run history, trace"
+    },
+    {
+      "id": 35,
+      "phase": 4,
+      "type": "docs",
+      "size": "S",
+      "model": "sonnet",
+      "title": "docs: demo script for the 3-minute recording",
+      "body": "Acceptance criteria:\n- [ ] Step-by-step script using the SMB workspace\n- [ ] Timings per scene; total under 3 minutes"
+    },
+    {
+      "id": 36,
+      "phase": 4,
+      "type": "chore",
+      "size": "S",
+      "model": "sonnet",
+      "title": "chore: release v0.4 (changelog, tag, PyPI)",
+      "body": "Acceptance criteria:\n- [ ] CHANGELOG.md from merged PRs\n- [ ] GitHub release with notes; PyPI publish via trusted publishing"
+    },
+    {
+      "id": 37,
+      "phase": 4,
+      "type": "docs",
+      "size": "S",
+      "model": "sonnet",
+      "title": "docs: launch post and Show HN draft",
+      "body": "Acceptance criteria:\n- [ ] LinkedIn article draft on the cog railway thesis under 800 words\n- [ ] Show HN title and first comment draft"
+    },
+    {
+      "id": 38,
+      "phase": 4,
+      "type": "docs",
+      "size": "S",
+      "model": "sonnet",
+      "title": "docs: contributor guide and good-first-issues",
+      "body": "Acceptance criteria:\n- [ ] CONTRIBUTING.md, CODE_OF_CONDUCT.md\n- [ ] Five issues labelled good-first-issue"
+    },
+    {
+      "id": 39,
+      "phase": 4,
+      "type": "spike",
+      "size": "S",
+      "model": "opus",
+      "title": "spike: v0.5 roadmap (Temporal backend, Teams, MCP server, Context Graph)",
+      "body": "Deliverable: a comment with the ordered v0.5 backlog and a draft ADR for the Temporal RunStore backend."
+    },
+    {
+      "id": 40,
+      "phase": 1,
+      "type": "feature",
+      "size": "L",
+      "model": "opus",
+      "title": "feat: bounded step loop and harness.yaml",
+      "body": "Goal: the inner loop of a step is bounded and the bounds come from versioned configuration (ADR 0008, ADR 0012).\n\nAcceptance criteria:\n- [ ] harness.yaml loaded per workspace: max_turns, token_budget, usd_budget, tiers, compression_threshold, retry policy\n- [ ] A step ends only on the structured `step_complete` signal or a bound; bounds raise LoopBudgetExceeded and escalate\n- [ ] Per-step `(turns: N)` overrides the default\n- [ ] Harness version (content hash + semver) computed and stamped on every Run\n- [ ] Tests: loop stops at max_turns with FakeProvider; budget breach escalates; version changes when the file changes"
+    },
+    {
+      "id": 41,
+      "phase": 1,
+      "type": "feature",
+      "size": "M",
+      "model": "sonnet",
+      "title": "feat: ContextBuilder with per-step context declaration and data isolation",
+      "body": "Goal: each step sees only what the protocol declares (ADR 0007).\n\nAcceptance criteria:\n- [ ] `(context: steps 1, 2)` selects prior step outputs; default is the immediately previous step only\n- [ ] Tool schemas included only for the step's whitelisted tools\n- [ ] Retrieved passages and tool outputs placed in an isolated data block with the fixed data-not-instructions preamble\n- [ ] Window Ledger: tokens by source per step stored on the Run and shown by `cograil runs --ledger`\n- [ ] Tests prove an undeclared prior step is absent from the prompt"
+    },
+    {
+      "id": 42,
+      "phase": 1,
+      "type": "feature",
+      "size": "S",
+      "model": "sonnet",
+      "title": "feat: cograil graph renders the compiled protocol as Mermaid",
+      "body": "Goal: the shape of the work is reviewable without reading code (ADR 0011).\n\nAcceptance criteria:\n- [ ] `cograil graph <workspace> --protocol <name>` prints a Mermaid flowchart: step nodes, gate interrupts, helper subgraphs, error-handling edges\n- [ ] Output committed for the example protocols under docs/graphs/\n- [ ] Test compares output to a golden file"
+    },
+    {
+      "id": 43,
+      "phase": 2,
+      "type": "feature",
+      "size": "L",
+      "model": "opus",
+      "title": "feat: decision tables and the decision tool kind",
+      "body": "Goal: decisions that matter are tables (ADR 0009).\n\nAcceptance criteria:\n- [ ] decisions/*.yaml with typed inputs, first-match or collect rules, typed outputs, version\n- [ ] kind=decision tool evaluates a table deterministically; the model only supplies inputs\n- [ ] AuditEvent records table name, version and rule id for every evaluation\n- [ ] Example: approval_routing.yaml (duration, leave type, role -> approver tier) used by leave_request\n- [ ] `cograil decide <table> --input k=v` for manual testing"
+    },
+    {
+      "id": 44,
+      "phase": 2,
+      "type": "feature",
+      "size": "M",
+      "model": "sonnet",
+      "title": "feat: model tiers and an Ollama provider for local small models",
+      "body": "Goal: steps request a tier, not a model name (ADR 0010).\n\nAcceptance criteria:\n- [ ] harness.yaml maps small, standard, strong to models per provider; defaults are claude-haiku-4-5, claude-sonnet-5-5, claude-opus-5-5\n- [ ] `(model: small)` directive honoured; classification, extraction, redaction and compression default to small\n- [ ] Ollama provider (optional extra) runs a local small model; documented on a laptop and on DGX Spark\n- [ ] Low-confidence small-tier results escalate one tier; the escalation is audited"
+    },
+    {
+      "id": 45,
+      "phase": 2,
+      "type": "feature",
+      "size": "M",
+      "model": "sonnet",
+      "title": "feat: compression of long tool outputs with the small tier",
+      "body": "Goal: context stays inside budget without losing what the next step needs (ADR 0007).\n\nAcceptance criteria:\n- [ ] Tool outputs above compression_threshold tokens are summarised by the small tier with the step instruction as the guide\n- [ ] Raw output retained on the Run for audit and for the run history page\n- [ ] Window Ledger shows raw and compressed sizes"
+    },
+    {
+      "id": 46,
+      "phase": 3,
+      "type": "chore",
+      "size": "S",
+      "model": "sonnet",
+      "title": "chore: promotion gate covers harness.yaml and decision tables",
+      "body": "Goal: no behaviour-changing configuration ships without the golden set passing (ADR 0012).\n\nAcceptance criteria:\n- [ ] CI detects changes to harness.yaml, protocols/ or decisions/ and runs the matching eval cases\n- [ ] Released harness and protocol versions recorded in the workspace manifest"
+    },
+    {
+      "id": 47,
+      "phase": 3,
+      "type": "feature",
+      "size": "M",
+      "model": "opus",
+      "title": "feat: injection defence for retrieved content and tool outputs",
+      "body": "Goal: data never becomes instructions (ADR 0007).\n\nAcceptance criteria:\n- [ ] Retrieved passages and tool outputs pass through an instruction-stripping filter and a small-tier screen before entering context\n- [ ] Eval cases with planted injections in knowledge documents must not change tool calls or gates\n- [ ] docs/threat-model.md section on injection"
+    },
+    {
+      "id": 48,
+      "phase": 4,
+      "type": "spike",
+      "size": "S",
+      "model": "opus",
+      "title": "spike: distillation plan from traces to a dedicated small classifier",
+      "body": "Deliverable: a comment proposing how audit events and eval cases become a training set for a distilled intent classifier (small tier), with a go or no-go for v0.6, referencing the model-tier policy in ADR 0010."
+    }
+  ]
+}
