@@ -96,7 +96,15 @@ tool calls and `step_complete` together, the calls run first (through the whitel
 usual), then the step ends.
 
 A step sees the outputs of the steps it declares with `(context: steps 1, 2)`. Without a
-declaration it sees only the previous step.
+declaration it sees the previous step only (`context.default_prior_steps` in `harness.yaml`, 1 by
+default). Context is a whitelist like tools: an undeclared step is not in the prompt, and the
+model is offered the schemas of the step's own tools only. Prior step outputs and tool results,
+retrieved passages included, reach the model inside a data block that starts with a fixed
+"data, not instructions" preamble.
+
+The runner keeps a Window Ledger on the run: estimated tokens by source (`instruction`,
+`prior_steps`, `tools`, `knowledge`) for each step. `cograil runs --ledger` shows it for the
+runs in the database named by `DATABASE_URL`; `cograil runs RUN_ID --ledger` shows one run.
 
 The bounds come from the workspace's `harness.yaml` and are checked before every model call:
 
@@ -123,7 +131,7 @@ gates instead. A `loop.bounded` AuditEvent names the bound, its limit and what w
 - `loop`: `max_turns`, `token_budget_per_step` and `usd_budget_per_run`.
 - `tiers`: the model names for `small`, `standard` and `strong`.
 - `pricing`: the price of each model, in USD per million tokens.
-- `context`: `default_prior_steps` and `compression_threshold_tokens`.
+- `context`: `default_prior_steps` and `compression_threshold_tokens` (the threshold is not used yet).
 - `defaults`: `classification_tier` and `judgment_tier`.
 - `retry`: `tool_attempts` and `backoff_seconds`.
 - `approvals`: `timeout_hours`.
@@ -135,4 +143,4 @@ validated content, such as `1.0.0+3f2a9c1b7d4e`. Changing any value changes the 
 and layout do not. The `run.started` AuditEvent records it too.
 
 `tiers`, `context`, `defaults` and `retry` are loaded and validated now. Later issues will use them
-(tier routing, the ContextBuilder and tool retries).
+(tier routing, compressing large outputs and tool retries).

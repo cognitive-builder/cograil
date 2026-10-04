@@ -102,6 +102,16 @@ async def test_run_round_trips_and_update_saves_progress(store: RunStore) -> Non
     assert await store.get_run(run.id) == progressed
 
 
+async def test_list_runs_newest_first_up_to_the_limit(store: RunStore) -> None:
+    ids = []
+    for minutes in (0, 2, 1):
+        run = make_run().model_copy(update={"created_at": T0 + timedelta(minutes=minutes)})
+        await store.create_run(run)
+        ids.append(run.id)
+    listed = await store.list_runs(limit=2)
+    assert [r.id for r in listed] == [ids[1], ids[2]]
+
+
 async def test_run_errors(store: RunStore) -> None:
     run = await stored_run(store)
     with pytest.raises(DuplicateRecord):

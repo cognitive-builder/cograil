@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from cograil.context import DATA_PREAMBLE
 from cograil.domain import (
     Approval,
     ApprovalSettings,
@@ -28,7 +29,7 @@ from cograil.gates import require_approval
 from cograil.parser import parse_protocol
 from cograil.providers import FakeProvider, Plan, PlannedToolCall, scripted
 from cograil.registry import CallContext, ToolRegistry
-from cograil.runner import DATA, Runner
+from cograil.runner import Runner
 from cograil.store import InMemoryRunStore
 
 T0 = datetime(2026, 10, 4, 9, 0, tzinfo=UTC)
@@ -177,8 +178,8 @@ async def test_resume_continues_exactly_at_the_paused_step(
     # step 2's second, which sees step 1's output and the submit result.
     first = provider.calls[0]
     assert first.step.number == 2
-    assert first.context[0].content.startswith(f"Step 1 output {DATA}")
-    assert first.context[-1].content.startswith(f"Tool result {DATA}")
+    assert first.context[0].content.startswith(DATA_PREAMBLE)
+    assert first.context[-1].content.startswith(DATA_PREAMBLE)
     assert "hris.submit_leave" in first.context[-1].content
     assert "paused" not in run.context
     approval = await store.get_approval(token)
