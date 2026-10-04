@@ -68,17 +68,22 @@ tool call the model plans in a turn is checked before any of them runs:
   step, tool and arguments. Each Approval allows one call and is spent atomically when the call
   goes through (a `gate.spent` AuditEvent).
 - Without one, the run pauses instead of failing. A pending Approval is created for that exact call
-  (the approver is the run's principal for now). The step's progress and the plan waiting at the
-  gate are saved, and the run's status becomes `awaiting_approval` (a `gate.paused` AuditEvent).
-  Nothing from that plan runs.
-- `Runner.resume(token, protocol)` approves and continues exactly at the paused step. The saved
-  plan runs without asking the model again, then the step goes on. The `cograil approve <token>`
-  command that calls it comes with the CLI issue (#13). An Approval is decided once, so of two
-  racing resumes only one goes on.
+  (the approver is the Colleague's `escalation_contact` for now; routing the approver from a
+  decision table comes later). The step's progress and the plan waiting at the gate are saved,
+  and the run's status becomes `awaiting_approval` (a `gate.paused` AuditEvent). Nothing from
+  that plan runs.
+- `Runner.resume(token, protocol, decider=...)` approves and continues exactly at the paused step.
+  The saved plan runs without asking the model again, then the step goes on. Only the Approval's
+  approver may decide it, and never the run's own principal, so a run cannot approve its own
+  write. Anyone else gets `ApprovalNotAllowed` and the run stays paused. The decider is recorded
+  as `decided_by` on the `gate.resumed` or `run.escalated` AuditEvent. The
+  `cograil approve <token>` command that calls it comes with the CLI issue (#13). An Approval is
+  decided once, so of two racing resumes only one goes on.
 - A declined Approval, or one past its `expires_at`, escalates the run instead. The timeout comes
   from `harness.yaml` (`approvals.timeout_hours`, 72 by default). The status becomes `escalated`,
   and a `run.escalated` AuditEvent names the Colleague's `escalation_contact`.
-  `Runner.expire(token)` escalates an overdue Approval, for a scheduler to call.
+  `Runner.expire(token)` escalates an overdue Approval, for a scheduler to call; then
+  `decided_by` is empty.
 - `GateRequired` is still raised when a racing call spent the Approval first (the run fails
   closed), and when `run` is called on a run that is awaiting approval.
 

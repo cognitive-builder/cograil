@@ -41,6 +41,10 @@ class RunNotPaused(CograilError):
     """The Run is not paused on that Approval, so the Approval cannot resume or expire it."""
 
 
+class ApprovalNotAllowed(CograilError):
+    """The deciding principal is not the Approval's approver, or is the Run's own principal."""
+
+
 class AudienceDenied(CograilError):
     """The principal is outside the Protocol's audience."""
 

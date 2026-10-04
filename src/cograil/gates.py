@@ -8,14 +8,18 @@ records it. `require_approval` is the fail-closed core and raises GateRequired.
 Where no such Approval exists the runner pauses instead of failing: `Gates.pause` creates a
 pending Approval, saves the Step's progress (turn, messages, tool results and the plan
 waiting at the gate) in `Run.context["paused"]`, and sets the Run awaiting_approval.
-`Gates.resume` decides the Approval once, so of two racing resumes only one goes on. An
-approved Approval resumes the Run exactly at the paused Step; a declined one, or one past
-its expires_at, escalates the Run to the Colleague's escalation_contact, as does a Tool
-reaching its FailureThreshold (`Gates.escalate`) or a Step hitting a loop bound
-(`Gates.bounded`, ADR 0008). An Approval expires after harness.yaml's approvals.timeout_hours.
+`Gates.resume` decides the Approval once, so of two racing resumes only one goes on. Only
+the Approval's approver may decide it, and never the Run's own principal: any other decider
+raises ApprovalNotAllowed and changes nothing, and the decider is written on the
+`gate.resumed` or `run.escalated` AuditEvent. An approved Approval resumes the Run exactly
+at the paused Step; a declined one, or one past its expires_at, escalates the Run to the
+Colleague's escalation_contact, as does a Tool reaching its FailureThreshold
+(`Gates.escalate`) or a Step hitting a loop bound (`Gates.bounded`, ADR 0008). An Approval
+expires after harness.yaml's approvals.timeout_hours.
 
-Interim rules until their issues land: the approver is the Run's principal (approver routing
-from decision tables is its own issue), and escalating records the Run's status and a
+Interim rules until their issues land: the approver is the Colleague's escalation_contact
+(approver routing from decision tables needs the decision table evaluator and a directory
+lookup from tier to principal), and escalating records the Run's status and a
 `run.escalated` AuditEvent naming the contact; delivering it is the channels' job.
 """
 
@@ -30,7 +34,13 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from cograil.domain import Approval, AuditEvent, Colleague, Run, RunStatus, Tool
-from cograil.errors import ApprovalNotSpendable, GateRequired, LoopBudgetExceeded, RunNotPaused
+from cograil.errors import (
+    ApprovalNotAllowed,
+    ApprovalNotSpendable,
+    GateRequired,
+    LoopBudgetExceeded,
+    RunNotPaused,
+)
 from cograil.observability import log_event
 from cograil.providers.base import Message, PlannedToolCall, StepComplete
 from cograil.registry import CallContext
@@ -123,7 +133,7 @@ class Gates:
             step=progress.step,
             tool=tool.name,
             args=dict(args),
-            approver=run.principal_id,
+            approver=self._colleague.escalation_contact,
             expires_at=self._clock() + self._timeout,
         )
         await self._store.create_approval(approval)
@@ -143,19 +153,29 @@ class Gates:
             raise GateRequired(f"{approval.tool}: its Approval is already spent") from exc
         await self._audit(run, "gate.spent", _about(approval))
 
-    async def resume(self, token: str, decision: Literal["approved", "declined"]) -> Run:
-        """Decide the Approval the Run is paused on: running again, or escalated."""
+    async def resume(
+        self, token: str, decision: Literal["approved", "declined"], decider: str
+    ) -> Run:
+        """Decide the Approval the Run is paused on: running again, or escalated.
+
+        Raises ApprovalNotAllowed, changing nothing, unless `decider` is the Approval's
+        approver and not the Run's own principal.
+        """
         approval, run = await self._paused_on(token)
+        if decider != approval.approver or decider == run.principal_id:
+            log_event("gate.refused", logging.WARNING, run_id=run.id, step=approval.step,
+                      tool=approval.tool, decider=decider)  # fmt: skip
+            raise ApprovalNotAllowed(f"{decider} may not decide the Approval for {approval.tool}")
         if self._overdue(approval):
-            return await self._decide(run, approval, "expired")
-        return await self._decide(run, approval, decision)
+            return await self._decide(run, approval, "expired", decider)
+        return await self._decide(run, approval, decision, decider)
 
     async def expire(self, token: str) -> Run:
         """Escalate the Run if its Approval is past expires_at; otherwise change nothing."""
         approval, run = await self._paused_on(token)
         if not self._overdue(approval):
             return run
-        return await self._decide(run, approval, "expired")
+        return await self._decide(run, approval, "expired", None)
 
     async def escalate(self, run: Run, reason: EscalationReason, detail: dict[str, Any]) -> Run:
         """Stop the Run and hand it to the Colleague's escalation_contact."""
@@ -184,16 +204,22 @@ class Gates:
         return approval.expires_at is not None and self._clock() >= approval.expires_at
 
     async def _decide(
-        self, run: Run, approval: Approval, decision: Literal["approved", "declined", "expired"]
+        self,
+        run: Run,
+        approval: Approval,
+        decision: Literal["approved", "declined", "expired"],
+        decider: str | None,
     ) -> Run:
+        """`decider` is None when the Approval timed out with nobody deciding it."""
         # decide_approval succeeds once per Approval, so only one racing resume gets past it.
         approval = await self._store.decide_approval(approval.token, decision, self._clock())
+        detail = {**_about(approval), "approver": approval.approver, "decided_by": decider}
         if decision != "approved":
             declined = decision == "declined"
             reason: EscalationReason = "approval_declined" if declined else "approval_expired"
-            return await self.escalate(run, reason, _about(approval))
+            return await self.escalate(run, reason, detail)
         run = await self._save(run, status=RunStatus.running)
-        await self._audit(run, "gate.resumed", {**_about(approval), "approver": approval.approver})
+        await self._audit(run, "gate.resumed", detail)
         log_event("gate.resumed", run_id=run.id, step=approval.step, tool=approval.tool)
         return run
 

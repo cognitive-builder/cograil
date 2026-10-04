@@ -7,8 +7,9 @@ the Step does not list raises ToolNotAllowed, and a gated write needs an approve
 module is its only caller.
 
 A gated write without an Approval pauses the Run awaiting_approval with the Step's progress
-saved, and nothing from that plan runs; `Runner.resume` with the Approval's token continues
-the Run exactly there, running the saved plan. A declined or expired Approval escalates the
+saved, and nothing from that plan runs; `Runner.resume` with the Approval's token, decided
+by its approver (never the Run's own principal), continues the Run exactly there, running
+the saved plan. A declined or expired Approval escalates the
 Run, and so does a Tool reaching its FailureThreshold from the Protocol's Error handling:
 until then a failed call (ToolExecutionError) goes back to the model as data, while a failed
 call of a Tool with no threshold fails the Run. A paused or escalated Run ends the graph.
@@ -166,14 +167,18 @@ class Runner:
         self,
         token: str,
         protocol: Protocol,
+        *,
+        decider: str,
         decision: Literal["approved", "declined"] = "approved",
     ) -> Run:
-        """Decide the Approval a Run is paused on, then go on exactly at the paused Step.
+        """Decide, as principal `decider`, the Approval a Run is paused on, then go on
+        exactly at the paused Step.
 
-        Declined or expired, the Run escalates instead. Errors in deciding (RunNotPaused,
+        Declined or expired, the Run escalates instead. Errors in deciding (ApprovalNotAllowed
+        for a decider who is not the approver or is the Run's own principal, RunNotPaused,
         ApprovalAlreadyDecided for a resume that lost a race) leave the Run as it was.
         """
-        run = await self._gates.resume(token, decision)
+        run = await self._gates.resume(token, decision, decider)
         if run.status is not RunStatus.running:
             return run
         async with self._failing_closed(run.id):
