@@ -46,7 +46,16 @@ class AudienceDenied(CograilError):
 
 
 class LoopBudgetExceeded(CograilError):
-    """A step hit max_turns or a token or dollar budget without signalling step_complete."""
+    """A step hit max_turns or a token or dollar budget without signalling step_complete.
+
+    `bound` names the harness.yaml key that was hit; `used` is None when it cannot be known.
+    """
+
+    def __init__(self, message: str, *, bound: str, limit: float, used: float | None) -> None:
+        super().__init__(message)
+        self.bound = bound
+        self.limit = limit
+        self.used = used
 
 
 class DecisionError(CograilError):

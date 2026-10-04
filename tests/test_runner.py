@@ -1,6 +1,7 @@
 """Runner tests for issue #10: whitelist, gates, context, cursor, bounds, invoke's only caller.
 
-Pausing, resuming and escalating at a gate are in test_gates.py (issue #11).
+Pausing, resuming and escalating at a gate are in test_gates.py (issue #11). The bounded
+step loop, step_complete and the harness version stamp are issue #44.
 """
 
 import ast
@@ -12,12 +13,30 @@ from anthropic.types import Message as SdkMessage
 from anthropic.types import ToolUseBlock
 from anthropic.types import Usage as SdkUsage
 
-from cograil.domain import Approval, Colleague, Protocol, RunStatus, Tool
-from cograil.errors import LoopBudgetExceeded, ProviderError, ToolNotAllowed
+from cograil.domain import (
+    Approval,
+    Colleague,
+    Harness,
+    LoopBounds,
+    Price,
+    Protocol,
+    RunStatus,
+    Tiers,
+    Tool,
+)
+from cograil.errors import ProviderError, ToolNotAllowed
+from cograil.harness import harness_version
 from cograil.parser import parse_protocol
-from cograil.providers import AnthropicProvider, FakeProvider, Plan, PlannedToolCall, scripted
+from cograil.providers import (
+    AnthropicProvider,
+    FakeProvider,
+    Message,
+    Plan,
+    PlannedToolCall,
+    scripted,
+)
 from cograil.registry import ToolRegistry
-from cograil.runner import DATA, Runner
+from cograil.runner import DATA, NOT_COMPLETE, Runner
 from cograil.store import InMemoryRunStore
 
 SRC = Path(__file__).parents[1] / "src/cograil"
@@ -42,9 +61,9 @@ def call(tool: str, **args: Any) -> PlannedToolCall:
     return PlannedToolCall(id=f"call-{tool}", tool=tool, args=args)
 
 
-LOOK_UP = [scripted("", call("hris.get_balance")), scripted("25 days left")]
-SUBMITTED = [scripted("", call("hris.submit_leave", **SUBMIT)), scripted("submitted")]
-NOTIFIED = [scripted("", call("notify.send")), scripted("told alice")]
+LOOK_UP = [scripted("", call("hris.get_balance")), scripted("25 days left", done=True)]
+SUBMITTED = [scripted("", call("hris.submit_leave", **SUBMIT)), scripted("submitted", done=True)]
+NOTIFIED = [scripted("", call("notify.send")), scripted("told alice", done=True)]
 
 
 @pytest.fixture
@@ -78,11 +97,19 @@ async def approve(store: InMemoryRunStore, token: str = "a1") -> None:
 
 
 async def run(
-    store: InMemoryRunStore, registry: ToolRegistry, protocol: Protocol, script: list[Plan]
+    store: InMemoryRunStore,
+    registry: ToolRegistry,
+    protocol: Protocol,
+    script: list[Plan],
+    harness: Harness | None = None,
 ) -> FakeProvider:
     provider = FakeProvider(script)
-    await Runner(provider, registry, store, HARPER).run("r1", protocol)
+    await Runner(provider, registry, store, HARPER, harness=harness).run("r1", protocol)
     return provider
+
+
+async def start_at(store: InMemoryRunStore, cursor: int) -> None:
+    await store.update_run((await store.get_run("r1")).model_copy(update={"cursor": cursor}))
 
 
 async def assert_failed_closed(
@@ -103,16 +130,18 @@ async def assert_failed_closed(
         pytest.param([call("hris.get_balance"), call("notify.send")], id="listed-beside-unlisted"),
     ],
 )
+@pytest.mark.parametrize("done", [False, True], ids=["", "with-step-complete"])
 async def test_off_whitelist_call_raises_tool_not_allowed_and_fails_closed(
     store: InMemoryRunStore,
     registry: ToolRegistry,
     protocol: Protocol,
     invoked: list[str],
     planned: list[PlannedToolCall],
+    done: bool,
 ) -> None:
     await approve(store)
     with pytest.raises(ToolNotAllowed):
-        await run(store, registry, protocol, [scripted("", *planned)])
+        await run(store, registry, protocol, [scripted("", *planned, done=done)])
     assert invoked == []
     assert await store.list_tool_calls("r1") == []
     await assert_failed_closed(store, ToolNotAllowed, cursor=0)
@@ -209,20 +238,127 @@ async def test_injected_provider_is_offered_only_the_step_tools(
 async def test_a_run_starts_at_the_step_after_its_cursor(
     store: InMemoryRunStore, registry: ToolRegistry, protocol: Protocol
 ) -> None:
-    await store.update_run((await store.get_run("r1")).model_copy(update={"cursor": 2}))
+    await start_at(store, 2)
     provider = await run(store, registry, protocol, NOTIFIED)
     assert {c.step.number for c in provider.calls} == {3}
     assert (await store.get_run("r1")).cursor == 3
 
 
-async def test_a_step_stops_at_max_turns(
+async def assert_escalated_at(
+    store: InMemoryRunStore, bound: str, limit: float, cursor: int
+) -> None:
+    """The Run escalated through the gates with a loop.bounded AuditEvent, and did not fail."""
+    stored = await store.get_run("r1")
+    assert (stored.status, stored.cursor) == (RunStatus.escalated, cursor)
+    events = await store.list_audit_events("r1")
+    bounded, escalated = events[-2:]
+    assert (bounded.kind, bounded.detail["bound"], bounded.detail["limit"]) == (
+        "loop.bounded", bound, limit
+    )  # fmt: skip
+    assert (escalated.kind, escalated.principal_id) == ("run.escalated", "alice@example.com")
+    assert (escalated.detail["reason"], escalated.detail["contact"]) == (
+        "loop_budget_exceeded", HARPER.escalation_contact
+    )  # fmt: skip
+    assert "run.failed" not in {e.kind for e in events}
+
+
+@pytest.mark.parametrize(
+    ("default_turns", "cursor", "tool", "turns"),
+    [
+        pytest.param(6, 0, "hris.get_balance", 2, id="step-turns-under-the-default"),
+        pytest.param(1, 0, "hris.get_balance", 2, id="step-turns-over-the-default"),
+        pytest.param(1, 2, "notify.send", 1, id="harness-default"),
+    ],
+)
+async def test_a_step_stops_at_max_turns_and_escalates(
+    store: InMemoryRunStore,
+    registry: ToolRegistry,
+    protocol: Protocol,
+    invoked: list[str],
+    default_turns: int,
+    cursor: int,
+    tool: str,
+    turns: int,
+) -> None:
+    """Step 1 declares `(turns: 2)`, which wins over the harness default; step 3 does not."""
+    await start_at(store, cursor)
+    harness = Harness(loop=LoopBounds(max_turns=default_turns))
+    provider = await run(store, registry, protocol, [scripted("", call(tool))] * 3, harness)
+    assert len(provider.calls) == turns
+    assert invoked == [tool] * turns
+    await assert_escalated_at(store, "max_turns", turns, cursor)
+
+
+def priced(model: str, usd_per_mtok: float) -> dict[str, Any]:
+    """Harness fields that price `model`, every tier's model, at usd_per_mtok in and out."""
+    return {
+        "tiers": Tiers(small=model, standard=model, strong=model),
+        "pricing": {model: Price(input_per_mtok=usd_per_mtok, output_per_mtok=usd_per_mtok)},
+    }
+
+
+FAKE_PRICED, UNPRICED = priced("fake-model", 1000), priced("other-model", 1)
+
+
+@pytest.mark.parametrize(
+    ("harness", "bound", "limit", "calls", "cost"),
+    [
+        pytest.param(Harness(loop=LoopBounds(token_budget_per_step=20)),
+                     "token_budget_per_step", 20, 2, 0.0, id="tokens"),
+        pytest.param(Harness(loop=LoopBounds(usd_budget_per_run=0.02), **FAKE_PRICED),
+                     "usd_budget_per_run", 0.02, 2, 0.03, id="dollars"),
+        pytest.param(Harness(loop=LoopBounds(usd_budget_per_run=0.02), **UNPRICED),
+                     "usd_budget_per_run", 0.02, 1, 0.0, id="unpriced-model"),
+    ],
+)  # fmt: skip
+async def test_a_budget_breach_escalates(
+    store: InMemoryRunStore,
+    registry: ToolRegistry,
+    protocol: Protocol,
+    harness: Harness,
+    bound: str,
+    limit: float,
+    calls: int,
+    cost: float,
+) -> None:
+    """Each scripted call spends 15 tokens; priced at 1000 USD per million, 0.015 USD."""
+    await start_at(store, 2)
+    looping = [scripted("", call("notify.send"))] * 3
+    provider = await run(store, registry, protocol, looping, harness)
+    assert len(provider.calls) == calls
+    await assert_escalated_at(store, bound, limit, cursor=2)
+    assert (await store.get_run("r1")).cost_usd == pytest.approx(cost)
+
+
+async def test_a_step_ends_only_on_step_complete(
     store: InMemoryRunStore, registry: ToolRegistry, protocol: Protocol, invoked: list[str]
 ) -> None:
-    looping = [scripted("", call("hris.get_balance"))] * 3
-    with pytest.raises(LoopBudgetExceeded):
-        await run(store, registry, protocol, looping)
-    assert invoked == ["hris.get_balance"] * 2
-    await assert_failed_closed(store, LoopBudgetExceeded, cursor=0)
+    """A plain answer is not the end; a plan with calls and step_complete runs the calls first."""
+    await start_at(store, 2)
+    script = [scripted("all done"), scripted("told alice", call("notify.send"), done=True)]
+    provider = await run(store, registry, protocol, script)
+    assert provider.calls[1].context[-2:] == [
+        Message(role="assistant", content="all done"),
+        Message(role="user", content=NOT_COMPLETE),
+    ]
+    assert invoked == ["notify.send"]
+    stored = await store.get_run("r1")
+    assert (stored.status, stored.cursor) == (RunStatus.completed, 3)
+    record = stored.context["steps"]["3"]
+    assert (record["output"], len(record["tool_calls"])) == ("told alice", 1)
+
+
+async def test_the_harness_version_is_stamped_on_the_run(
+    store: InMemoryRunStore, registry: ToolRegistry, protocol: Protocol
+) -> None:
+    await start_at(store, 2)
+    harness = Harness(version="1.2.3", loop=LoopBounds(max_turns=4))
+    await run(store, registry, protocol, NOTIFIED, harness)
+    stored = await store.get_run("r1")
+    assert stored.harness_version == harness_version(harness)
+    assert stored.harness_version.startswith("1.2.3+")
+    started = (await store.list_audit_events("r1"))[0]
+    assert started.detail["harness_version"] == stored.harness_version
 
 
 def test_the_runner_is_the_only_caller_of_registry_invoke() -> None:

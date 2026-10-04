@@ -11,11 +11,11 @@ waiting at the gate) in `Run.context["paused"]`, and sets the Run awaiting_appro
 `Gates.resume` decides the Approval once, so of two racing resumes only one goes on. An
 approved Approval resumes the Run exactly at the paused Step; a declined one, or one past
 its expires_at, escalates the Run to the Colleague's escalation_contact, as does a Tool
-reaching its FailureThreshold (`Gates.escalate`).
+reaching its FailureThreshold (`Gates.escalate`) or a Step hitting a loop bound
+(`Gates.bounded`, ADR 0008). An Approval expires after harness.yaml's approvals.timeout_hours.
 
 Interim rules until their issues land: the approver is the Run's principal (approver routing
-from decision tables is its own issue), the timeout is DEFAULT_APPROVAL_TIMEOUT unless the
-Runner is given one (harness.yaml is #44), and escalating records the Run's status and a
+from decision tables is its own issue), and escalating records the Run's status and a
 `run.escalated` AuditEvent naming the contact; delivering it is the channels' job.
 """
 
@@ -30,17 +30,19 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from cograil.domain import Approval, AuditEvent, Colleague, Run, RunStatus, Tool
-from cograil.errors import ApprovalNotSpendable, GateRequired, RunNotPaused
+from cograil.errors import ApprovalNotSpendable, GateRequired, LoopBudgetExceeded, RunNotPaused
 from cograil.observability import log_event
-from cograil.providers.base import Message, PlannedToolCall
+from cograil.providers.base import Message, PlannedToolCall, StepComplete
 from cograil.registry import CallContext
 from cograil.store import RunStore
 
-DEFAULT_APPROVAL_TIMEOUT = timedelta(hours=72)
-
 Clock = Callable[[], datetime]
-GateAuditKind = Literal["gate.paused", "gate.resumed", "gate.spent", "run.escalated"]
-EscalationReason = Literal["approval_declined", "approval_expired", "failure_threshold"]
+GateAuditKind = Literal[
+    "gate.paused", "gate.resumed", "gate.spent", "loop.bounded", "run.escalated"
+]
+EscalationReason = Literal[
+    "approval_declined", "approval_expired", "failure_threshold", "loop_budget_exceeded"
+]
 
 
 def needs_approval(tool: Tool) -> bool:
@@ -82,6 +84,8 @@ class StepProgress(BaseModel):
     messages: list[Message] = Field(default_factory=list)
     calls: list[dict[str, Any]] = Field(default_factory=list)
     planned: list[PlannedToolCall] = Field(default_factory=list)
+    tokens: int = 0
+    completing: StepComplete | None = None  # the planned calls' Plan also ended the Step
     token: str | None = None
 
 
@@ -101,7 +105,7 @@ class Gates:
         store: RunStore,
         colleague: Colleague,
         *,
-        timeout: timedelta = DEFAULT_APPROVAL_TIMEOUT,
+        timeout: timedelta,
         clock: Clock,
     ) -> None:
         self._store = store
@@ -160,6 +164,13 @@ class Gates:
         await self._audit(run, "run.escalated", {"reason": reason, "contact": contact, **detail})
         log_event("run.escalated", logging.WARNING, run_id=run.id, reason=reason, contact=contact)
         return run
+
+    async def bounded(self, run: Run, step: int, exc: LoopBudgetExceeded) -> Run:
+        """Escalate a Run whose Step hit a loop bound; never continue, never fail silently."""
+        detail = {"step": step, "bound": exc.bound, "limit": exc.limit, "used": exc.used}
+        await self._audit(run, "loop.bounded", detail)
+        log_event("loop.bounded", logging.WARNING, run_id=run.id, step=step, bound=exc.bound)
+        return await self.escalate(run, "loop_budget_exceeded", {**detail, "error": str(exc)})
 
     async def _paused_on(self, token: str) -> tuple[Approval, Run]:
         approval = await self._store.get_approval(token)

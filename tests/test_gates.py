@@ -1,4 +1,7 @@
-"""Gate tests for issue #11: pause, resume, escalate, failure thresholds and GateRequired."""
+"""Gate tests for issue #11: pause, resume, escalate, failure thresholds and GateRequired.
+
+The approval timeout comes from the Harness (issue #44).
+"""
 
 import asyncio
 from datetime import UTC, datetime, timedelta
@@ -6,7 +9,15 @@ from typing import Any
 
 import pytest
 
-from cograil.domain import Approval, Colleague, Protocol, RunStatus, Tool
+from cograil.domain import (
+    Approval,
+    ApprovalSettings,
+    Colleague,
+    Harness,
+    Protocol,
+    RunStatus,
+    Tool,
+)
 from cograil.errors import (
     ApprovalAlreadyDecided,
     GateRequired,
@@ -22,6 +33,7 @@ from cograil.store import InMemoryRunStore
 
 T0 = datetime(2026, 10, 4, 9, 0, tzinfo=UTC)
 TIMEOUT = timedelta(hours=1)
+HARNESS = Harness(approvals=ApprovalSettings(timeout_hours=1))
 CONTACT = "hr-ops@example.com"
 HARPER = Colleague(name="harper", role="HR", escalation_contact=CONTACT, protocols=["demo"])
 SUBMIT = {"employee": "alice", "days": 3}
@@ -47,9 +59,13 @@ def call(tool: str, **args: Any) -> PlannedToolCall:
     return PlannedToolCall(id=f"call-{tool}", tool=tool, args=args)
 
 
-LOOK_UP = [scripted("", call("hris.get_balance")), scripted("25 days left")]
+LOOK_UP = [scripted("", call("hris.get_balance")), scripted("25 days left", done=True)]
 TO_GATE = [*LOOK_UP, scripted("", call("hris.submit_leave", **SUBMIT))]
-AFTER_GATE = [scripted("submitted"), scripted("", call("notify.send")), scripted("told alice")]
+AFTER_GATE = [
+    scripted("submitted", done=True),
+    scripted("", call("notify.send")),
+    scripted("told alice", done=True),
+]
 
 
 class Clock:
@@ -110,7 +126,7 @@ def registry(store: InMemoryRunStore, tools: Tools) -> ToolRegistry:
 def make(store: InMemoryRunStore, registry: ToolRegistry, clock: Clock) -> Any:
     def make(script: list[Plan]) -> tuple[Runner, FakeProvider]:
         provider = FakeProvider(script)
-        runner = Runner(provider, registry, store, HARPER, approval_timeout=TIMEOUT, clock=clock)
+        runner = Runner(provider, registry, store, HARPER, harness=HARNESS, clock=clock)
         return runner, provider
 
     return make
@@ -170,6 +186,22 @@ async def test_resume_continues_exactly_at_the_paused_step(
     seen = await kinds(store)
     assert seen[seen.index("gate.paused") :][:3] == ["gate.paused", "gate.resumed", "gate.spent"]
     assert seen[-1] == "run.completed"
+
+
+async def test_a_plan_that_ends_its_step_at_a_gate_ends_it_after_the_resume(
+    store: InMemoryRunStore, make: Any, protocol: Protocol, tools: Tools
+) -> None:
+    """step_complete beside a gated call is saved with the paused plan (issue #44)."""
+    ending = scripted("submitted", call("hris.submit_leave", **SUBMIT), done=True)
+    runner, _ = make([*LOOK_UP, ending])
+    await runner.run("r1", protocol)
+    (approval,) = await store.list_approvals("r1")
+    runner, provider = make(AFTER_GATE[1:])
+    run = await runner.resume(approval.token, protocol)
+    assert (run.status, run.cursor) == (RunStatus.completed, 3)
+    assert {c.step.number for c in provider.calls} == {3}  # step 2 ended without another turn
+    assert run.context["steps"]["2"]["output"] == "submitted"
+    assert tools.invoked == ["hris.get_balance", "hris.submit_leave", "notify.send"]
 
 
 async def test_racing_resumes_let_one_through(
@@ -252,14 +284,18 @@ async def test_failure_threshold_stops_the_run_and_escalates(
     }  # fmt: skip
 
 
+@pytest.mark.parametrize("done", [False, True], ids=["", "step-complete-beside-it"])
 async def test_a_failure_under_the_threshold_lets_the_step_retry(
-    store: InMemoryRunStore, make: Any, protocol: Protocol, tools: Tools
+    store: InMemoryRunStore, make: Any, protocol: Protocol, tools: Tools, done: bool
 ) -> None:
+    """A step_complete planned beside the failed call does not end the Step (issue #44)."""
     tools.failing["hris.get_balance"] = 1
-    runner, _ = make([scripted("", call("hris.get_balance")), *LOOK_UP, *TO_GATE[2:]])
+    first = scripted("guessed", call("hris.get_balance"), done=done)
+    runner, _ = make([first, *LOOK_UP, *TO_GATE[2:]])
     run = await runner.run("r1", protocol)
     assert (run.status, run.cursor) == (RunStatus.awaiting_approval, 1)
     assert run.context["failures"] == {"hris.get_balance": 1}
+    assert run.context["steps"]["1"]["output"] == "25 days left"
 
 
 async def test_a_failure_of_a_tool_without_a_threshold_fails_the_run(

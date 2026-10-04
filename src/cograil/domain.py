@@ -1,7 +1,7 @@
 """Domain model: the source of truth for every name used in Cograil.
 
 Vocabulary: Workspace, Colleague, Protocol, Step, Tool, Connection, Audience,
-Trigger, Run, Gate, Approval, AuditEvent, KnowledgeSource, Chunk.
+Trigger, Run, Gate, Approval, AuditEvent, KnowledgeSource, Chunk, Harness, Tier.
 The shapes below are the contract; Product Plan section 3 holds the ERD.
 """
 
@@ -173,6 +173,75 @@ class Chunk(Entity):
     acl_groups: list[str]
 
 
+Tier = Literal["small", "standard", "strong"]
+
+
+class LoopBounds(Entity):
+    """Bounds on a Step's inner loop (ADR 0008); a Step's `(turns: N)` overrides max_turns."""
+
+    max_turns: int = Field(default=6, ge=1)
+    token_budget_per_step: int | None = Field(default=None, ge=1)
+    usd_budget_per_run: float | None = Field(default=None, gt=0)
+
+
+class Tiers(Entity):
+    """Tier-to-model mapping (ADR 0010); concrete model names belong in harness.yaml."""
+
+    small: str = "claude-haiku-4-5"
+    standard: str = "claude-sonnet-5-5"
+    strong: str = "claude-opus-5-5"
+
+
+class ContextSettings(Entity):
+    default_prior_steps: int = Field(default=1, ge=0)
+    compression_threshold_tokens: int = Field(default=2000, ge=1)
+
+
+class TierDefaults(Entity):
+    classification_tier: Tier = "small"
+    judgment_tier: Tier = "standard"
+
+
+class RetryPolicy(Entity):
+    tool_attempts: int = Field(default=1, ge=1)
+    backoff_seconds: float = Field(default=0, ge=0)
+
+
+class ApprovalSettings(Entity):
+    timeout_hours: float = Field(default=72, gt=0)
+
+
+class Price(Entity):
+    """What one model costs, in USD per million tokens."""
+
+    input_per_mtok: float = Field(ge=0)
+    output_per_mtok: float = Field(ge=0)
+
+
+class Harness(Entity):
+    """harness.yaml: versioned configuration stamped on every Run (ADR 0012).
+
+    `version` is the file's semantic version; harness.py adds the content hash.
+    """
+
+    version: str = Field(default="0.0.0", pattern=r"^\d+\.\d+\.\d+$")
+    loop: LoopBounds = Field(default_factory=LoopBounds)
+    tiers: Tiers = Field(default_factory=Tiers)
+    context: ContextSettings = Field(default_factory=ContextSettings)
+    defaults: TierDefaults = Field(default_factory=TierDefaults)
+    retry: RetryPolicy = Field(default_factory=RetryPolicy)
+    approvals: ApprovalSettings = Field(default_factory=ApprovalSettings)
+    pricing: dict[str, Price] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check_pricing(self) -> Harness:
+        if self.loop.usd_budget_per_run is not None:
+            tiers = {self.tiers.small, self.tiers.standard, self.tiers.strong}
+            if unpriced := sorted(tiers - self.pricing.keys()):
+                raise ValueError(f"usd_budget_per_run needs a price for tier models {unpriced}")
+        return self
+
+
 class Workspace(Entity):
     name: str
     colleagues: list[Colleague]
@@ -181,6 +250,7 @@ class Workspace(Entity):
     connections: list[Connection] = Field(default_factory=list)
     audiences: list[Audience] = Field(default_factory=list)
     knowledge: list[KnowledgeSource] = Field(default_factory=list)
+    harness: Harness = Field(default_factory=Harness)
 
 
 class RunStatus(StrEnum):

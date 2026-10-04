@@ -1,4 +1,5 @@
-"""Provider tests: one per acceptance criterion of issue #14. No real model is called."""
+"""Provider tests: one per acceptance criterion of issue #14, and the step_complete signal of
+issue #44. No real model is called."""
 
 from typing import Any
 
@@ -12,13 +13,16 @@ from anthropic.types import Usage as SdkUsage
 from cograil.domain import Colleague, Protocol, Step, Tool
 from cograil.errors import ProviderError
 from cograil.providers import (
+    STEP_COMPLETE,
     AnthropicProvider,
     FakeProvider,
     Message,
     PlannedToolCall,
+    StepComplete,
     resolve_model,
     scripted,
 )
+from cograil.providers.anthropic import STEP_COMPLETE_SPEC
 
 STEP = Step(number=1, name="Look up balance", instruction="Find the leave balance.")
 TOOL = Tool(
@@ -48,7 +52,7 @@ class StubClient:
         self.messages = StubMessages(response)
 
 
-def sdk_response() -> SdkMessage:
+def sdk_response(*extra: ToolUseBlock) -> SdkMessage:
     return SdkMessage(
         id="msg_1",
         type="message",
@@ -59,6 +63,7 @@ def sdk_response() -> SdkMessage:
             ToolUseBlock(
                 type="tool_use", id="toolu_1", name="hris__get_balance", input={"employee": "alice"}
             ),
+            *extra,
         ],
         stop_reason="tool_use",
         stop_sequence=None,
@@ -76,13 +81,15 @@ async def test_plan_returns_text_and_structured_tool_calls() -> None:
     plan = await anthropic_provider.plan(STEP, [Message(role="user", content="Alice asks")], [TOOL])
     assert plan.text == "Checking. "
     assert plan.tool_calls == [CALL]
+    assert plan.step_complete is None
     request = client.messages.requests[0]
     assert request["tools"] == [
         {
             "name": "hris__get_balance",
             "description": TOOL.description,
             "input_schema": TOOL.args_schema,
-        }
+        },
+        STEP_COMPLETE_SPEC,
     ]
     assert "Find the leave balance." in request["system"]
 
@@ -97,8 +104,16 @@ async def test_plan_without_tools_or_context_still_sends_a_valid_request() -> No
     anthropic_provider, client = provider(sdk_response())
     await anthropic_provider.plan(STEP, [], [])
     request = client.messages.requests[0]
-    assert "tools" not in request
+    assert request["tools"] == [STEP_COMPLETE_SPEC]  # a Step can always end
     assert request["messages"][0]["role"] == "user"
+
+
+async def test_a_step_complete_tool_use_becomes_the_structured_signal() -> None:
+    done = ToolUseBlock(type="tool_use", id="toolu_2", name=STEP_COMPLETE, input={"output": "25"})
+    anthropic_provider, _ = provider(sdk_response(done))
+    plan = await anthropic_provider.plan(STEP, [], [TOOL])
+    assert plan.tool_calls == [CALL]
+    assert plan.step_complete == StepComplete(output="25")
 
 
 @pytest.mark.parametrize(
@@ -137,12 +152,17 @@ async def test_sdk_errors_become_provider_errors() -> None:
         await anthropic_provider.plan(STEP, [], [])
 
 
-async def test_tools_sharing_a_wire_name_raise_provider_error_before_any_call() -> None:
-    dotted = TOOL.model_copy(update={"name": "a.b"})
-    underscored = TOOL.model_copy(update={"name": "a__b"})
+@pytest.mark.parametrize(
+    "names",
+    [pytest.param(["a.b", "a__b"], id="each-other"), pytest.param([STEP_COMPLETE], id="reserved")],
+)
+async def test_tools_sharing_a_wire_name_raise_provider_error_before_any_call(
+    names: list[str],
+) -> None:
+    tools = [TOOL.model_copy(update={"name": name}) for name in names]
     anthropic_provider, client = provider(sdk_response())
-    with pytest.raises(ProviderError, match="a__b"):
-        await anthropic_provider.plan(STEP, [], [dotted, underscored])
+    with pytest.raises(ProviderError, match=names[-1]):
+        await anthropic_provider.plan(STEP, [], tools)
     assert client.messages.requests == []
 
 

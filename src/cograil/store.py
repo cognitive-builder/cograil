@@ -39,7 +39,8 @@ class RunStore(Protocol):
     async def get_run(self, run_id: str) -> Run: ...
 
     async def update_run(self, run: Run) -> None:
-        """Save status, cursor, context, cost_usd and updated_at; identity fields never change."""
+        """Save status, cursor, context, cost_usd, harness_version and updated_at; identity
+        fields never change. The runner stamps harness_version when it runs the Run."""
         ...
 
     async def record_tool_call(self, run_id: str, call: ToolCall) -> None: ...
@@ -70,7 +71,7 @@ class RunStore(Protocol):
     async def list_audit_events(self, run_id: str) -> list[AuditEvent]: ...
 
 
-_RUN_MUTABLE = ("status", "cursor", "context", "cost_usd", "updated_at")
+_RUN_MUTABLE = ("status", "cursor", "context", "cost_usd", "harness_version", "updated_at")
 
 
 class InMemoryRunStore:

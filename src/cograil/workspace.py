@@ -1,7 +1,8 @@
 """Load a workspace folder into a Workspace (ADR 0004).
 
 Layout: tools.yaml, colleagues/*.yaml and protocols/*.md are required;
-connections.yaml, audiences.yaml and knowledge.yaml are optional and default to empty.
+connections.yaml, audiences.yaml and knowledge.yaml are optional and default to empty;
+harness.yaml is optional and defaults to the Harness defaults (ADR 0012).
 Every failure is a WorkspaceError whose message names the offending file.
 """
 
@@ -17,6 +18,7 @@ from cograil.domain import (
     Audience,
     Colleague,
     Connection,
+    Harness,
     KnowledgeSource,
     Protocol,
     Tool,
@@ -40,7 +42,14 @@ def load_workspace(path: Path | str) -> Workspace:
         connections=_load_list(root / "connections.yaml", "connections", Connection),
         audiences=_load_list(root / "audiences.yaml", "audiences", Audience),
         knowledge=_load_list(root / "knowledge.yaml", "knowledge", KnowledgeSource),
+        harness=_load_harness(root / "harness.yaml"),
     )
+
+
+def _load_harness(file: Path) -> Harness:
+    if not file.is_file():
+        return Harness()
+    return _build(Harness, _read_yaml(file) or {}, file)
 
 
 def _read_yaml(file: Path) -> Any:
