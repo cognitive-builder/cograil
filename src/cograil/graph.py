@@ -4,16 +4,25 @@ The graph has one node per Step with edges in step order, a gate node after ever
 whitelists a Tool needing approval, a subgraph for each helper Protocol, and an edge to
 `escalated` wherever the Protocol declares a failure threshold or a gate can be declined. The
 model never adds or removes a node or an edge. No Decision table routes the Runner today, so
-a Decision Tool only shows in its Step's label. The Runner still builds its own LangGraph graph
-(`runner.compile_protocol`); this module is the reviewable picture of the same shape.
+a Decision Tool only shows in its Step's label.
+
+The Runner executes the LangGraph graph `compile_protocol` builds: one node per Step, edges in
+step order. `compile_graph` is the reviewable picture of the same shape.
 """
 
 from __future__ import annotations
 
+import itertools
 import re
-from typing import Literal
+import typing
+from collections.abc import Callable
+from typing import Literal, TypedDict
 
-from cograil.domain import Entity, Protocol, Step, Tool, Workspace
+from langgraph.graph import END, StateGraph
+from langgraph.graph import START as ENTRY
+from langgraph.graph.state import CompiledStateGraph
+
+from cograil.domain import Entity, Protocol, Run, RunStatus, Step, Tool, Workspace
 from cograil.errors import WorkspaceError
 from cograil.gates import needs_approval
 
@@ -186,3 +195,47 @@ def render_mermaid(graph: ProtocolGraph) -> str:
         lines.append("  end")
     lines += [_edge_line(edge) for edge in graph.edges]
     return "\n".join(lines) + "\n"
+
+
+class RunState(TypedDict):
+    run: Run
+
+
+class StepNode(typing.Protocol):
+    async def __call__(self, state: RunState) -> RunState: ...
+
+
+Graph = CompiledStateGraph[RunState, None, RunState, RunState]
+
+
+def node_name(step: Step) -> str:
+    return f"step_{step.number}"
+
+
+def compile_protocol(protocol: Protocol, node_for: Callable[[Step], StepNode]) -> Graph:
+    """One node per Step, edges in step order; entry is the first Step after Run.cursor.
+
+    A Step that leaves the Run anything but running (paused or escalated) ends the graph.
+    """
+    graph = StateGraph(RunState)
+    names = [node_name(step) for step in protocol.steps]
+    for step, name in zip(protocol.steps, names, strict=True):
+        graph.add_node(name, node_for(step))
+    for here, there in itertools.pairwise(names):
+        graph.add_conditional_edges(here, _onward(there), [there, END])
+    graph.add_edge(names[-1], END)
+
+    def entry(state: RunState) -> str:
+        cursor = state["run"].cursor
+        pending = [node_name(step) for step in protocol.steps if step.number > cursor]
+        return pending[0] if pending else END
+
+    graph.add_conditional_edges(ENTRY, entry, [*names, END])
+    return graph.compile()
+
+
+def _onward(there: str) -> Callable[[RunState], str]:
+    def route(state: RunState) -> str:
+        return there if state["run"].status is RunStatus.running else END
+
+    return route

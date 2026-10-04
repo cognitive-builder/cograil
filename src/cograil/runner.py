@@ -1,5 +1,7 @@
 """Runner: executes a Protocol as a LangGraph graph with one node per Step (ADR 0011).
 
+The graph is compiled in graph.py (`compile_protocol`); this module supplies its Step nodes.
+
 Inside a Step the model plans through the injected Provider and is offered only the Step's
 whitelisted Tools. Every call of a plan is checked before any of them runs: a Tool the Step does not
 list raises ToolNotAllowed, and a gated write needs an approved Approval (gates.py). Only then does
@@ -33,27 +35,22 @@ executions only the last claim's saves land; the other stops with RunClaimLost, 
 
 What a Step sees is the ContextBuilder's (context.py, ADR 0007): the prior Steps it declares,
 its whitelisted Tools' schemas, and Tool results inside a data block. The Window Ledger of
-that is kept in `Run.context["ledger"]`, saved with the Run. Tool results pass the injection
-defence first (injection.py, issue #51): instruction-like text is stripped and the small tier
-screens what is left. A result over the harness's compression threshold then reaches the model
-as the small tier's summary (compression.py); the raw result stays in the recorded `tool_calls`.
+that is kept in `Run.context["ledger"]`, saved with the Run. Tool results and failed calls are
+handled in tool_results.py. Results pass the injection defence first (injection.py, issue #51):
+instruction-like text is stripped and the small tier screens what is left. A result over the
+harness's compression threshold then reaches the model as the small tier's summary
+(compression.py); the raw result stays in the recorded `tool_calls`.
 """
 
 from __future__ import annotations
 
-import itertools
-import typing
-from collections.abc import Callable
 from datetime import timedelta
-from typing import Any, Literal, TypedDict
-
-from langgraph.graph import END, START, StateGraph
-from langgraph.graph.state import CompiledStateGraph
+from typing import Any, Literal
 
 from cograil.budget import Budget
 from cograil.claims import RunClaims
-from cograil.compression import Compressor, recorded, shown
-from cograil.context import SCREENED_KEY, ContextBuilder, add_to_ledger
+from cograil.compression import Compressor
+from cograil.context import ContextBuilder, add_to_ledger
 from cograil.domain import (
     Approval,
     Colleague,
@@ -79,61 +76,19 @@ from cograil.gates import (
     require_approval,
     utc_now,
 )
+from cograil.graph import RunState, StepNode, compile_protocol
 from cograil.harness import harness_version, step_tier
-from cograil.injection import Screen, kept
+from cograil.injection import Screen
 from cograil.observability import log_event, run_span, step_span
 from cograil.providers.base import Message, PlannedToolCall, Provider
 from cograil.registry import UNVERSIONED, CallContext, ToolRegistry
 from cograil.run_versions import RunVersions
 from cograil.store import RunStore
+from cograil.tool_results import ToolResults
 from cograil.turns import Turns
 
 _ENDED = frozenset({RunStatus.escalated, RunStatus.failed, RunStatus.completed})
 NOT_COMPLETE = "The step is not complete until you signal step_complete."
-
-
-class RunState(TypedDict):
-    run: Run
-
-
-class StepNode(typing.Protocol):
-    async def __call__(self, state: RunState) -> RunState: ...
-
-
-Graph = CompiledStateGraph[RunState, None, RunState, RunState]
-
-
-def node_name(step: Step) -> str:
-    return f"step_{step.number}"
-
-
-def compile_protocol(protocol: Protocol, node_for: Callable[[Step], StepNode]) -> Graph:
-    """One node per Step, edges in step order; entry is the first Step after Run.cursor.
-
-    A Step that leaves the Run anything but running (paused or escalated) ends the graph.
-    """
-    graph = StateGraph(RunState)
-    names = [node_name(step) for step in protocol.steps]
-    for step, name in zip(protocol.steps, names, strict=True):
-        graph.add_node(name, node_for(step))
-    for here, there in itertools.pairwise(names):
-        graph.add_conditional_edges(here, _onward(there), [there, END])
-    graph.add_edge(names[-1], END)
-
-    def entry(state: RunState) -> str:
-        cursor = state["run"].cursor
-        pending = [node_name(step) for step in protocol.steps if step.number > cursor]
-        return pending[0] if pending else END
-
-    graph.add_conditional_edges(START, entry, [*names, END])
-    return graph.compile()
-
-
-def _onward(there: str) -> Callable[[RunState], str]:
-    def route(state: RunState) -> str:
-        return there if state["run"].status is RunStatus.running else END
-
-    return route
 
 
 class Runner:
@@ -163,8 +118,9 @@ class Runner:
         self._gates = Gates(store, colleague, timeout=timeout, clock=clock)
         self._budget = Budget(store, self._harness.budget, colleague, clock)
         self._turns = Turns(provider, self._harness, self._claims)
-        self._compressor = Compressor(provider, self._harness, self._claims)
-        self._screen = Screen(provider, self._harness, self._claims)
+        screen = Screen(provider, self._harness, self._claims)
+        compressor = Compressor(provider, self._harness, self._claims)
+        self._results = ToolResults(registry, self._context, self._gates, screen, compressor)
 
     async def run(self, run_id: str, protocol: Protocol) -> Run:
         """Run from the Step after Run.cursor until the end, a gate or an escalation.
@@ -281,48 +237,13 @@ class Runner:
                 return run
             progress.planned = []
             try:
-                run = await self._absorb(run, step, progress, done)
+                run = await self._results.absorb(run, step, progress, done)
             except LoopBudgetExceeded as exc:
                 return await self._gates.bounded(run, step.number, exc)
             if progress.completing is not None:
                 if not any("error" in call for call in done):
                     return await self._complete(run, step, progress.completing.output, progress)
                 progress.completing = None  # it was said before a call failed: another turn
-
-    async def _recorded(self, done: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """`done` as it is recorded in the Step's `tool_calls`: error text redacted (#78).
-
-        The model's own messages are built from `done` as it is, so it still sees the raw error.
-        """
-        redact = self._registry.redactor.redact
-        return [
-            {**c, **{k: await redact(c[k]) for k in ("error", SCREENED_KEY) if k in c}}
-            if "error" in c
-            else c
-            for c in done
-        ]
-
-    async def _absorb(
-        self, run: Run, step: Step, progress: StepProgress, done: list[dict[str, Any]]
-    ) -> Run:
-        """Record the calls on the Step and give the model their results: screened for
-        injected instructions first, then long ones compressed."""
-        run, safe = await self._screen.screen(run, step, progress, done)
-        run, summaries = await self._compressor.compress(run, step, progress, safe)
-        progress.calls.extend(await self._recorded(recorded(kept(done, safe), summaries)))
-        return self._remember(run, step, progress, shown(safe, summaries))
-
-    def _remember(
-        self, run: Run, step: Step, progress: StepProgress, done: list[dict[str, Any]]
-    ) -> Run:
-        """Give the model the results of the calls (as data) and count them in the ledger."""
-        if not done:
-            return run
-        by_name = {call["tool"]: self._registry.get(call["tool"]) for call in done}
-        results = self._context.tool_results(done, by_name)
-        progress.messages.extend(results.messages)
-        context = add_to_ledger(run.context, step.number, results.tokens)
-        return run.model_copy(update={"context": context})
 
     async def _act(
         self, run: Run, step: Step, ctx: CallContext, progress: StepProgress, protocol: Protocol
@@ -354,35 +275,13 @@ class Runner:
             try:
                 result = await self._registry.invoke(call.tool, call.args, ctx)
             except ToolExecutionError as exc:
-                run = await self._count_failure(run, ctx, call, exc, protocol)
+                run = await self._results.count_failure(run, ctx, call, exc, protocol)
                 if run.status is not RunStatus.running:
                     return run, done
                 done.append({"tool": call.tool, "args": call.args, "error": str(exc)})
                 continue
             done.append({"tool": call.tool, "args": call.args, "result": result})
         return run, done
-
-    async def _count_failure(
-        self,
-        run: Run,
-        ctx: CallContext,
-        call: PlannedToolCall,
-        exc: ToolExecutionError,
-        protocol: Protocol,
-    ) -> Run:
-        """Count a failed call against the Tool's FailureThreshold; without one, fail the Run."""
-        threshold = next((t for t in protocol.failure_thresholds if t.tool == call.tool), None)
-        if threshold is None:
-            raise exc
-        failures = {**run.context.get("failures", {})}
-        failures[call.tool] = failures.get(call.tool, 0) + 1
-        run = run.model_copy(update={"context": {**run.context, "failures": failures}})
-        if failures[call.tool] < threshold.max_failures:
-            return run
-        error = await self._registry.redactor.redact(str(exc))  # the audit copy, not the model's
-        detail = {"step": ctx.step, "tool": call.tool, "failures": failures[call.tool],
-                  "rule": threshold.rule, "error": error}  # fmt: skip
-        return await self._gates.escalate(run, "failure_threshold", detail)
 
     def _allowed(self, step: Step, call: PlannedToolCall) -> Tool:
         if call.tool not in step.tools:
