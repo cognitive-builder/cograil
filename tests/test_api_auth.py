@@ -176,10 +176,19 @@ def test_oidc_code_flow_keeps_the_principal_in_a_signed_cookie(
         ("/", "/"),
         ("https://evil.test/phish", "/"),
         ("//evil.test/phish", "/"),
+        ("/\\evil.test/phish", "/"),
         ("\\evil.test/phish", "/"),
         ("relative/path", "/"),
     ],
-    ids=["approval-card", "home", "other-origin", "protocol-relative", "backslash", "relative"],
+    ids=[
+        "approval-card",
+        "home",
+        "other-origin",
+        "protocol-relative",
+        "slash-backslash",
+        "backslash",
+        "relative",
+    ],
 )
 def test_sign_in_returns_to_a_same_site_path(idp: FakeIdp, back_to: str, lands_on: str) -> None:
     web = client(OIDC_ENV, idp)

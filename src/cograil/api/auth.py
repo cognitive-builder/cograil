@@ -123,9 +123,12 @@ def _session_principal(request: Request) -> Principal:
         raise HTTPException(401, "sign in at /auth/login") from None
 
 
+_OTHER_ORIGIN = ("//", "/\\", "\\")  # the browser's URL parser reads all three as one
+
+
 def _same_site_path(value: object) -> str:
     """A path back into this service only: absolute, and never another origin."""
-    if isinstance(value, str) and value.startswith("/") and not value.startswith(("//", "\\")):
+    if isinstance(value, str) and value.startswith("/") and not value.startswith(_OTHER_ORIGIN):
         return value
     return "/"
 

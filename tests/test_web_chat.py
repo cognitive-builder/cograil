@@ -25,14 +25,12 @@ def chat_event_names() -> list[str]:
     """Every name POST /chat can emit, read out of the modules that emit it — cograil.api
     .services and the SSE guard in cograil.api.sse — so an event the API adds is tested here
     without anyone remembering to extend a list by hand (issue #140)."""
-    names: list[str] = []
-    for module in (services, sse):
-        names += [
-            name
-            for name in re.findall(r'emit\("(\w+)"', inspect.getsource(module))
-            if name not in names
-        ]
-    return names
+    emitted = (
+        name
+        for module in (services, sse)
+        for name in re.findall(r'emit\("(\w+)"', inspect.getsource(module))
+    )
+    return list(dict.fromkeys(emitted))
 
 
 def test_the_page_is_served_without_sign_in(env: Env) -> None:
