@@ -76,12 +76,16 @@ from cograil.gates import (
     require_approval,
     utc_now,
 )
-from cograil.harness import call_cost, check_bounds, harness_version
+from cograil.harness import (
+    harness_version,
+    step_tier,
+)
 from cograil.observability import log_event
-from cograil.providers.base import Message, Plan, PlannedToolCall, Provider
+from cograil.providers.base import Message, PlannedToolCall, Provider
 from cograil.registry import UNVERSIONED, CallContext, ToolRegistry
 from cograil.run_versions import RunVersions
 from cograil.store import RunStore
+from cograil.turns import Turns
 
 _ENDED = frozenset({RunStatus.escalated, RunStatus.failed, RunStatus.completed})
 NOT_COMPLETE = "The step is not complete until you signal step_complete."
@@ -150,11 +154,13 @@ class Runner:
         self._provider = provider
         self._registry = registry
         self._store = store
+        self._colleague = colleague
         self._claims = RunClaims(store, clock, registry.redactor)
         self._harness = harness or Harness()
         self._context = ContextBuilder(self._harness)
         timeout = timedelta(hours=self._harness.approvals.timeout_hours)
         self._gates = Gates(store, colleague, timeout=timeout, clock=clock)
+        self._turns = Turns(provider, self._harness, self._claims)
 
     async def run(self, run_id: str, protocol: Protocol) -> Run:
         """Run from the Step after Run.cursor until the end, a gate or an escalation.
@@ -245,12 +251,13 @@ class Runner:
             progress = StepProgress(step=step.number, messages=opening.messages)
             context = add_to_ledger(run.context, step.number, opening.tokens, restart=True)
             run = run.model_copy(update={"context": context})
+        tier = step_tier(self._colleague, protocol, step)
         context = {name: value for name, value in run.context.items() if name != "paused"}
         run = run.model_copy(update={"context": context})
         while True:
             if not progress.planned:
                 try:
-                    run, plan = await self._turn(run, step, progress, tools)
+                    run, plan = await self._turns.take(run, step, tier, progress, tools)
                 except LoopBudgetExceeded as exc:
                     return await self._gates.bounded(run, step.number, exc)
                 if not plan.tool_calls:
@@ -289,22 +296,6 @@ class Runner:
         progress.messages.extend(results.messages)
         context = add_to_ledger(run.context, step.number, results.tokens)
         return run.model_copy(update={"context": context})
-
-    async def _turn(
-        self, run: Run, step: Step, progress: StepProgress, tools: list[Tool]
-    ) -> tuple[Run, Plan]:
-        """One provider call inside the Step's bounds; raises LoopBudgetExceeded past them."""
-        check_bounds(self._harness, step, turns=progress.turn, tokens=progress.tokens,
-                     cost_usd=run.cost_usd)  # fmt: skip
-        plan = await self._provider.plan(step, progress.messages, tools)
-        progress.turn += 1
-        usage = plan.usage
-        progress.tokens += usage.input_tokens + usage.output_tokens
-        cost = call_cost(self._harness, plan.model, usage.input_tokens, usage.output_tokens)
-        run = run.model_copy(update={"cost_usd": run.cost_usd + cost})
-        if plan.text:
-            progress.messages.append(Message(role="assistant", content=plan.text))
-        return run, plan
 
     async def _act(
         self, run: Run, step: Step, ctx: CallContext, progress: StepProgress, protocol: Protocol

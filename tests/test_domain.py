@@ -66,7 +66,7 @@ ENTITIES: list[Entity] = [
 ]
 
 ERD_FIELDS: list[tuple[type[Entity], set[str]]] = [
-    (Colleague, {"name", "role", "escalation_contact", "model_policy"}),
+    (Colleague, {"name", "role", "escalation_contact", "default_tier"}),
     (Protocol, {"name", "version", "manual_allowed", "scheduled_allowed"}),
     (Tool, {"kind", "scope", "confirm_before_write", "args_schema"}),
     (Run, {"status", "principal_id", "cursor", "trigger_kind"}),

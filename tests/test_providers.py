@@ -10,7 +10,7 @@ from anthropic.types import Message as SdkMessage
 from anthropic.types import TextBlock, ToolUseBlock
 from anthropic.types import Usage as SdkUsage
 
-from cograil.domain import Colleague, Protocol, Step, Tool
+from cograil.domain import Step, Tool
 from cograil.errors import ProviderError
 from cograil.providers import (
     STEP_COMPLETE,
@@ -19,7 +19,6 @@ from cograil.providers import (
     Message,
     PlannedToolCall,
     StepComplete,
-    resolve_model,
     scripted,
 )
 from cograil.providers.anthropic import STEP_COMPLETE_SPEC
@@ -116,23 +115,16 @@ async def test_a_step_complete_tool_use_becomes_the_structured_signal() -> None:
     assert plan.step_complete == StepComplete(output="25")
 
 
-@pytest.mark.parametrize(
-    ("protocol_model", "expected"),
-    [("claude-opus-5-5", "claude-opus-5-5"), (None, "claude-haiku-4-5")],
-)
-async def test_model_comes_from_protocol_or_colleague_policy(
-    protocol_model: str | None, expected: str
-) -> None:
-    protocol = Protocol(name="p", steps=[STEP], model=protocol_model)
-    colleague = Colleague(
-        name="c", role="r", escalation_contact="x@example.com", protocols=["p"],
-        model_policy="claude-haiku-4-5",
-    )  # fmt: skip
-    assert resolve_model(protocol, colleague) == expected
-    client = StubClient(sdk_response())
-    built = AnthropicProvider.for_protocol(protocol, colleague, client=client)  # type: ignore[arg-type]
-    await built.plan(STEP, [], [])
-    assert client.messages.requests[0]["model"] == expected
+async def test_the_runner_names_the_model_and_effort_per_call() -> None:
+    anthropic_provider, client = provider(sdk_response())
+    await anthropic_provider.plan(STEP, [], [], model="claude-haiku-4-5", effort="high")
+    await anthropic_provider.plan(STEP, [], [])
+    first, second = client.messages.requests
+    assert (first["model"], first["extra_body"]) == (
+        "claude-haiku-4-5",
+        {"output_config": {"effort": "high"}},
+    )
+    assert second["model"] == "claude-sonnet-5-5" and "extra_body" not in second
 
 
 async def test_usage_is_returned_on_every_call() -> None:

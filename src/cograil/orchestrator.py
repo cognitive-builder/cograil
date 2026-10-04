@@ -24,6 +24,7 @@ from typing import Any
 
 from cograil.audience import audience_denial
 from cograil.domain import Candidate, Principal, Routing, Step, Tool, Workspace
+from cograil.harness import task_tier, tier_model
 from cograil.observability import log_event
 from cograil.providers.base import Message, Provider
 from cograil.redaction import Redactor, redact_patterns
@@ -45,7 +46,7 @@ _INSTRUCTION = (
 def classification_model(workspace: Workspace) -> str:
     """The model id of the harness's classification tier (claude-haiku-4-5 by default)."""
     harness = workspace.harness
-    return str(getattr(harness.tiers, harness.defaults.classification_tier))
+    return tier_model(harness, task_tier(harness, "classification"))
 
 
 def candidates(workspace: Workspace, principal: Principal) -> list[Candidate]:

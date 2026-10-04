@@ -15,6 +15,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from cograil.identity import PrincipalId
 
+Tier = Literal["small", "standard", "strong"]
+Effort = Literal["low", "medium", "high"]
+
 
 class Entity(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -113,7 +116,8 @@ class Step(Entity):
     instruction: str
     tools: list[str] = Field(default_factory=list)
     context_steps: list[int] | None = None  # None means harness default (previous step only)
-    model_tier: Literal["small", "standard", "strong"] | None = None
+    model_tier: Tier | None = None
+    effort: Effort | None = None
     max_turns: int | None = None
 
 
@@ -140,7 +144,7 @@ class Protocol(Entity):
     error_handling: list[str] = Field(default_factory=list)
     failure_thresholds: list[FailureThreshold] = Field(default_factory=list)
     guardrails: list[str] = Field(default_factory=list)
-    model: str | None = None
+    model_tier: Tier | None = None  # beats the Colleague's default_tier; a Step's own tier beats it
 
 
 class Colleague(Entity):
@@ -148,7 +152,7 @@ class Colleague(Entity):
     role: str
     escalation_contact: str
     protocols: list[str]
-    model_policy: str = "claude-sonnet-5-5"
+    default_tier: Tier = "standard"  # a tier, never a model name (ADR 0010, 0013)
     audiences: list[str] = Field(default_factory=lambda: ["everyone"])
 
 
@@ -211,9 +215,6 @@ class Decision(Entity):
     rules: list[DecisionRule] = Field(min_length=1)
 
 
-Tier = Literal["small", "standard", "strong"]
-
-
 class LoopBounds(Entity):
     """Bounds on a Step's inner loop (ADR 0008); a Step's `(turns: N)` overrides max_turns."""
 
@@ -222,8 +223,19 @@ class LoopBounds(Entity):
     usd_budget_per_run: float | None = Field(default=None, gt=0)
 
 
-class Tiers(Entity):
-    """Tier-to-model mapping (ADR 0010); concrete model names belong in harness.yaml."""
+class TierModels(Entity):
+    """Tier-to-model mapping of one provider (ADR 0010); all three tiers must be named."""
+
+    small: str
+    standard: str
+    strong: str
+
+    def model_for(self, tier: Tier) -> str:
+        return str(getattr(self, tier))
+
+
+class Tiers(TierModels):
+    """The Anthropic provider's mapping; the defaults apply to a workspace without harness.yaml."""
 
     small: str = "claude-haiku-4-5"
     standard: str = "claude-sonnet-5-5"
@@ -236,8 +248,16 @@ class ContextSettings(Entity):
 
 
 class TierDefaults(Entity):
+    """Which tier a kind of work uses, the default effort, and when a small result escalates.
+
+    `effort` is None until a workspace sets it, so the provider's own default applies.
+    A small-tier step_complete whose confidence is below `min_confidence` escalates one tier.
+    """
+
     classification_tier: Tier = "small"
     judgment_tier: Tier = "standard"
+    effort: Effort | None = None
+    min_confidence: float = Field(default=0.7, ge=0, le=1)
 
 
 class RetryPolicy(Entity):
@@ -274,7 +294,9 @@ class Harness(Entity):
 
     version: str = Field(default="0.0.0", pattern=r"^\d+\.\d+\.\d+$")
     loop: LoopBounds = Field(default_factory=LoopBounds)
-    tiers: Tiers = Field(default_factory=Tiers)
+    provider: Literal["anthropic", "ollama"] = "anthropic"
+    tiers: Tiers = Field(default_factory=Tiers)  # the anthropic provider's models
+    providers: dict[str, TierModels] = Field(default_factory=dict)  # the other providers' models
     context: ContextSettings = Field(default_factory=ContextSettings)
     defaults: TierDefaults = Field(default_factory=TierDefaults)
     retry: RetryPolicy = Field(default_factory=RetryPolicy)
@@ -282,10 +304,21 @@ class Harness(Entity):
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     pricing: dict[str, Price] = Field(default_factory=dict)
 
+    @property
+    def models(self) -> TierModels:
+        """The tier-to-model mapping of the provider this harness selects."""
+        return self.providers.get(self.provider, self.tiers)
+
+    @model_validator(mode="after")
+    def _check_provider(self) -> Harness:
+        if self.provider != "anthropic" and self.provider not in self.providers:
+            raise ValueError(f"provider {self.provider!r} needs its models under providers")
+        return self
+
     @model_validator(mode="after")
     def _check_pricing(self) -> Harness:
         if self.loop.usd_budget_per_run is not None:
-            tiers = {self.tiers.small, self.tiers.standard, self.tiers.strong}
+            tiers = {self.models.small, self.models.standard, self.models.strong}
             if unpriced := sorted(tiers - self.pricing.keys()):
                 raise ValueError(f"usd_budget_per_run needs a price for tier models {unpriced}")
         return self

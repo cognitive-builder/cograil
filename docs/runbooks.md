@@ -134,6 +134,14 @@ gates instead. A `loop.bounded` AuditEvent names the bound, its limit and what w
 `run.escalated` AuditEvent has the reason `loop_budget_exceeded` and the Colleague's
 `escalation_contact`.
 
+## Step directives
+
+A step line can end with one parenthesised directive, with parts split by `;`, such as
+`(context: steps 1, 2; model: small; effort: high; turns: 4)`. `context` picks the prior steps the
+step sees, `model` picks its tier (`small`, `standard` or `strong`), `effort` sets how hard the
+model thinks (`low`, `medium` or `high`) and `turns` overrides `loop.max_turns`. See
+[Models, Tiers and Ollama](models.md) for `model` and `effort`.
+
 ## harness.yaml
 
 `harness.yaml` in the workspace folder is optional. Without it, the defaults apply. The example is
@@ -141,10 +149,13 @@ gates instead. A `loop.bounded` AuditEvent names the bound, its limit and what w
 
 - `version`: a semantic version such as `1.0.0`.
 - `loop`: `max_turns`, `token_budget_per_step` and `usd_budget_per_run`.
-- `tiers`: the model names for `small`, `standard` and `strong`.
+- `tiers`: the Anthropic model names for `small`, `standard` and `strong`.
+- `provider`: `anthropic` (the default) or `ollama`.
+- `providers`: the tier mapping of the other providers, such as `ollama`. All three tiers are
+  required.
 - `pricing`: the price of each model, in USD per million tokens.
 - `context`: `default_prior_steps` and `compression_threshold_tokens` (the threshold is not used yet).
-- `defaults`: `classification_tier` and `judgment_tier`.
+- `defaults`: `classification_tier`, `judgment_tier`, `effort` and `min_confidence`.
 - `retry`: `tool_attempts` and `backoff_seconds`.
 - `approvals`: `timeout_hours`.
 
@@ -154,8 +165,9 @@ The runtime stamps a harness version on every run. It is the semantic version pl
 validated content, such as `1.0.0+3f2a9c1b7d4e`. Changing any value changes the version. Comments
 and layout do not. The `run.started` AuditEvent records it too.
 
-`tiers`, `context`, `defaults` and `retry` are loaded and validated now. Later issues will use them
-(tier routing, compressing large outputs and tool retries).
+Tiers, providers, effort and `min_confidence` are in use: see [Models, Tiers and Ollama](models.md).
+`context` and `retry` are loaded and validated now. Later issues will use them (compressing large
+outputs and tool retries).
 
 ## The command line
 

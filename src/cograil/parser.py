@@ -1,6 +1,7 @@
 """Parse a Protocol Markdown file into a Protocol.
 
-The step directive form `(context: steps 1, 2; model: small; turns: 4)` is fixed by ADR 0011.
+The step directive form `(context: steps 1, 2; model: small; effort: high; turns: 4)` is fixed
+by ADR 0011 and 0013.
 Anything the parser does not understand is an error: a Protocol is process rails, so a line
 that is silently dropped is a step or a guardrail that silently does not exist.
 
@@ -19,7 +20,7 @@ from cograil.domain import FailureThreshold, Protocol, Step
 from cograil.errors import ProtocolParseError
 
 _STEP = re.compile(r'^(\d+)\.\s+Step\s+"([^"]+)"\s*:\s*(.*)$')
-_DIRECTIVE = re.compile(r"\(\s*((?:context|model|turns)\s*:[^()]*)\)\s*$")
+_DIRECTIVE = re.compile(r"\(\s*((?:context|model|effort|turns)\s*:[^()]*)\)\s*$")
 _CONTEXT = re.compile(r"^steps?\s+(\d+(?:\s*,\s*\d+)*)$")
 _TOOL_REF = re.compile(r"(?<![\w.])@(\w+(?:\.\w+)*)")
 _KEY_VALUE = re.compile(r"^([A-Za-z][A-Za-z ]*?)\s*:\s*(.*)$")
@@ -38,6 +39,7 @@ _HEADERS = {
     "helpers",
 }
 _TIERS = ("small", "standard", "strong")
+_EFFORTS = ("low", "medium", "high")
 
 
 def parse_protocol(text: str, known_tools: Collection[str] | None = None) -> Protocol:
@@ -107,7 +109,7 @@ def _parse_directive(text: str, number: int) -> dict[str, Any]:
     for part in text.split(";"):
         key, _, value = part.partition(":")
         key, value = key.strip(), value.strip()
-        if key in {"context", "model", "turns"} and not value:
+        if key in {"context", "model", "effort", "turns"} and not value:
             raise ProtocolParseError(f"step {number}: directive {key!r} has no value")
         if key == "context":
             context = _CONTEXT.match(value)
@@ -118,6 +120,10 @@ def _parse_directive(text: str, number: int) -> dict[str, Any]:
             if value not in _TIERS:
                 raise ProtocolParseError(f"step {number}: unknown model tier {value!r}")
             fields["model_tier"] = value
+        elif key == "effort":
+            if value not in _EFFORTS:
+                raise ProtocolParseError(f"step {number}: unknown effort {value!r}")
+            fields["effort"] = value
         elif key == "turns":
             if not value.isdigit() or int(value) < 1:
                 raise ProtocolParseError(f"step {number}: turns must be a positive integer")

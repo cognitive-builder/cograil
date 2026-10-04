@@ -10,8 +10,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from cograil.domain import Colleague, Step, Tool
-from cograil.domain import Protocol as ProtocolDef
+from cograil.domain import Effort, Step, Tool
 
 
 class ProviderModel(BaseModel):
@@ -44,9 +43,14 @@ STEP_COMPLETE = "step_complete"
 
 
 class StepComplete(ProviderModel):
-    """The structured signal that ends a Step (ADR 0008); output is passed to later Steps."""
+    """The structured signal that ends a Step (ADR 0008); output is passed to later Steps.
+
+    `confidence` is the model's own 0 to 1 estimate; a small-tier result below the harness's
+    min_confidence escalates one tier (ADR 0010). None means the model gave none.
+    """
 
     output: str = ""
+    confidence: float | None = Field(default=None, ge=0, le=1)
 
 
 class Plan(ProviderModel):
@@ -64,12 +68,26 @@ class Plan(ProviderModel):
     stop_reason: str | None = None
 
 
+def parse_confidence(value: Any) -> float | None:
+    """A model-supplied confidence, or None unless it is a number from 0 to 1."""
+    if isinstance(value, bool) or not isinstance(value, int | float) or not 0 <= value <= 1:
+        return None
+    return float(value)
+
+
 class Provider(Protocol):
-    async def plan(self, step: Step, context: Sequence[Message], tools: Sequence[Tool]) -> Plan:
-        """Ask the model what to do next in `step`, offering only `tools`."""
+    async def plan(
+        self,
+        step: Step,
+        context: Sequence[Message],
+        tools: Sequence[Tool],
+        *,
+        model: str | None = None,
+        effort: Effort | None = None,
+    ) -> Plan:
+        """Ask the model what to do next in `step`, offering only `tools`.
+
+        The runner names the `model` its tier maps to and the Step's `effort`; without them
+        the provider uses the model it was built with and its own effort default.
+        """
         ...
-
-
-def resolve_model(protocol: ProtocolDef, colleague: Colleague) -> str:
-    """Protocol.model wins; otherwise the Colleague's model_policy."""
-    return protocol.model or colleague.model_policy

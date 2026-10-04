@@ -60,7 +60,8 @@ a `Runner`.
 5. `check_audience` runs before the Run exists. An `AudienceDenied` exits 1: entitlement is
    checked before anything is spent.
 6. The Provider is `FakeProvider` with the plans from `--fake-script`, or
-   `AnthropicProvider.for_protocol` (which needs `ANTHROPIC_API_KEY`).
+   the provider the harness names (`make_provider`): Anthropic, which needs
+   `ANTHROPIC_API_KEY`, or Ollama.
 7. `open_store` opens the `PostgresRunStore` named by `DATABASE_URL`, wrapped in a
    `ProgressStore` that echoes every AuditEvent and every finished Step as a line of progress.
 8. `build_registry` builds the `python`, `rest` and `mcp` kinds. A Step that names a Tool

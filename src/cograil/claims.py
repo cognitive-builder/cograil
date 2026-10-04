@@ -23,7 +23,7 @@ from cograil.observability import log_event
 from cograil.redaction import Redactor
 from cograil.store import RunStore
 
-RunAuditKind = Literal["run.started", "run.completed", "run.failed"]
+RunAuditKind = Literal["run.started", "run.completed", "run.failed", "tier.escalated"]
 
 
 class RunClaims:

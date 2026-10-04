@@ -15,16 +15,16 @@ never stores the raw text.
 from __future__ import annotations
 
 import logging
-import os
 import re
 from collections.abc import Callable
 from re import Match
 
 from cograil.domain import Step, Tool, Workspace
 from cograil.errors import CograilError
+from cograil.harness import task_tier, tier_model
 from cograil.observability import log_event
-from cograil.providers.anthropic import AnthropicProvider
 from cograil.providers.base import Message, Provider
+from cograil.providers.select import make_provider, provider_ready
 
 REDACT_TOOL = "redacted"
 
@@ -85,7 +85,8 @@ def _masker(kind: str) -> Callable[[Match[str]], str]:
 
 def redaction_model(workspace: Workspace) -> str:
     """The model id of the harness's small tier: redaction is small-tier work (ADR 0010)."""
-    return workspace.harness.tiers.small
+    harness = workspace.harness
+    return tier_model(harness, task_tier(harness, "redaction"))
 
 
 def _redact_tool() -> Tool:
@@ -131,13 +132,13 @@ class Redactor:
 
 
 def small_tier_redactor(workspace: Workspace) -> Redactor:
-    """A Redactor whose model pass runs on the workspace's small tier (needs ANTHROPIC_API_KEY)."""
-    return Redactor(AnthropicProvider(redaction_model(workspace)))
+    """A Redactor whose model pass runs on the workspace's small tier (needs its provider)."""
+    return Redactor(make_provider(workspace.harness, redaction_model(workspace)))
 
 
 def redactor(workspace: Workspace, live: bool) -> Redactor:
-    """The small tier backs the patterns up when `live` and ANTHROPIC_API_KEY is set; else
-    the patterns stand alone (a scripted demo, a local run without a key)."""
-    if live and os.environ.get("ANTHROPIC_API_KEY"):
+    """The small tier backs the patterns up when `live` and its provider is ready; else the
+    patterns stand alone (a scripted demo, a local run without a key)."""
+    if live and provider_ready(workspace.harness):
         return small_tier_redactor(workspace)
     return Redactor()

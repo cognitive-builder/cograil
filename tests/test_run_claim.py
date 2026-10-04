@@ -103,10 +103,12 @@ class HeldProvider(FakeProvider):
         super().__init__(script)
         self.waiting, self.release = asyncio.Event(), asyncio.Event()
 
-    async def plan(self, step: Step, context: Sequence[Message], tools: Sequence[Tool]) -> Plan:
+    async def plan(
+        self, step: Step, context: Sequence[Message], tools: Sequence[Tool], **kwargs: Any
+    ) -> Plan:
         self.waiting.set()
         await self.release.wait()
-        return await super().plan(step, context, tools)
+        return await super().plan(step, context, tools, **kwargs)
 
 
 @pytest.fixture(params=["memory", pytest.param("postgres", marks=pytest.mark.integration)])
