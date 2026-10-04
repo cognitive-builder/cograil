@@ -25,7 +25,9 @@ its calls first, and if one of them failed the model gets another turn instead. 
 every provider call the Step is checked against the Harness bounds
 (harness.py); a breach raises LoopBudgetExceeded, which escalates the Run through
 `Gates.bounded`. Each call's tokens count against the Step and its cost against the Run.
-`Runner.run` stamps the harness version on the Run (ADR 0012).
+`Runner.run` stamps the harness version on the Run (ADR 0012), and the registry's tool pack
+version; `Runner.resume` refuses, with ToolPackChanged and before deciding anything, a Run
+whose tool pack has changed since, so an approved write runs the code the Run started with.
 
 `Runner.run` and `Runner.resume` claim the Run (claims.py, `RunStore.claim_run`): of two
 executions only the last claim's saves land, and the other stops with RunClaimLost without
@@ -39,6 +41,7 @@ that is kept in `Run.context["ledger"]`, saved with the Run.
 from __future__ import annotations
 
 import itertools
+import logging
 import typing
 from collections.abc import Callable
 from datetime import timedelta
@@ -65,6 +68,7 @@ from cograil.errors import (
     RunEnded,
     ToolExecutionError,
     ToolNotAllowed,
+    ToolPackChanged,
 )
 from cograil.gates import (
     Clock,
@@ -77,7 +81,7 @@ from cograil.gates import (
 from cograil.harness import call_cost, check_bounds, harness_version
 from cograil.observability import log_event
 from cograil.providers.base import Message, Plan, PlannedToolCall, Provider
-from cograil.registry import CallContext, ToolRegistry
+from cograil.registry import UNVERSIONED, CallContext, ToolRegistry
 from cograil.store import RunStore
 
 _ENDED = frozenset({RunStatus.escalated, RunStatus.failed, RunStatus.completed})
@@ -158,6 +162,7 @@ class Runner:
 
         A Run awaiting approval moves on only through `resume`: this raises GateRequired.
         An escalated, failed or completed Run never runs again: this raises RunEnded.
+        A Run already stamped with another tool pack raises ToolPackChanged.
         Another execution claiming the Run first raises RunClaimLost.
         """
         run = await self._store.get_run(run_id)
@@ -165,11 +170,16 @@ class Runner:
             raise GateRequired(f"run {run_id} is awaiting approval; resume it with its token")
         if run.status in _ENDED:
             raise RunEnded(f"run {run_id} is {run.status}; it does not run again")
-        version = harness_version(self._harness)
+        if run.tool_pack_version != UNVERSIONED:  # running again, as after a crash
+            self._require_tool_pack(run)
+        version, pack = harness_version(self._harness), self._registry.tool_pack_version
         async with self._claims.failing_closed(run_id) as claim:
-            run = await self._claims.claim(run, claim, harness_version=version)
+            run = await self._claims.claim(
+                run, claim, harness_version=version, tool_pack_version=pack
+            )
             detail = {"protocol": protocol.name, "version": protocol.version,
-                      "harness_version": version, "cursor": run.cursor}  # fmt: skip
+                      "harness_version": version, "tool_pack_version": pack,
+                      "cursor": run.cursor}  # fmt: skip
             await self._claims.audit(run, "run.started", detail)
             return await self._execute(run, protocol)
 
@@ -188,13 +198,26 @@ class Runner:
         decider who is empty, not the approver or the Run's own principal, RunNotPaused,
         ApprovalAlreadyDecided for a resume that lost a race) leave the Run as it was.
         RunClaimLost means a `run` claimed the decided Run first and goes on with it.
+        ToolPackChanged, for a Run started with another tool pack, leaves it as it was too.
         """
+        approval = await self._store.get_approval(token)
+        self._require_tool_pack(await self._store.get_run(approval.run_id))
         run = await self._gates.resume(token, decision, decider)
         if run.status is not RunStatus.running:
             return run
         async with self._claims.failing_closed(run.id) as claim:
             run = await self._claims.claim(run, claim)
             return await self._execute(run, protocol)
+
+    def _require_tool_pack(self, run: Run) -> None:
+        """Refuse a Run stamped with another tool pack than this registry's (issue #110)."""
+        pack = self._registry.tool_pack_version
+        if run.tool_pack_version != pack:
+            log_event("run.tool_pack_changed", logging.WARNING, run_id=run.id)
+            raise ToolPackChanged(
+                f"run {run.id} started with tool pack {run.tool_pack_version}; "
+                f"the workspace now has {pack}"
+            )
 
     async def expire(self, token: str) -> Run:
         """Escalate the Run paused on this Approval if it timed out; for a scheduler."""

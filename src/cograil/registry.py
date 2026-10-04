@@ -10,18 +10,25 @@ and what did it do".
 A `decision` Tool also gets a `decision.evaluated` AuditEvent naming the table, its version and
 the rules that fired (ADR 0009); its ToolCall result is the outcome as plain data.
 
-`build_registry` builds the python, rest, mcp and decision kinds of a Workspace. The knowledge
-kind registers itself from `knowledge/tool.py` with `register_entitled`: its invoke also gets
-the CallContext's groups, the principal's, which the model cannot set. The directory kind is
-not implemented yet.
+`build_registry` builds the python, rest, mcp and decision kinds of a Workspace, and gives the
+registry its `tool_pack_version`: a sha256 of the workspace's validated Tools (tools.yaml with
+defaults filled in, in name order) and of the source of every workspace python module they
+resolve to. `Runner.run` stamps it on the Run and `Runner.resume` refuses a Run started with
+another (issue #110). Modules of `cograil.tools` are runtime code, versioned with it.
+
+The knowledge kind registers itself from `knowledge/tool.py` with `register_entitled`: its
+invoke also gets the CallContext's groups, the principal's, which the model cannot set. The
+directory kind is not implemented yet.
 """
 
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import logging
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -55,6 +62,8 @@ if TYPE_CHECKING:
 
 Closer = Callable[[], Awaitable[None]]
 
+UNVERSIONED = "unversioned"
+
 _HTTP_TIMEOUT_S = 10.0
 
 
@@ -83,6 +92,7 @@ class ToolRegistry:
         self._store = store
         self._entries: dict[str, _Entry] = {}
         self._closers: list[Closer] = []
+        self.tool_pack_version = UNVERSIONED  # build_registry sets the workspace's
 
     def register(self, tool: Tool, invoke: Invoke) -> None:
         async def call(args: dict[str, Any], groups: tuple[str, ...]) -> Any:
@@ -193,6 +203,7 @@ async def build_registry(
                 registry.register(tool, resolver.resolve(tool))
             elif tool.kind == "decision":
                 registry.register(tool, _decision(tool, workspace))
+        registry.tool_pack_version = tool_pack_version(workspace.tools, resolver.sources)
         _add_rest(registry, workspace, http)
         for tool in workspace.tools:
             if tool.kind == "mcp" and tool.mcp is not None:
@@ -201,6 +212,15 @@ async def build_registry(
         await registry.aclose()
         raise
     return registry
+
+
+def tool_pack_version(tools: Sequence[Tool], sources: Mapping[str, str]) -> str:
+    """sha256 of the Tools and of `sources`, the workspace python modules' source hashes."""
+    pack = {
+        "tools": [tool.model_dump(mode="json") for tool in sorted(tools, key=lambda t: t.name)],
+        "modules": dict(sources),
+    }
+    return hashlib.sha256(json.dumps(pack, sort_keys=True).encode()).hexdigest()
 
 
 def _decision(tool: Tool, workspace: Workspace) -> DecisionTable:

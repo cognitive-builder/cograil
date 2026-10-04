@@ -1,5 +1,5 @@
 """CLI tests, one per acceptance criterion of issue #13 (and #113, approval tokens, #111
-friendly errors), on an in-memory RunStore."""
+friendly errors, #110 the tool pack a Run started with), on an in-memory RunStore."""
 
 import asyncio
 import base64
@@ -119,6 +119,37 @@ def test_approve_refuses_anyone_but_the_approver(
         e for e in asyncio.run(shared_store.list_audit_events(run.id)) if e.kind == "gate.refused"
     ]
     assert len(refused) == (1 if decider.strip() else 0)  # a blank --as never reaches the runner
+
+
+@pytest.mark.parametrize(
+    ("file", "old", "new"),
+    [
+        ("tools.yaml", "Record an item.", "Record any item."),
+        ("tools/demo.py", "def record(", "AUDITED = False\n\n\ndef record("),
+    ],
+    ids=["tools-yaml", "python-module"],
+)
+@pytest.mark.parametrize("decline", [False, True], ids=["approve", "decline"])
+def test_approve_refuses_a_run_whose_tool_pack_changed(
+    shared_store: InMemoryRunStore, tmp_path: Path, file: str, old: str, new: str, decline: bool
+) -> None:
+    copy = tmp_path / "ws"
+    shutil.copytree(DEMO, copy)
+    args = ["run", str(copy), "--protocol", "record_item", "--as", ALICE]
+    started = runner.invoke(app, [*args, "--fake-script", script(tmp_path, RUN_SCRIPT)])
+    edited = (copy / file).read_text().replace(old, new, 1)
+    assert edited != (copy / file).read_text()
+    (copy / file).write_text(edited)
+    rest = ["--fake-script", script(tmp_path, REST_SCRIPT, "rest.yaml")]
+    flags = ["--decline", *rest] if decline else rest
+    result = runner.invoke(app, ["approve", token_in(started.output), "--as", MANAGER, *flags])
+    assert result.exit_code == cograil.cliexit.EXIT_ERROR
+    assert "refused" in result.output and "tool pack" in result.output
+    (run,) = asyncio.run(shared_store.list_runs())
+    assert run.status is RunStatus.awaiting_approval
+    (approval,) = asyncio.run(shared_store.list_approvals(run.id))
+    assert approval.decision == "pending"
+    assert asyncio.run(shared_store.list_tool_calls(run.id))[-1].tool == "demo.lookup"
 
 
 class TakenOverAfterTheDecisionStore(InMemoryRunStore):

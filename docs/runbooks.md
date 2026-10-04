@@ -179,6 +179,10 @@ outlive the process, so both commands need `DATABASE_URL`. `run` uses Anthropic
 for demos and tests: a list of `{text, done, tool_calls: [{tool, args}]}`. With `approve`, the
 script holds the plans for the rest of the run.
 
+A run also records a hash of its tool pack: `tools.yaml` and the `tools/*.py` modules its tools
+resolve to. If either changed since the run started, `approve` refuses it, declined or approved, and
+exits 1; put the files back as they were, or let the Approval expire.
+
 `decide` evaluates one decision table by hand, to test it. It starts no run, calls no model and
 writes no AuditEvent. Give each input as `--input name=value`; the value is read as the input's
 declared type. It needs no `DATABASE_URL`. See "Kind: decision" in the tools page.

@@ -410,6 +410,7 @@ class Run(Entity):
     protocol: str
     protocol_version: int
     harness_version: str = "unversioned"
+    tool_pack_version: str = "unversioned"
     principal: Principal
     principal_id: str
     trigger: Trigger

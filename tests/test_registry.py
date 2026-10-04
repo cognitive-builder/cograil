@@ -1,4 +1,5 @@
-"""Registry tests for issue #8: python kind, argument validation, ToolCall recording."""
+"""Registry tests for issue #8: python kind, argument validation, ToolCall recording; the
+tool pack version is issue #110."""
 
 import asyncio
 import sys
@@ -69,6 +70,36 @@ async def test_python_falls_back_to_cograil_tools(
     monkeypatch.setitem(sys.modules, "cograil.tools.echo", module)
     registry = await build_registry(workspace(python_tool("echo.say")), store, root)
     assert await registry.invoke("echo.say", {"text": "hi"}, ctx) == "echo hi"
+
+
+def changed(root: Path, ws: Workspace, change: str) -> Workspace:
+    """The workspace after `change`: a file in tools/ rewritten, or a Tool's schema edited."""
+    if change == "unresolved-module":
+        (root / "tools" / "unused.py").write_text("X = 1\n")
+    elif change == "resolved-module":
+        (root / "tools" / "hris.py").write_text(HRIS + "\nX = 1\n")
+    elif change == "tools-yaml":
+        return workspace(python_tool("hris.get_balance", EMPLOYEE))
+    return ws
+
+
+@pytest.mark.parametrize(
+    ("change", "changes_version"),
+    [
+        ("unchanged", False),
+        ("unresolved-module", False),
+        ("resolved-module", True),
+        ("tools-yaml", True),
+    ],
+)
+async def test_tool_pack_version_covers_the_tools_and_the_modules_they_resolve(
+    root: Path, store: InMemoryRunStore, change: str, changes_version: bool
+) -> None:
+    ws = workspace(python_tool("hris.get_balance"))
+    first = (await build_registry(ws, store, root)).tool_pack_version
+    second = (await build_registry(changed(root, ws, change), store, root)).tool_pack_version
+    assert len(first) == 64
+    assert (first != second) is changes_version
 
 
 @pytest.mark.parametrize(

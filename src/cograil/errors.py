@@ -9,6 +9,10 @@ class WorkspaceError(CograilError):
     """A workspace folder is missing or invalid."""
 
 
+class ToolPackChanged(WorkspaceError):
+    """The tool pack is not the one the Run started with, so the Run cannot be resumed."""
+
+
 class ProtocolParseError(CograilError):
     """A Protocol Markdown file could not be parsed."""
 
