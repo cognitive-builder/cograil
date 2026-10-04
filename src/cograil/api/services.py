@@ -23,13 +23,14 @@ from cograil.domain import (
     Colleague,
     Principal,
     Protocol,
+    Routing,
     Run,
     Trigger,
     Workspace,
 )
 from cograil.errors import ToolNotFound, WorkspaceError
 from cograil.identity import same_principal
-from cograil.orchestrator import Routing, classify_intent
+from cograil.orchestrator import classify_intent
 from cograil.progress import ProgressStore
 from cograil.providers.base import Provider
 from cograil.registry import ToolRegistry
