@@ -57,7 +57,7 @@ def sdk_response() -> SdkMessage:
         content=[
             TextBlock(type="text", text="Checking. "),
             ToolUseBlock(
-                type="tool_use", id="toolu_1", name="hris.get_balance", input={"employee": "alice"}
+                type="tool_use", id="toolu_1", name="hris__get_balance", input={"employee": "alice"}
             ),
         ],
         stop_reason="tool_use",
@@ -78,9 +78,19 @@ async def test_plan_returns_text_and_structured_tool_calls() -> None:
     assert plan.tool_calls == [CALL]
     request = client.messages.requests[0]
     assert request["tools"] == [
-        {"name": TOOL.name, "description": TOOL.description, "input_schema": TOOL.args_schema}
+        {
+            "name": "hris__get_balance",
+            "description": TOOL.description,
+            "input_schema": TOOL.args_schema,
+        }
     ]
     assert "Find the leave balance." in request["system"]
+
+
+async def test_tool_not_offered_keeps_its_name_so_the_runner_can_reject_it() -> None:
+    anthropic_provider, _ = provider(sdk_response())
+    plan = await anthropic_provider.plan(STEP, [], [])
+    assert plan.tool_calls[0].tool == "hris__get_balance"
 
 
 async def test_plan_without_tools_or_context_still_sends_a_valid_request() -> None:

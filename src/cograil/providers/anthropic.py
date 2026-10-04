@@ -15,9 +15,14 @@ DEFAULT_MAX_TOKENS = 4096
 _EMPTY_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}}
 
 
+def _wire_name(name: str) -> str:
+    """The API accepts only [a-zA-Z0-9_-] in tool names; Cograil names are dotted."""
+    return name.replace(".", "__")
+
+
 def _tool_spec(tool: Tool) -> dict[str, Any]:
     return {
-        "name": tool.name,
+        "name": _wire_name(tool.name),
         "description": tool.description,
         "input_schema": tool.args_schema or _EMPTY_SCHEMA,
     }
@@ -34,10 +39,11 @@ def _messages(context: Sequence[Message]) -> list[dict[str, str]]:
     return messages
 
 
-def _to_plan(response: SdkMessage) -> Plan:
+def _to_plan(response: SdkMessage, tools: Sequence[Tool]) -> Plan:
+    names = {_wire_name(t.name): t.name for t in tools}
     texts = [b.text for b in response.content if b.type == "text"]
     calls = [
-        PlannedToolCall(id=b.id, tool=b.name, args=dict(b.input))
+        PlannedToolCall(id=b.id, tool=names.get(b.name, b.name), args=dict(b.input))
         for b in response.content
         if b.type == "tool_use"
     ]
@@ -87,4 +93,4 @@ class AnthropicProvider:
             response = await self._client.messages.create(**kwargs)
         except anthropic.APIError as exc:
             raise ProviderError(f"Anthropic call failed: {exc}") from exc
-        return _to_plan(response)
+        return _to_plan(response, tools)
