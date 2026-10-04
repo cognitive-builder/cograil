@@ -13,6 +13,7 @@ from cograil.errors import (
     ApprovalAlreadyDecided,
     ApprovalNotFound,
     ApprovalNotSpendable,
+    ApprovalRunMismatch,
     DuplicateRecord,
     RunClaimLost,
     RunNotFound,
@@ -97,6 +98,8 @@ class InMemoryRunStore:
     ) -> Approval:
         # Every check comes before the first write, and no await between them.
         current = await self.get_approval(token)
+        if current.run_id != run.id:
+            raise ApprovalRunMismatch(token)
         if current.decision != "pending":
             raise ApprovalAlreadyDecided(token)
         self._require_claim(run.id, run.claim)

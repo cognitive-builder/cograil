@@ -26,6 +26,7 @@ from cograil.errors import (
     ApprovalAlreadyDecided,
     ApprovalNotFound,
     ApprovalNotSpendable,
+    ApprovalRunMismatch,
     DuplicateRecord,
     RunClaimLost,
     RunNotFound,
@@ -78,8 +79,10 @@ class RunStore(Protocol):
         run: Run,
         events: Sequence[AuditEvent] = (),
     ) -> Approval:
-        """Decide a pending Approval once, save `run` as update_run does and append `events`,
-        atomically: all of them or none. A second decision raises ApprovalAlreadyDecided."""
+        """Decide a pending Approval of `run` once, save `run` as update_run does and append
+        `events`, atomically: all of them or none. A second decision raises
+        ApprovalAlreadyDecided; an Approval that belongs to another Run raises
+        ApprovalRunMismatch."""
         ...
 
     async def spend_approval(self, token: str, spent_at: datetime) -> Approval:
@@ -267,10 +270,14 @@ class PostgresRunStore:
         run: Run,
         events: Sequence[AuditEvent] = (),
     ) -> Approval:
-        pending = (approvals.c.token == token) & (approvals.c.decision == "pending")
+        decidable = (
+            (approvals.c.token == token)
+            & (approvals.c.decision == "pending")
+            & (approvals.c.run_id == run.id)
+        )
         statement = (
             update(approvals)
-            .where(pending)
+            .where(decidable)
             .values(decision=decision, decided_at=decided_at)
             .returning(approvals)
         )
@@ -279,7 +286,9 @@ class PostgresRunStore:
         async with self._engine.begin() as conn:
             row = (await conn.execute(statement)).mappings().first()
             if row is None:
-                await self._get_approval(conn, token)  # raises ApprovalNotFound when absent
+                current = await self._get_approval(conn, token)  # ApprovalNotFound when absent
+                if current.run_id != run.id:
+                    raise ApprovalRunMismatch(token)
                 raise ApprovalAlreadyDecided(token)
             await self._update_run(conn, run, run.claim)
             await self._append(conn, events)
