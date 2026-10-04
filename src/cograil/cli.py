@@ -9,7 +9,6 @@ belongs to the web and Slack channels (issue #108).
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import uuid
@@ -17,11 +16,18 @@ from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Literal, NoReturn
+from typing import Annotated, Literal
 
 import typer
 
 from cograil.audience import check_audience, resolve_principal
+from cograil.cliexit import (
+    EXIT_BY_STATUS,
+    EXIT_CODES,
+    EXIT_FAILED,
+    await_command,
+    fail,
+)
 from cograil.context import format_ledger, window_ledger
 from cograil.decisions import parse_inputs, table_for
 from cograil.domain import Colleague, Principal, Protocol, Run, RunStatus, Trigger, Workspace
@@ -50,26 +56,8 @@ from cograil.store import PostgresRunStore, RunStore
 from cograil.validate import validate_workspace
 from cograil.workspace import load_workspace
 
-EXIT_ERROR = 1
-EXIT_AWAITING_APPROVAL = 3
-EXIT_ESCALATED = 4
-EXIT_FAILED = 5
-_EXIT_BY_STATUS = {
-    RunStatus.awaiting_approval: EXIT_AWAITING_APPROVAL,
-    RunStatus.escalated: EXIT_ESCALATED,
-    RunStatus.failed: EXIT_FAILED,
-}
-_EXIT_CODES = """\b
-Exit codes:
-  0  done: the workspace is valid, or the Run completed
-  1  error: invalid workspace, bad input, missing environment, or a refused decision
-  2  usage error: a missing or unknown argument or option
-  3  the Run is paused awaiting approval (the token is printed)
-  4  the Run was escalated to the Colleague's escalation contact
-  5  the Run failed (closed, with a run.failed AuditEvent)"""
-
 app = typer.Typer(
-    help="Cograil: run Markdown runbooks as an AI colleague.\n\n" + _EXIT_CODES,
+    help="Cograil: run Markdown runbooks as an AI colleague.\n\n" + EXIT_CODES,
     no_args_is_help=True,
 )
 app.add_typer(knowledge_app, name="knowledge")
@@ -84,11 +72,6 @@ FakeScript = Annotated[
         "Ignored with --decline.",
     ),
 ]
-
-
-def fail(message: str, code: int = EXIT_ERROR) -> NoReturn:
-    typer.echo(message, err=True)
-    raise typer.Exit(code=code)
 
 
 @app.command()
@@ -217,10 +200,10 @@ def run(
 
     \b
     Exit codes: 0 completed; 1 error (invalid workspace, audience denied, missing
-    DATABASE_URL or ANTHROPIC_API_KEY, tool not available); 2 usage error; 3 awaiting
-    approval; 4 escalated; 5 failed.
+    DATABASE_URL or ANTHROPIC_API_KEY, tool not available, database unreachable); 2 usage
+    error; 3 awaiting approval; 4 escalated; 5 failed.
     """
-    asyncio.run(_run(path, protocol, _principal_id(as_), fake_script))
+    await_command(_run(path, protocol, _principal_id(as_), fake_script))
 
 
 async def _run(path: Path, protocol_name: str, principal_id: str, script: Path | None) -> None:
@@ -264,8 +247,8 @@ async def _report(store: RunStore, colleague: Colleague, ended: Run) -> None:
                 )
     elif ended.status is RunStatus.escalated:
         typer.echo(f"escalated to {colleague.escalation_contact}")
-    if ended.status in _EXIT_BY_STATUS:
-        raise typer.Exit(code=_EXIT_BY_STATUS[ended.status])
+    if ended.status in EXIT_BY_STATUS:
+        raise typer.Exit(code=EXIT_BY_STATUS[ended.status])
 
 
 @app.command()
@@ -288,10 +271,10 @@ def approve(
 
     \b
     Exit codes: 0 completed; 1 error (unknown token, refused decision, Run not paused, missing
-    DATABASE_URL, workspace changed or missing); 2 usage error; 3 paused again at another
-    gate; 4 escalated; 5 failed.
+    DATABASE_URL, database unreachable, workspace changed or missing); 2 usage error; 3 paused
+    again at another gate; 4 escalated; 5 failed.
     """
-    asyncio.run(_approve(token, _principal_id(as_), workspace, decline, fake_script))
+    await_command(_approve(token, _principal_id(as_), workspace, decline, fake_script))
 
 
 async def _approve(
@@ -352,8 +335,13 @@ def runs(
     ledger: Annotated[bool, typer.Option("--ledger", help="Show the Window Ledger.")] = False,
     limit: Annotated[int, typer.Option(help="How many Runs to list.", min=1)] = 20,
 ) -> None:
-    """List Runs, newest first; with --ledger, the tokens by source of each Step."""
-    asyncio.run(_show_runs(run_id, ledger, limit))
+    """List Runs, newest first; with --ledger, the tokens by source of each Step.
+
+    \b
+    Exit codes: 0 listed; 1 error (unknown Run, missing DATABASE_URL, database unreachable);
+    2 usage error.
+    """
+    await_command(_show_runs(run_id, ledger, limit))
 
 
 async def _show_runs(run_id: str | None, ledger: bool, limit: int) -> None:

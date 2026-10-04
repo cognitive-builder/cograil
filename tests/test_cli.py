@@ -1,5 +1,5 @@
-"""CLI tests, one per acceptance criterion of issue #13 (and #113, approval tokens), on an
-in-memory RunStore."""
+"""CLI tests, one per acceptance criterion of issue #13 (and #113, approval tokens, #111
+friendly errors), on an in-memory RunStore."""
 
 import asyncio
 import base64
@@ -11,9 +11,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
+from sqlalchemy.exc import OperationalError
 from typer.testing import CliRunner
 
 import cograil.cli
+import cograil.cliexit
 from cograil.cli import app
 from cograil.domain import Run, RunStatus
 from cograil.errors import ProviderError
@@ -75,7 +77,7 @@ def test_run_streams_step_progress_and_stops_at_the_gate(
 ) -> None:
     code, output = start(tmp_path)
     lines = output.splitlines()
-    assert code == cograil.cli.EXIT_AWAITING_APPROVAL
+    assert code == cograil.cliexit.EXIT_AWAITING_APPROVAL
     order = ["run.started", "tool.called", "step 1 complete Look up", "gate.paused"]
     positions = [next(i for i, line in enumerate(lines) if want in line) for want in order]
     assert positions == sorted(positions)
@@ -110,7 +112,7 @@ def test_approve_refuses_anyone_but_the_approver(
     _, output = start(tmp_path)
     rest = ["--fake-script", script(tmp_path, REST_SCRIPT, "rest.yaml")]
     result = runner.invoke(app, ["approve", token_in(output), "--as", decider, *rest])
-    assert result.exit_code == cograil.cli.EXIT_ERROR
+    assert result.exit_code == cograil.cliexit.EXIT_ERROR
     (run,) = asyncio.run(shared_store.list_runs())
     assert run.status is RunStatus.awaiting_approval
     refused = [
@@ -142,7 +144,7 @@ def test_approve_exits_with_an_error_when_the_run_was_taken_over(
     _, output = start(tmp_path)
     rest = ["--fake-script", script(tmp_path, REST_SCRIPT, "rest.yaml")]
     result = runner.invoke(app, ["approve", token_in(output), "--as", MANAGER, *rest])
-    assert result.exit_code == cograil.cli.EXIT_ERROR
+    assert result.exit_code == cograil.cliexit.EXIT_ERROR
     assert "refused" in result.output
     (run,) = asyncio.run(store.list_runs())
     assert run.status is RunStatus.running  # the racing execution's to finish
@@ -166,7 +168,7 @@ def test_decline_escalates_with_its_own_exit_code(
 ) -> None:
     _, output = start(tmp_path)
     result = runner.invoke(app, ["approve", token_in(output), "--as", MANAGER, "--decline"])
-    assert result.exit_code == cograil.cli.EXIT_ESCALATED
+    assert result.exit_code == cograil.cliexit.EXIT_ESCALATED
     assert f"escalated to {MANAGER}" in result.output
     (run,) = asyncio.run(shared_store.list_runs())
     assert run.status is RunStatus.escalated
@@ -174,7 +176,7 @@ def test_decline_escalates_with_its_own_exit_code(
 
 def test_approve_unknown_token_exits_with_an_error(shared_store: InMemoryRunStore) -> None:
     result = runner.invoke(app, ["approve", "nope", "--as", MANAGER])
-    assert result.exit_code == cograil.cli.EXIT_ERROR
+    assert result.exit_code == cograil.cliexit.EXIT_ERROR
     assert "no such approval" in result.output
 
 
@@ -182,7 +184,7 @@ def test_a_failed_run_exits_with_the_failed_code(
     shared_store: InMemoryRunStore, tmp_path: Path
 ) -> None:
     code, output = start(tmp_path, text="[]")  # the script runs out at the first plan
-    assert code == cograil.cli.EXIT_FAILED
+    assert code == cograil.cliexit.EXIT_FAILED
     assert "failed: ProviderError" in output
     (run,) = asyncio.run(shared_store.list_runs())
     assert run.status is RunStatus.failed
@@ -192,7 +194,7 @@ def test_a_principal_outside_the_audience_is_denied(
     shared_store: InMemoryRunStore, tmp_path: Path
 ) -> None:
     code, output = start(tmp_path, as_="mallory@example.com")
-    assert code == cograil.cli.EXIT_ERROR and "denied" in output
+    assert code == cograil.cliexit.EXIT_ERROR and "denied" in output
     assert asyncio.run(shared_store.list_runs()) == []
 
 
@@ -213,7 +215,7 @@ def test_run_refuses_a_workspace_whose_tools_are_not_built_yet(
         ["run", str(copy), "--protocol", "record_item", "--as", ALICE,
          "--fake-script", script(tmp_path, "[]")],
     )  # fmt: skip
-    assert result.exit_code == cograil.cli.EXIT_ERROR
+    assert result.exit_code == cograil.cliexit.EXIT_ERROR
     assert "tool demo.lookup (kind directory) is not available" in result.output
     assert asyncio.run(shared_store.list_runs()) == []
 
@@ -227,7 +229,7 @@ def test_run_names_the_database_url_a_knowledge_tool_needs(
         ["run", str(EXAMPLE), "--protocol", "policy_question", "--as", ALICE,
          "--fake-script", script(tmp_path, "[]")],
     )  # fmt: skip
-    assert result.exit_code == cograil.cli.EXIT_ERROR
+    assert result.exit_code == cograil.cliexit.EXIT_ERROR
     assert "knowledge.search (kind knowledge) is not available" in result.output
     assert "DATABASE_URL" in result.output
     assert asyncio.run(shared_store.list_runs()) == []
@@ -246,7 +248,7 @@ def test_the_example_workspace_builds_every_tool(
     )  # fmt: skip
     assert "is not available" not in result.output
     # The Run starts; it fails only because the scripted provider has no plan to give.
-    assert result.exit_code == cograil.cli.EXIT_FAILED
+    assert result.exit_code == cograil.cliexit.EXIT_FAILED
     assert len(asyncio.run(shared_store.list_runs())) == 1
 
 
@@ -259,7 +261,23 @@ def test_run_needs_a_database_and_an_api_key(
     monkeypatch.delenv("DATABASE_URL", raising=False)
     fake = ["--fake-script", script(tmp_path, "[]")]
     result = runner.invoke(app, [*args, *fake])
-    assert result.exit_code == cograil.cli.EXIT_ERROR and "DATABASE_URL" in result.output
+    assert result.exit_code == cograil.cliexit.EXIT_ERROR and "DATABASE_URL" in result.output
+
+
+def test_an_unreachable_database_prints_one_line_and_exits_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    @asynccontextmanager
+    async def unreachable() -> AsyncIterator[RunStore]:
+        # What a dead Postgres gives: a SQLAlchemy error whose text is many lines.
+        raise OperationalError("connect", {}, Exception("connection refused"))
+        yield
+
+    monkeypatch.setattr(cograil.cli, "open_store", unreachable)
+    result = runner.invoke(app, ["runs"])
+    (line,) = result.output.strip().splitlines()  # one line, never a traceback
+    assert result.exit_code == cograil.cliexit.EXIT_ERROR
+    assert line == "error: OperationalError: (builtins.Exception) connection refused"
 
 
 def broken_copy(tmp_path: Path) -> Path:
@@ -275,7 +293,7 @@ def broken_copy(tmp_path: Path) -> Path:
 def test_validate_reports_every_problem_not_just_the_first(tmp_path: Path) -> None:
     result = runner.invoke(app, ["validate", str(broken_copy(tmp_path))])
     files = ("tools.yaml", "helper.yaml", "audiences.yaml", "bad.md")
-    assert result.exit_code == cograil.cli.EXIT_ERROR
+    assert result.exit_code == cograil.cliexit.EXIT_ERROR
     assert all("invalid: " in result.output and name in result.output for name in files)
     assert "4 problem(s) found" in result.output
 
@@ -309,7 +327,10 @@ def test_validate_finds_wire_name_collisions_per_step(
         assert "protocol record_item, step 1" in result.output
 
 
-@pytest.mark.parametrize("command", [[], ["validate"], ["run"], ["approve"]])
+@pytest.mark.parametrize(
+    "command",
+    [[], ["validate"], ["run"], ["approve"], ["runs"], ["decide"], ["knowledge", "sync"]],
+)
 def test_exit_codes_are_documented_in_help(command: list[str]) -> None:
     result = runner.invoke(app, [*command, "--help"])
     assert result.exit_code == 0
