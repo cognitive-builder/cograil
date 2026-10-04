@@ -154,7 +154,7 @@ model thinks (`low`, `medium` or `high`) and `turns` overrides `loop.max_turns`.
 - `providers`: the tier mapping of the other providers, such as `ollama`. All three tiers are
   required.
 - `pricing`: the price of each model, in USD per million tokens.
-- `context`: `default_prior_steps` and `compression_threshold_tokens` (the threshold is not used yet).
+- `context`: `default_prior_steps` and `compression_threshold_tokens`: a Tool result longer than that is summarised by the small tier before the model sees it (see `models.md`).
 - `defaults`: `classification_tier`, `judgment_tier`, `effort` and `min_confidence`.
 - `retry`: `tool_attempts` and `backoff_seconds`.
 - `approvals`: `timeout_hours`.
