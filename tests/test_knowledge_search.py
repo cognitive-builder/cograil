@@ -87,7 +87,7 @@ def search_as(store: InMemoryRunStore) -> Search:
     return search
 
 
-# --- Bad arguments are refused before the store is searched ---
+# --- A bad query or limit is refused with ToolArgumentError ---
 
 
 @pytest.mark.parametrize(
@@ -102,7 +102,7 @@ def search_as(store: InMemoryRunStore) -> Search:
         ({"query": "annual leave", "limit": 2.5}, "limit"),
     ],
 )
-async def test_a_bad_query_or_limit_is_refused_before_the_store_is_searched(
+async def test_a_bad_query_or_limit_is_refused(
     search_as: Search, args: dict[str, Any], problem: str
 ) -> None:
     kstore = InMemoryKnowledgeStore()
