@@ -176,7 +176,8 @@ async def test_a_principal_outside_the_audience_neither_sees_the_protocol_nor_er
     assert not routing.matched and routing.refusal is not None
     assert "approve_leave" not in routing.refusal and "finn" not in routing.refusal
     assert "harper / leave_request: Request time off." in routing.refusal
-    assert "contact hr@example.com, finance@example.com." in routing.refusal
+    assert "For anything else, contact hr@example.com." in routing.refusal
+    assert "finance@example.com" not in routing.refusal
 
 
 async def test_a_principal_outside_every_audience_gets_a_refusal_without_a_model_call() -> None:
@@ -185,5 +186,4 @@ async def test_a_principal_outside_every_audience_gets_a_refusal_without_a_model
     assert provider.calls == []
     assert routing.refusal is not None
     assert "nothing in this workspace is open to you" in routing.refusal
-    assert "contact hr@example.com, finance@example.com." in routing.refusal
-    assert "harper" not in routing.refusal and "leave_request" not in routing.refusal
+    assert "harper" not in routing.refusal and "@example.com" not in routing.refusal

@@ -9,7 +9,8 @@ builds the Provider on `classification_model(workspace)`.
 Audiences are a pre-filter (issue #20, product rule 3): the closed list holds only the pairs
 the principal may start (`cograil.audience`), so a Protocol outside the principal's audiences
 is neither offered to the model nor named in the refusal. Such a request routes to `none`,
-and the refusal gives the Colleagues' escalation contacts instead of raising an error.
+and the refusal gives the escalation contacts of the Colleagues the principal may use,
+instead of raising an error.
 
 Every classification is logged as `orchestrator.classified` with the confidence, so evals
 can replay it.
@@ -92,14 +93,21 @@ def candidates(workspace: Workspace, principal: Principal) -> list[Candidate]:
     ]
 
 
-def escalation_contacts(workspace: Workspace) -> list[str]:
-    """Every Colleague's escalation contact, once each, in workspace order."""
-    return list(dict.fromkeys(c.escalation_contact for c in workspace.colleagues))
+def escalation_contacts(workspace: Workspace, options: Sequence[Candidate]) -> list[str]:
+    """The escalation contacts of the Colleagues in `options`, once each, in workspace order.
+
+    A Colleague the principal may start nothing with stays hidden, contact included.
+    """
+    offered = {c.colleague for c in options}
+    return list(
+        dict.fromkeys(c.escalation_contact for c in workspace.colleagues if c.name in offered)
+    )
 
 
 def refusal_text(workspace: Workspace, principal: Principal) -> str:
     """A helpful refusal: what the principal may ask for instead, and whom to contact."""
     options = candidates(workspace, principal)
+    lines: list[str]
     if options:
         lines = ["I can't help with that here. This is what I can do:"]
         for c in options:
@@ -108,7 +116,7 @@ def refusal_text(workspace: Workspace, principal: Principal) -> str:
         lines.append("Tell me which of these you need, or rephrase your request.")
     else:
         lines = ["I can't help with that here: nothing in this workspace is open to you."]
-    if contacts := escalation_contacts(workspace):
+    if contacts := escalation_contacts(workspace, options):
         lines.append(f"For anything else, contact {', '.join(contacts)}.")
     return "\n".join(lines)
 
@@ -202,4 +210,12 @@ def _finish(workspace: Workspace, principal: Principal, message: str, routing: R
     return routing
 
 
-__all__ = ["NONE", "Candidate", "Routing", "classification_model", "classify_intent"]
+__all__ = [
+    "NONE",
+    "Candidate",
+    "Routing",
+    "candidates",
+    "classification_model",
+    "classify_intent",
+    "refusal_text",
+]
