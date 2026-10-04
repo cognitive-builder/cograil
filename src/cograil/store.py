@@ -8,6 +8,8 @@ A Run is saved only by the execution holding its claim (`Run.claim`). `claim_run
 claim over by compare-and-set on the claim and status the caller read, so of two executions
 started from the same read exactly one goes on; every other save is conditional on the claim,
 so an execution whose claim was taken over gets RunClaimLost at its next save and stops.
+Creating and spending an Approval are conditional on the claim too (#143), so such an
+execution neither spends an Approval nor leaves a pending one behind.
 """
 
 from __future__ import annotations
@@ -66,7 +68,11 @@ class RunStore(Protocol):
 
     async def list_tool_calls(self, run_id: str) -> list[ToolCall]: ...
 
-    async def create_approval(self, approval: Approval) -> None: ...
+    async def create_approval(self, approval: Approval, *, run: Run) -> None:
+        """Create the pending `approval` of `run` and save `run` as update_run does,
+        atomically: both or neither. RunClaimLost when the stored claim is no longer
+        `run.claim`; ApprovalRunMismatch when `approval` belongs to another Run."""
+        ...
 
     async def get_approval(self, token: str) -> Approval: ...
 
@@ -85,9 +91,13 @@ class RunStore(Protocol):
         ApprovalRunMismatch."""
         ...
 
-    async def spend_approval(self, token: str, spent_at: datetime) -> Approval:
-        """Spend an approved Approval once, atomically: of two concurrent spends one wins and
-        the other raises ApprovalNotSpendable, as does spending one not approved."""
+    async def spend_approval(self, token: str, spent_at: datetime, *, run: Run) -> Approval:
+        """Spend an approved Approval of `run` once, atomically: of two concurrent spends one
+        wins and the other raises ApprovalNotSpendable, as does spending one not approved.
+
+        Spends only while the stored claim is still `run.claim`, which no claim can take over
+        until the spend commits; otherwise RunClaimLost. ApprovalRunMismatch when the
+        Approval belongs to another Run."""
         ...
 
     async def list_approvals(self, run_id: str) -> list[Approval]:
@@ -173,9 +183,15 @@ class PostgresRunStore:
     async def _insert(
         self, table: Any, values: Mapping[str, Any], *, what: str, run_id: str
     ) -> None:
+        async with self._engine.begin() as conn:
+            await self._insert_in(conn, table, values, what=what, run_id=run_id)
+
+    @staticmethod
+    async def _insert_in(
+        conn: AsyncConnection, table: Any, values: Mapping[str, Any], *, what: str, run_id: str
+    ) -> None:
         try:
-            async with self._engine.begin() as conn:
-                await conn.execute(insert(table).values(**values))
+            await conn.execute(insert(table).values(**values))
         except IntegrityError as exc:
             state = _sqlstate(exc)
             if state == _UNIQUE_VIOLATION:
@@ -241,13 +257,15 @@ class PostgresRunStore:
             rows = (await conn.execute(query)).mappings().all()
         return [ToolCall.model_validate(_without(r, "id", "run_id")) for r in rows]
 
-    async def create_approval(self, approval: Approval) -> None:
-        await self._insert(
-            approvals,
-            _approval_values(approval),
-            what=f"approval {approval.token}",
-            run_id=approval.run_id,
-        )
+    async def create_approval(self, approval: Approval, *, run: Run) -> None:
+        if approval.run_id != run.id:
+            raise ApprovalRunMismatch(approval.token)
+        values, what = _approval_values(approval), f"approval {approval.token}"
+        # The fenced save comes first and locks the Run's row, so a claim that took the Run
+        # over makes it fail before the insert, and none can take it over before the commit.
+        async with self._engine.begin() as conn:
+            await self._update_run(conn, run, run.claim)
+            await self._insert_in(conn, approvals, values, what=what, run_id=run.id)
 
     async def get_approval(self, token: str) -> Approval:
         async with self._engine.connect() as conn:
@@ -304,9 +322,10 @@ class PostgresRunStore:
                     raise RunNotFound(event.run_id) from exc
                 raise
 
-    async def spend_approval(self, token: str, spent_at: datetime) -> Approval:
+    async def spend_approval(self, token: str, spent_at: datetime, *, run: Run) -> Approval:
         spendable = (
             (approvals.c.token == token)
+            & (approvals.c.run_id == run.id)
             & (approvals.c.decision == "approved")
             & approvals.c.spent_at.is_(None)
         )
@@ -314,11 +333,25 @@ class PostgresRunStore:
             update(approvals).where(spendable).values(spent_at=spent_at).returning(approvals)
         )
         async with self._engine.begin() as conn:
+            await self._hold_claim(conn, run)
             row = (await conn.execute(statement)).mappings().first()
             if row is not None:
                 return Approval.model_validate(dict(row))
-            await self._get_approval(conn, token)  # raises ApprovalNotFound when absent
+            current = await self._get_approval(conn, token)  # ApprovalNotFound when absent
+        if current.run_id != run.id:
+            raise ApprovalRunMismatch(token)
         raise ApprovalNotSpendable(token)
+
+    @classmethod
+    async def _hold_claim(cls, conn: AsyncConnection, run: Run) -> None:
+        """Share-lock the Run's row if its stored claim is still `run.claim`: a claim taking
+        the Run over waits for this transaction, and one that committed first, or was
+        mid-commit, makes it match no row, so RunClaimLost."""
+        held = (runs.c.id == run.id) & runs.c.claim.is_not_distinct_from(run.claim)
+        query = select(runs.c.id).where(held).with_for_update(read=True)
+        if (await conn.execute(query)).first() is None:
+            await cls._get_run(conn, run.id)  # raises RunNotFound when absent
+            raise RunClaimLost(run.id)
 
     async def list_approvals(self, run_id: str) -> list[Approval]:
         query = select(approvals).where(approvals.c.run_id == run_id).order_by(approvals.c.token)

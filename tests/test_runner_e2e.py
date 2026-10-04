@@ -58,7 +58,8 @@ async def test_leave_request_runs_to_completion(store: InMemoryRunStore) -> None
     built = [t for t in workspace.tools if t.kind == "python" and t.name not in STAND_INS]
     await store.create_approval(
         Approval(token="a1", run_id="r1", step=3, tool="hris.submit_leave", args=LEAVE,
-                 approver="bob", decision="approved")
+                 approver="bob", decision="approved"),
+        run=await store.get_run("r1"),
     )  # fmt: skip
     async with await build_registry(
         workspace.model_copy(update={"tools": built}), store, EXAMPLE

@@ -161,19 +161,24 @@ class Gates:
             approver=approver,
             expires_at=self._clock() + self._timeout,
         )
-        await self._store.create_approval(approval)
         paused = progress.model_copy(update={"token": approval.token}).model_dump(mode="json")
         context = {**run.context, "paused": paused}
-        run = await self._save(run, status=RunStatus.awaiting_approval, context=context)
+        run = run.model_copy(update={"status": RunStatus.awaiting_approval, "context": context,
+                                     "updated_at": self._clock()})  # fmt: skip
+        # One transaction fenced by the claim: an execution whose claim was taken over gets
+        # RunClaimLost and leaves no pending Approval behind (#143).
+        await self._store.create_approval(approval, run=run)
         detail = {**_about(approval), "approver": approval.approver}
         await self._audit(run, "gate.paused", {**detail, "expires_at": approval.expires_at})
         log_event("gate.paused", step=approval.step, tool=approval.tool)
         return run
 
     async def spend(self, run: Run, approval: Approval) -> None:
-        """Let the one call an Approval authorises through; losing a race raises GateRequired."""
+        """Let the one call an Approval authorises through; losing a race raises GateRequired.
+
+        An execution whose claim on the Run was taken over spends nothing: RunClaimLost."""
         try:
-            await self._store.spend_approval(approval.token, self._clock())
+            await self._store.spend_approval(approval.token, self._clock(), run=run)
         except ApprovalNotSpendable as exc:
             raise GateRequired(f"{approval.tool}: its Approval is already spent") from exc
         await self._audit(run, "gate.spent", _about(approval))

@@ -56,8 +56,8 @@ class ProgressStore:
     async def list_tool_calls(self, run_id: str) -> list[ToolCall]:
         return await self._inner.list_tool_calls(run_id)
 
-    async def create_approval(self, approval: Approval) -> None:
-        await self._inner.create_approval(approval)
+    async def create_approval(self, approval: Approval, *, run: Run) -> None:
+        await self._inner.create_approval(approval, run=run)
 
     async def get_approval(self, token: str) -> Approval:
         return await self._inner.get_approval(token)
@@ -78,8 +78,8 @@ class ProgressStore:
             self._emit(describe(event))
         return decided
 
-    async def spend_approval(self, token: str, spent_at: datetime) -> Approval:
-        return await self._inner.spend_approval(token, spent_at)
+    async def spend_approval(self, token: str, spent_at: datetime, *, run: Run) -> Approval:
+        return await self._inner.spend_approval(token, spent_at, run=run)
 
     async def list_approvals(self, run_id: str) -> list[Approval]:
         return await self._inner.list_approvals(run_id)

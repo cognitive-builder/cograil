@@ -20,6 +20,7 @@ from cograil.domain import (
     Colleague,
     Harness,
     Protocol,
+    Run,
     RunStatus,
     Tool,
 )
@@ -423,7 +424,7 @@ async def test_require_approval_raises_gate_required_without_an_approved_unspent
     store: InMemoryRunStore, ctx: CallContext, existing: Approval | None
 ) -> None:
     if existing is not None:
-        await store.create_approval(existing)
+        await store.create_approval(existing, run=await store.get_run("r1"))
     with pytest.raises(GateRequired):
         await require_approval(store, ctx, TOOLS[1], SUBMIT, claimed=[])
 
@@ -431,7 +432,7 @@ async def test_require_approval_raises_gate_required_without_an_approved_unspent
 async def test_require_approval_returns_a_match_once_per_plan(
     store: InMemoryRunStore, ctx: CallContext
 ) -> None:
-    await store.create_approval(approval())
+    await store.create_approval(approval(), run=await store.get_run("r1"))
     found = await require_approval(store, ctx, TOOLS[1], SUBMIT, claimed=[])
     assert found is not None and found.token == "a1"
     with pytest.raises(GateRequired):
@@ -468,9 +469,9 @@ async def test_run_of_an_ended_run_raises_and_changes_nothing(
 class RacedStore(InMemoryRunStore):
     """Another resume spends each Approval just before this one tries to."""
 
-    async def spend_approval(self, token: str, spent_at: datetime) -> Approval:
-        await super().spend_approval(token, spent_at)
-        return await super().spend_approval(token, spent_at)
+    async def spend_approval(self, token: str, spent_at: datetime, *, run: Run) -> Approval:
+        await super().spend_approval(token, spent_at, run=run)
+        return await super().spend_approval(token, spent_at, run=run)
 
 
 async def test_an_approval_spent_by_a_racing_call_raises_gate_required(
@@ -478,7 +479,7 @@ async def test_an_approval_spent_by_a_racing_call_raises_gate_required(
 ) -> None:
     raced = RacedStore()
     await raced.create_run(await store.get_run("r1"))
-    await raced.create_approval(approval())
+    await raced.create_approval(approval(), run=await raced.get_run("r1"))
     runner = Runner(FakeProvider(TO_GATE), build_registry(raced, tools), raced, HARPER)
     with pytest.raises(GateRequired):
         await runner.run("r1", protocol)
@@ -528,7 +529,7 @@ async def test_a_decision_is_never_saved_without_its_audit_event(
 async def test_a_token_the_run_is_not_paused_on_cannot_resume_it(
     store: InMemoryRunStore, make: Any, protocol: Protocol
 ) -> None:
-    await store.create_approval(approval(decision="pending"))
+    await store.create_approval(approval(decision="pending"), run=await store.get_run("r1"))
     runner, _ = make([])
     with pytest.raises(RunNotPaused):
         await runner.resume("a1", protocol, decider="bob")

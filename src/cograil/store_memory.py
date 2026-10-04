@@ -76,11 +76,15 @@ class InMemoryRunStore:
     async def list_tool_calls(self, run_id: str) -> list[ToolCall]:
         return [c.model_copy(deep=True) for c in self._tool_calls.get(run_id, [])]
 
-    async def create_approval(self, approval: Approval) -> None:
-        self._require_run(approval.run_id)
+    async def create_approval(self, approval: Approval, *, run: Run) -> None:
+        # Every check comes before the first write, and no await between them.
+        if approval.run_id != run.id:
+            raise ApprovalRunMismatch(approval.token)
+        self._require_claim(run.id, run.claim)
         if approval.token in self._approvals:
             raise DuplicateRecord(f"approval {approval.token}")
         self._approvals[approval.token] = approval.model_copy(deep=True)
+        self._save_run(run)
 
     async def get_approval(self, token: str) -> Approval:
         if token not in self._approvals:
@@ -111,9 +115,13 @@ class InMemoryRunStore:
         self._audit.extend(e.model_copy(deep=True) for e in events)
         return decided.model_copy(deep=True)
 
-    async def spend_approval(self, token: str, spent_at: datetime) -> Approval:
-        # No await between the check and the write, so concurrent spends cannot interleave.
+    async def spend_approval(self, token: str, spent_at: datetime, *, run: Run) -> Approval:
+        # No await between the checks and the write, so concurrent spends and claims cannot
+        # interleave.
+        self._require_claim(run.id, run.claim)
         current = await self.get_approval(token)
+        if current.run_id != run.id:
+            raise ApprovalRunMismatch(token)
         if current.decision != "approved" or current.spent_at is not None:
             raise ApprovalNotSpendable(token)
         spent = current.model_copy(update={"spent_at": spent_at})
