@@ -27,8 +27,9 @@ every provider call the Step is checked against the Harness bounds
 `Gates.bounded`. Each call's tokens count against the Step and its cost against the Run.
 `Runner.run` stamps the harness version on the Run (ADR 0012).
 
-`Runner.run` and `Runner.resume` claim the Run (`RunStore.claim_run`): of two executions only
-the last claim's saves land, and the other stops with RunClaimLost without failing the Run.
+`Runner.run` and `Runner.resume` claim the Run (claims.py, `RunStore.claim_run`): of two
+executions only the last claim's saves land, and the other stops with RunClaimLost without
+failing the Run.
 
 What a Step sees is the ContextBuilder's (context.py, ADR 0007): the prior Steps it declares,
 its whitelisted Tools' schemas, and Tool results inside a data block. The Window Ledger of
@@ -38,22 +39,18 @@ that is kept in `Run.context["ledger"]`, saved with the Run.
 from __future__ import annotations
 
 import itertools
-import logging
-import secrets
 import typing
-from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from collections.abc import Callable
 from datetime import timedelta
 from typing import Any, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from cograil import observability
+from cograil.claims import RunClaims
 from cograil.context import ContextBuilder, add_to_ledger
 from cograil.domain import (
     Approval,
-    AuditEvent,
     Colleague,
     Harness,
     Protocol,
@@ -65,7 +62,6 @@ from cograil.domain import (
 from cograil.errors import (
     GateRequired,
     LoopBudgetExceeded,
-    RunClaimLost,
     RunEnded,
     ToolExecutionError,
     ToolNotAllowed,
@@ -86,8 +82,6 @@ from cograil.store import RunStore
 
 _ENDED = frozenset({RunStatus.escalated, RunStatus.failed, RunStatus.completed})
 NOT_COMPLETE = "The step is not complete until you signal step_complete."
-
-RunAuditKind = Literal["run.started", "run.completed", "run.failed"]
 
 
 class RunState(TypedDict):
@@ -153,7 +147,7 @@ class Runner:
         self._provider = provider
         self._registry = registry
         self._store = store
-        self._clock = clock
+        self._claims = RunClaims(store, clock)
         self._harness = harness or Harness()
         self._context = ContextBuilder(self._harness)
         timeout = timedelta(hours=self._harness.approvals.timeout_hours)
@@ -172,11 +166,11 @@ class Runner:
         if run.status in _ENDED:
             raise RunEnded(f"run {run_id} is {run.status}; it does not run again")
         version = harness_version(self._harness)
-        async with self._failing_closed(run_id) as claim:
-            run = await self._claim(run, claim, harness_version=version)
+        async with self._claims.failing_closed(run_id) as claim:
+            run = await self._claims.claim(run, claim, harness_version=version)
             detail = {"protocol": protocol.name, "version": protocol.version,
                       "harness_version": version, "cursor": run.cursor}  # fmt: skip
-            await self._audit(run, "run.started", detail)
+            await self._claims.audit(run, "run.started", detail)
             return await self._execute(run, protocol)
 
     async def resume(
@@ -198,26 +192,13 @@ class Runner:
         run = await self._gates.resume(token, decision, decider)
         if run.status is not RunStatus.running:
             return run
-        async with self._failing_closed(run.id) as claim:
-            run = await self._claim(run, claim)
+        async with self._claims.failing_closed(run.id) as claim:
+            run = await self._claims.claim(run, claim)
             return await self._execute(run, protocol)
 
     async def expire(self, token: str) -> Run:
         """Escalate the Run paused on this Approval if it timed out; for a scheduler."""
         return await self._gates.expire(token)
-
-    @asynccontextmanager
-    async def _failing_closed(self, run_id: str) -> AsyncIterator[str]:
-        token, claim = observability.run_id.set(run_id), secrets.token_hex(16)
-        try:
-            yield claim
-        except RunClaimLost:
-            raise  # another execution holds the Run; failing it is not this one's to do
-        except Exception as exc:
-            await self._fail(run_id, claim, exc)
-            raise
-        finally:
-            observability.run_id.reset(token)
 
     async def _execute(self, run: Run, protocol: Protocol) -> Run:
         graph = compile_protocol(protocol, lambda step: self._node(step, protocol))
@@ -225,8 +206,8 @@ class Runner:
         run = final["run"]
         if run.status is not RunStatus.running:  # paused or escalated, already saved
             return run
-        run = await self._save(run, status=RunStatus.completed)
-        await self._audit(run, "run.completed", {"cursor": run.cursor})
+        run = await self._claims.save(run, status=RunStatus.completed)
+        await self._claims.audit(run, "run.completed", {"cursor": run.cursor})
         return run
 
     def _node(self, step: Step, protocol: Protocol) -> StepNode:
@@ -365,44 +346,8 @@ class Runner:
     async def _complete(self, run: Run, step: Step, output: str, progress: StepProgress) -> Run:
         record = {"name": step.name, "output": output, "tool_calls": progress.calls}
         steps = {**run.context.get("steps", {}), str(step.number): record}
-        run = await self._save(run, cursor=step.number, context={**run.context, "steps": steps})
+        context = {**run.context, "steps": steps}
+        run = await self._claims.save(run, cursor=step.number, context=context)
         log_event("step.completed", step=step.number, tool_calls=len(progress.calls),
                   turns=progress.turn, tokens=progress.tokens)  # fmt: skip
         return run
-
-    async def _claim(self, run: Run, claim: str, **changes: Any) -> Run:
-        """Take the Run over for this execution, from the Run as it was read."""
-        claimed = run.model_copy(update={**changes, "status": RunStatus.running, "claim": claim,
-                                         "updated_at": self._clock()})  # fmt: skip
-        await self._store.claim_run(claimed, run)
-        return claimed
-
-    async def _fail(self, run_id: str, claim: str, exc: Exception) -> None:
-        """Fail the Run closed if this execution holds its claim; otherwise leave it as is.
-
-        A Run taken over between the read and the save is the winner's to fail, so the
-        failure is only logged and `exc`, the real failure, is what the caller still sees.
-        """
-        run = await self._store.get_run(run_id)
-        if run.claim != claim:
-            return
-        try:
-            run = await self._save(run, status=RunStatus.failed)
-        except RunClaimLost:
-            log_event("run.fail.skipped", logging.WARNING, error=type(exc).__name__,
-                      reason="claim_lost")  # fmt: skip
-            return
-        detail = {"error": type(exc).__name__, "message": str(exc), "cursor": run.cursor}
-        await self._audit(run, "run.failed", detail)
-        log_event("run.failed", logging.WARNING, error=type(exc).__name__, cursor=run.cursor)
-
-    async def _save(self, run: Run, **changes: Any) -> Run:
-        run = run.model_copy(update={**changes, "updated_at": self._clock()})
-        await self._store.update_run(run)
-        return run
-
-    async def _audit(self, run: Run, kind: RunAuditKind, detail: dict[str, Any]) -> None:
-        event = AuditEvent(
-            run_id=run.id, at=self._clock(), principal_id=run.principal_id, kind=kind, detail=detail
-        )
-        await self._store.append_audit_event(event)
