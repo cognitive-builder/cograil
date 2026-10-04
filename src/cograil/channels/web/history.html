@@ -109,6 +109,9 @@ function el(tag, cls, text, parent) {
 function words(status) { return String(status).replace(/_/g, " "); }
 function pretty(value) { return typeof value === "string" ? value : JSON.stringify(value, null, 2); }
 function money(cost) { return `$${Number(cost).toFixed(4)}`; }
+function usageText(u) {
+  return `${u.input_tokens} fresh in · ${u.output_tokens} out · cache ${u.cache_read_tokens} read / ${u.cache_write_tokens} written · ${u.batch_tokens} batch`;
+}
 function stamp(value) { return value ? new Date(value).toLocaleString() : "—"; }
 function howLong(from, to) {
   if (!from || !to) return "—";
@@ -141,7 +144,8 @@ function row(run) {
   el("span", `status ${RUN_STATE[run.status] ?? ""}`, words(run.status), line);
   el("span", "protocol", `${run.colleague} · ${run.protocol}`, line);
   el("span", "principal", run.principal_id, line);
-  el("span", "cost", money(run.cost_usd), line);
+  const total = Object.values(run.usage).reduce((a, b) => a + b, 0);
+  el("span", "cost", `${money(run.cost_usd)} · ${total} tokens`, line);
   el("span", "when", stamp(run.created_at), line);
   const body = el("div", "body", "Loading…", box);
   let filled = false;
@@ -174,6 +178,7 @@ async function fill(id, body) {
   }
   body.textContent = "";
   el("p", "timing", `Started ${stamp(detail.created_at)} · last change ${stamp(detail.updated_at)} · ${howLong(detail.created_at, detail.updated_at)} so far.`, body);
+  el("p", "timing", `Cost ${money(detail.cost_usd)} · tokens: ${usageText(detail.usage)}.`, body);
   showSteps(detail, body);
   showCalls(detail, body);
   showGates(detail, body);

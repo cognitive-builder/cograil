@@ -69,6 +69,19 @@ to the Step's row of the Window Ledger. `cograil runs <id> --ledger` adds `cache
 against `token_budget_per_step`, and they cost 0.1 (read) and 1.25 (write) times the model's
 input price in `usd_budget_per_run`.
 
+## Cost telemetry
+
+Every model call (a Step's turn, a compression, an injection screen) adds its dollars to the
+Run's `cost_usd` and its tokens to the Run's tally, which `GET /runs` and `GET /runs/{id}` show as
+`usage`. The tally keeps four kinds apart, because they are billed at different rates: fresh
+`input_tokens` and `output_tokens`, `cache_read_tokens` and `cache_write_tokens`, and
+`batch_tokens` (all the tokens of a call that went through the provider's batch path).
+
+`cograil runs --cost` prints one row per Protocol over the newest `--limit` Runs (default 20):
+the Runs, how many resolved, the tokens by kind, the cost, and the headline number of ADR 0013,
+cost per resolved run: the total cost of the Runs that completed without escalation, divided by
+their count (`-` when none did). A Run that escalated still counts in the cost column.
+
 ## Effort
 
 Effort tells a model how hard to think. A Step's effort is the first of these that is set:

@@ -424,3 +424,14 @@ def test_exit_codes_are_documented_in_help(command: list[str]) -> None:
 def test_fake_script_rejects_a_malformed_plan(tmp_path: Path, text: str) -> None:
     with pytest.raises(ProviderError):
         load_script(Path(script(tmp_path, text)))
+
+
+def test_runs_cost_prints_a_table_by_protocol(
+    shared_store: InMemoryRunStore, tmp_path: Path
+) -> None:
+    start(tmp_path)  # leaves one Run of record_item awaiting approval: spent, not resolved
+    result = runner.invoke(app, ["runs", "--cost"])
+    header, row = result.output.splitlines()
+    assert result.exit_code == 0
+    assert "cost/resolved" in header and "batch" in header
+    assert row.split()[:3] == ["record_item", "1", "0"] and row.split()[-1] == "-"

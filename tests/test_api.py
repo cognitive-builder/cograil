@@ -291,6 +291,19 @@ def test_each_listed_run_names_who_started_it(env: Env) -> None:
     ]
 
 
+def test_each_listed_run_shows_its_tokens_by_category(env: Env) -> None:
+    env.paused_run()
+    (row,) = env.get("/runs").json()
+    assert set(row["usage"]) == {
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "batch_tokens",
+    }
+    assert row["cost_usd"] >= 0
+
+
 def test_run_detail_shows_steps_calls_and_gates(env: Env) -> None:
     run_id = env.paused_run()["run"]["id"]
     detail = env.get(f"/runs/{run_id}").json()

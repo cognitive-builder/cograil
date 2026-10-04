@@ -11,9 +11,10 @@ from __future__ import annotations
 
 from cograil.claims import RunClaims
 from cograil.context import add_cache_usage
+from cograil.cost import charge
 from cograil.domain import Harness, Run, Step, Tier, Tool
 from cograil.gates import StepProgress
-from cograil.harness import call_cost, check_bounds, escalation_tier, step_effort, tier_model
+from cograil.harness import check_bounds, escalation_tier, step_effort, tier_model
 from cograil.providers.base import Message, Plan, Provider
 
 
@@ -75,9 +76,8 @@ class Turns:
         usage = plan.usage
         cached = usage.cache_read_tokens + usage.cache_write_tokens
         progress.tokens += usage.input_tokens + usage.output_tokens + cached
-        cost = call_cost(self._harness, plan.model, usage.input_tokens, usage.output_tokens,
-                         usage.cache_read_tokens, usage.cache_write_tokens)  # fmt: skip
+        run = charge(self._harness, run, plan.model, usage)
         context = add_cache_usage(
             run.context, step.number, usage.cache_read_tokens, usage.cache_write_tokens
         )
-        return run.model_copy(update={"cost_usd": run.cost_usd + cost, "context": context}), plan
+        return run.model_copy(update={"context": context}), plan

@@ -53,7 +53,7 @@ def test_the_page_uses_the_endpoints_the_api_has(env: Env) -> None:
 
 
 def test_the_list_shows_status_protocol_principal_and_cost() -> None:
-    for field in ("status", "protocol", "principal_id", "cost_usd"):
+    for field in ("status", "protocol", "principal_id", "cost_usd", "usage", "batch_tokens"):
         assert field in HISTORY_PAGE
 
 
