@@ -42,7 +42,7 @@ class ApprovalLinks:
     def verify(self, approval: Approval, exp: int, sig: str) -> None:
         """Raise ApprovalLinkInvalid unless `sig` signs this Approval's token, approver and exp."""
         expected = self._sign(approval.token, approval.approver, exp)
-        if not hmac.compare_digest(expected, sig):
+        if not hmac.compare_digest(expected.encode(), sig.encode()):  # bytes: any sig is safe
             raise ApprovalLinkInvalid("this link is not valid")
 
     @staticmethod

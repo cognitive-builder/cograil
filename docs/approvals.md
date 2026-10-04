@@ -18,7 +18,7 @@ Set `COGRAIL_EMAIL` to `smtp` or `resend` and the service emails the approver ea
 The email names who asked, the Tool and its arguments, and holds one link: `/approvals/link/{token}?exp=…&sig=…`.
 
 - **The link stands for the approver.** The signature covers the token, the approver and the expiry, so no other Approval, approver or expiry verifies. A forged link answers 403 and changes nothing.
-- **Opening it decides nothing.** The page shows the call with Approve and Decline buttons, so a mail scanner that follows the link cannot approve. The buttons POST the decision.
+- **Opening it decides nothing.** The page shows the call with Approve and Decline buttons, so a mail scanner that follows the link cannot approve. The buttons POST the decision. The one thing a GET can do is escalate a link that has already expired.
 - **It works once.** An Approval is decided once. After that the link answers 409.
 - **It expires with the Approval.** The expiry is `approvals.timeout_hours` in `harness.yaml` (72 by default). A link used after that escalates the Run to the Colleague's escalation contact and answers 410.
 - **The Runner's rules still apply.** The Run's own principal can never be the approver, and an approval of a Run started under another harness or tool pack is refused.

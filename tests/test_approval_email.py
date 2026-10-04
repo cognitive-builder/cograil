@@ -113,7 +113,7 @@ def test_a_declined_link_escalates(env: Env, outbox: Outbox) -> None:
     assert audit(env, run_id, "run.escalated")[0].detail["via"] == "email_link"
 
 
-@pytest.mark.parametrize("tamper", ["sig", "exp", "token"])
+@pytest.mark.parametrize("tamper", ["sig", "exp", "token", "sig_non_ascii"])
 def test_a_forged_link_is_refused_and_changes_nothing(
     env: Env, outbox: Outbox, tamper: str
 ) -> None:
@@ -121,6 +121,8 @@ def test_a_forged_link_is_refused_and_changes_nothing(
     url = local(link_of(outbox.sent[0]))
     if tamper == "sig":
         url = url[:-1] + ("0" if url[-1] != "0" else "1")
+    elif tamper == "sig_non_ascii":
+        url = re.sub(r"sig=\w+", "sig=%C3%A9", url)
     elif tamper == "exp":
         url = re.sub(r"exp=(\d+)", lambda m: f"exp={int(m.group(1)) + 999}", url)
     else:
@@ -147,3 +149,33 @@ def test_an_expired_link_escalates_the_run(env: Env, outbox: Outbox) -> None:
 def test_the_link_routes_are_off_without_approval_mail(tmp_path: Path) -> None:
     plain = Env(tmp_path)
     assert plain.client.get("/approvals/link/abc?exp=1&sig=x").status_code == 404
+
+
+def reissued(env: Env, **changes: Any) -> str:
+    """A link the service itself would sign for the stored Approval after `changes` to it."""
+    token = next(iter(env.store._approvals))  # type: ignore[attr-defined]
+    changed = env.store._approvals[token].model_copy(update=changes)  # type: ignore[attr-defined]
+    env.store._approvals[token] = changed  # type: ignore[attr-defined]
+    return local(env.app.state.cograil_services.approval_mail.links.link(changed))
+
+
+def test_the_link_never_lets_the_runs_own_principal_approve(env: Env) -> None:
+    run_id = env.paused_run()["run"]["id"]
+    url = reissued(env, approver=ALICE)  # the Run's principal, as approver
+    response = env.client.post(url, json={"decision": "approved"})
+    assert response.status_code == 403 and ALICE not in response.text
+    assert stored(env, run_id).status is RunStatus.awaiting_approval
+    assert audit(env, run_id, "gate.refused")[0].detail["reason"] == "not_approver"
+
+
+def test_the_link_cannot_approve_a_run_started_under_another_harness(
+    env: Env, outbox: Outbox
+) -> None:
+    run_id = env.paused_run()["run"]["id"]
+    services = env.app.state.cograil_services
+    harness = services.workspace.harness
+    services.workspace.harness = harness.model_copy(update={"version": "9.0.0"})
+    response = env.client.post(local(link_of(outbox.sent[0])), json={"decision": "approved"})
+    assert response.status_code == 409
+    assert stored(env, run_id).status is RunStatus.awaiting_approval
+    assert audit(env, run_id, "gate.refused")[0].detail["reason"] == "run_version_changed"

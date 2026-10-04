@@ -18,7 +18,7 @@ from email.message import EmailMessage
 from cograil.approval_links import ApprovalLinks
 from cograil.channels.mail import EmailSender, build_sender, email_settings
 from cograil.domain import Approval, AuditEvent, Run
-from cograil.errors import EmailDeliveryError, EmailNotConfigured
+from cograil.errors import ApprovalLinkInvalid, EmailDeliveryError, EmailNotConfigured
 from cograil.observability import log_event
 from cograil.store import RunStore
 
@@ -64,7 +64,7 @@ class ApprovalMail:
         try:
             await self._sender.send(self._message(run, approval))
             kind = "approval.emailed"
-        except EmailDeliveryError as exc:
+        except (EmailDeliveryError, ApprovalLinkInvalid, ValueError) as exc:
             kind = "approval.email_failed"
             detail["error"] = str(exc)
             log_event(kind, logging.WARNING, run_id=run.id, error=str(exc))

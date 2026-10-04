@@ -73,14 +73,17 @@ async def decide_approval(
 
 
 @asynccontextmanager
-async def decision_failures() -> AsyncIterator[None]:
-    """Turn the errors of deciding an Approval into the HTTP answers both decide routes give."""
+async def decision_failures(refusal: str | None = None) -> AsyncIterator[None]:
+    """Turn the errors of deciding an Approval into the HTTP answers both decide routes give.
+
+    `refusal` replaces the 403 text, which names the decider: the link route has no sign-in,
+    so its caller must not be told who the approver is."""
     try:
         yield
     except (ApprovalNotFound, RunNotFound):
         raise HTTPException(404, "no such approval") from None
     except ApprovalNotAllowed as exc:
-        raise HTTPException(403, str(exc)) from None
+        raise HTTPException(403, refusal or str(exc)) from None
     except (RunNotPaused, ApprovalAlreadyDecided, RunClaimLost, WorkspaceError) as exc:
         raise HTTPException(409, str(exc)) from None
     except CograilError as exc:

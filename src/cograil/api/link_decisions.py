@@ -1,12 +1,13 @@
 """GET and POST /approvals/link/{token}: decide a gate from the signed link in an email.
 
 The link (cograil.approval_links) stands for the approver of that one Approval, so these routes
-need no sign-in; they answer 404 unless approval emails are configured. A bad or forged
-link answers 403 and changes nothing. GET only shows the call and two buttons: a mail scanner
-that opens the link decides nothing. POST decides, as the approver, through the same Runner
-rules as the signed-in route (the Run's own principal still cannot be the approver) and
-records `via: email_link` on the AuditEvent. An Approval is decided once, so a used link
-answers 409. A link past its expiry escalates the Run to the escalation contact and answers 410.
+need no sign-in; they answer 404 unless approval emails are configured. A bad or forged link
+answers 403 and changes nothing. GET only shows the call and two buttons: a mail scanner that
+opens the link decides nothing (an expired link escalates, on GET as on POST). POST decides, as
+the approver, through the same Runner rules as the signed-in route (the Run's own principal
+still cannot be the approver) and records `via: email_link` on the AuditEvent. An Approval is
+decided once, so a used link answers 409. A link past its expiry escalates the Run to the
+escalation contact and answers 410.
 """
 
 from __future__ import annotations
@@ -32,9 +33,12 @@ Exp = Annotated[int, Query(description="Expiry of the link, as in the email.")]
 Sig = Annotated[str, Query(description="Signature of the link, as in the email.")]
 HEADERS = {
     "Cache-Control": "no-store",
-    "Referrer-Policy": "no-referrer",
-    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; "
-    "script-src 'unsafe-inline'; connect-src 'self'",
+    "Referrer-Policy": "no-referrer",  # the signature is in the URL
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": (
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+        "connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+    ),
 }
 
 
@@ -84,7 +88,7 @@ async def decide_link(
 ) -> LinkDecision:
     """Approve or decline as the approver the link stands for."""
     await _open_approval(token, exp, sig, services)
-    async with decision_failures():
+    async with decision_failures(refusal="you may not decide this approval"):
         outcome = await services.decide_by_link(token, body.decision)
     return LinkDecision(decision=body.decision, run_status=outcome.run.status)
 
