@@ -1,0 +1,4 @@
+name: harper
+role: HR Operations Assistant
+escalation_contact: hr-ops@example.com
+protocols: [leave_request]

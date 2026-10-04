@@ -1,0 +1,4 @@
+tools:
+  - name: hris.get_balance
+    kind: python
+    scope: read
