@@ -13,7 +13,7 @@ tools:
     kind: python
     scope: write
     confirm_before_write: true
-    description: Submit a leave request. Idempotent on request_id.
+    description: Submit a leave request. Idempotent on (employee, request_id).
     args_schema:
       type: object
       properties:

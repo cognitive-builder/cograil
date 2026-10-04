@@ -2,8 +2,9 @@
 
 alice, bob and carol each hold a balance per tracked leave type. submit_leave
 counts inclusive calendar days, draws the balance down, and is idempotent on
-request_id: a replay returns the first result without deducting again. Leave
-types that are not tracked, such as unpaid, submit without touching a balance.
+(employee, request_id): a replay by the same employee returns the first result
+without deducting again. Leave types that are not tracked, such as unpaid,
+submit without touching a balance.
 The tables below are module state: a Run's registry loads this file fresh, so
 every Run starts from the seed tables and the tools of one Run share one copy.
 """
@@ -25,7 +26,7 @@ MANAGERS: dict[str, str] = {
     "bob": "carol",
     "carol": "hr-ops@example.com",
 }
-_SUBMITTED: dict[str, dict[str, Any]] = {}
+_SUBMITTED: dict[tuple[str, str], dict[str, Any]] = {}
 
 
 def get_balance(employee: str) -> dict[str, int]:
@@ -44,9 +45,10 @@ def get_manager(employee: str) -> dict[str, str]:
 def submit_leave(
     employee: str, start: str, end: str, leave_type: str, request_id: str
 ) -> dict[str, Any]:
-    """Record a leave request once; a replay on request_id returns the first result."""
-    if request_id in _SUBMITTED:
-        return _SUBMITTED[request_id]
+    """Record a leave once; a replay on (employee, request_id) returns the first result."""
+    key = (employee, request_id)
+    if key in _SUBMITTED:
+        return _SUBMITTED[key]
     balances = _balances(employee)
     days = _inclusive_days(start, end)
     remaining = balances.get(leave_type)
@@ -67,7 +69,7 @@ def submit_leave(
         "remaining": balances.get(leave_type),
         "status": "submitted",
     }
-    _SUBMITTED[request_id] = result
+    _SUBMITTED[key] = result
     return result
 
 
