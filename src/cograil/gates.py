@@ -12,9 +12,11 @@ waiting at the gate) in `Run.context["paused"]`, and sets the Run awaiting_appro
 saves the Run in the same store transaction, so a crash cannot leave one without the
 other. Only the Approval's approver may decide it, and never the Run's own principal: any
 other decider raises ApprovalNotAllowed and leaves the Run and the Approval as they were,
-with a `gate.refused` AuditEvent naming them; the decider is written on the `gate.resumed`
-or `run.escalated` AuditEvent. An approved Approval resumes the Run exactly at the paused
-Step; a declined one, or one past its expires_at, escalates the Run to the
+with a `gate.refused` AuditEvent whose principal is that decider, the Run's principal in its
+detail; the decider is written on the `gate.resumed` or `run.escalated` AuditEvent. A gate
+whose approver would be the Run's own principal, whom nobody else may stand in for, escalates
+at pause time instead of waiting out the timeout. An approved Approval resumes the Run exactly
+at the paused Step; a declined one, or one past its expires_at, escalates the Run to the
 Colleague's escalation_contact, as does a Tool reaching its FailureThreshold
 (`Gates.escalate`) or a Step hitting a loop bound (`Gates.bounded`, ADR 0008). An Approval
 expires after harness.yaml's approvals.timeout_hours.
@@ -53,7 +55,11 @@ GateAuditKind = Literal[
     "gate.paused", "gate.resumed", "gate.spent", "gate.refused", "loop.bounded", "run.escalated"
 ]
 EscalationReason = Literal[
-    "approval_declined", "approval_expired", "failure_threshold", "loop_budget_exceeded"
+    "approval_declined",
+    "approval_expired",
+    "approver_is_principal",
+    "failure_threshold",
+    "loop_budget_exceeded",
 ]
 
 
@@ -128,14 +134,22 @@ class Gates:
     async def pause(
         self, run: Run, tool: Tool, args: Mapping[str, Any], progress: StepProgress
     ) -> Run:
-        """Ask for an Approval of this call and park the Run awaiting_approval."""
+        """Ask for an Approval of this call and park the Run awaiting_approval.
+
+        When the approver would be the Run's own principal, who may never decide it, no
+        Approval is created and the Run escalates now.
+        """
+        approver = self._colleague.escalation_contact
+        if approver == run.principal_id:
+            detail = {"step": progress.step, "tool": tool.name, "approver": approver}
+            return await self.escalate(run, "approver_is_principal", detail)
         approval = Approval(
             token=secrets.token_urlsafe(16),
             run_id=run.id,
             step=progress.step,
             tool=tool.name,
             args=dict(args),
-            approver=self._colleague.escalation_contact,
+            approver=approver,
             expires_at=self._clock() + self._timeout,
         )
         await self._store.create_approval(approval)
@@ -165,8 +179,9 @@ class Gates:
         """
         approval, run = await self._paused_on(token)
         if decider != approval.approver or decider == run.principal_id:
-            detail = {**_about(approval), "approver": approval.approver, "decided_by": decider}
-            await self._audit(run, "gate.refused", detail)
+            detail = {**_about(approval), "approver": approval.approver, "decided_by": decider,
+                      "run_principal": run.principal_id}  # fmt: skip
+            await self._audit(run, "gate.refused", detail, principal=decider)
             log_event("gate.refused", logging.WARNING, run_id=run.id, step=approval.step)
             raise ApprovalNotAllowed(f"{decider} may not decide the Approval for {approval.tool}")
         if self._overdue(approval):
@@ -242,10 +257,14 @@ class Gates:
         await self._store.update_run(run)
         return run
 
-    async def _audit(self, run: Run, kind: GateAuditKind, detail: dict[str, Any]) -> None:
+    async def _audit(
+        self, run: Run, kind: GateAuditKind, detail: dict[str, Any], principal: str | None = None
+    ) -> None:
+        """`principal` is who acted, when that is not the Run's own principal."""
+        acting = run.principal_id if principal is None else principal
         await self._store.append_audit_event(
-            AuditEvent(run_id=run.id, at=self._clock(), principal_id=run.principal_id,
-                       kind=kind, detail=detail)
+            AuditEvent(run_id=run.id, at=self._clock(), principal_id=acting, kind=kind,
+                       detail=detail)
         )  # fmt: skip
 
 

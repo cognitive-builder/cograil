@@ -71,12 +71,15 @@ tool call the model plans in a turn is checked before any of them runs:
   (the approver is the Colleague's `escalation_contact` for now; routing the approver from a
   decision table comes later). The step's progress and the plan waiting at the gate are saved,
   and the run's status becomes `awaiting_approval` (a `gate.paused` AuditEvent). Nothing from
-  that plan runs.
+  that plan runs. When the approver would be the run's own principal, nobody may decide the
+  Approval, so none is created: the run escalates at once, with a `run.escalated` AuditEvent
+  that has the reason `approver_is_principal`.
 - `Runner.resume(token, protocol, decider=...)` approves and continues exactly at the paused step.
   The saved plan runs without asking the model again, then the step goes on. Only the Approval's
   approver may decide it, and never the run's own principal, so a run cannot approve its own
   write. Anyone else gets `ApprovalNotAllowed`, the run stays paused, and a `gate.refused`
-  AuditEvent records the attempt. The decider is recorded
+  AuditEvent records the attempt. Its principal is the one who tried to decide, and its detail
+  names the run's principal as `run_principal`. The decider is recorded
   as `decided_by` on the `gate.resumed` or `run.escalated` AuditEvent. The
   `cograil approve <token>` command that calls it comes with the CLI issue (#13). An Approval is
   decided once, so of two racing resumes only one goes on. The decision and the run's new status
