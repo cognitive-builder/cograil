@@ -28,6 +28,10 @@ class ProgressStore:
         self._emit = emit
         self._cursors: dict[str, int] = {}
 
+    def _emit_all(self, events: Sequence[AuditEvent]) -> None:
+        for event in events:
+            self._emit(describe(event))
+
     async def create_run(self, run: Run) -> None:
         self._cursors[run.id] = run.cursor
         await self._inner.create_run(run)
@@ -56,8 +60,11 @@ class ProgressStore:
     async def list_tool_calls(self, run_id: str) -> list[ToolCall]:
         return await self._inner.list_tool_calls(run_id)
 
-    async def create_approval(self, approval: Approval, *, run: Run) -> None:
-        await self._inner.create_approval(approval, run=run)
+    async def create_approval(
+        self, approval: Approval, *, run: Run, events: Sequence[AuditEvent] = ()
+    ) -> None:
+        await self._inner.create_approval(approval, run=run, events=events)
+        self._emit_all(events)
 
     async def get_approval(self, token: str) -> Approval:
         return await self._inner.get_approval(token)
@@ -74,12 +81,15 @@ class ProgressStore:
         decided = await self._inner.decide_approval(
             token, decision, decided_at, run=run, events=events
         )
-        for event in events:
-            self._emit(describe(event))
+        self._emit_all(events)
         return decided
 
-    async def spend_approval(self, token: str, spent_at: datetime, *, run: Run) -> Approval:
-        return await self._inner.spend_approval(token, spent_at, run=run)
+    async def spend_approval(
+        self, token: str, spent_at: datetime, *, run: Run, events: Sequence[AuditEvent] = ()
+    ) -> Approval:
+        spent = await self._inner.spend_approval(token, spent_at, run=run, events=events)
+        self._emit_all(events)
+        return spent
 
     async def list_approvals(self, run_id: str) -> list[Approval]:
         return await self._inner.list_approvals(run_id)

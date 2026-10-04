@@ -9,7 +9,17 @@ from typing import Any
 
 import pytest
 
-from cograil.domain import Approval, Colleague, Principal, Run, RunStatus, Step, Tool, Trigger
+from cograil.domain import (
+    Approval,
+    AuditEvent,
+    Colleague,
+    Principal,
+    Run,
+    RunStatus,
+    Step,
+    Tool,
+    Trigger,
+)
 from cograil.errors import GateRequired, ProviderError, RunClaimLost
 from cograil.parser import parse_protocol
 from cograil.providers import FakeProvider, Plan, PlannedToolCall, scripted
@@ -71,15 +81,19 @@ class TakeoverAtApprovalStore(InMemoryRunStore):
         stored = await self.get_run(run_id)
         await self.claim_run(stored.model_copy(update={"claim": "winner"}), stored)
 
-    async def create_approval(self, approval: Approval, *, run: Run) -> None:
+    async def create_approval(
+        self, approval: Approval, *, run: Run, events: Sequence[AuditEvent] = ()
+    ) -> None:
         if self.at == "create":
             await self._take_over(run.id)
-        await super().create_approval(approval, run=run)
+        await super().create_approval(approval, run=run, events=events)
 
-    async def spend_approval(self, token: str, spent_at: datetime, *, run: Run) -> Approval:
+    async def spend_approval(
+        self, token: str, spent_at: datetime, *, run: Run, events: Sequence[AuditEvent] = ()
+    ) -> Approval:
         if self.at == "spend":
             await self._take_over(run.id)
-        return await super().spend_approval(token, spent_at, run=run)
+        return await super().spend_approval(token, spent_at, run=run, events=events)
 
 
 class HeldProvider(FakeProvider):

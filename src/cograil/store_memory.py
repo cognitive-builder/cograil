@@ -76,15 +76,19 @@ class InMemoryRunStore:
     async def list_tool_calls(self, run_id: str) -> list[ToolCall]:
         return [c.model_copy(deep=True) for c in self._tool_calls.get(run_id, [])]
 
-    async def create_approval(self, approval: Approval, *, run: Run) -> None:
+    async def create_approval(
+        self, approval: Approval, *, run: Run, events: Sequence[AuditEvent] = ()
+    ) -> None:
         # Every check comes before the first write, and no await between them.
         if approval.run_id != run.id:
             raise ApprovalRunMismatch(approval.token)
         self._require_claim(run.id, run.claim)
         if approval.token in self._approvals:
             raise DuplicateRecord(f"approval {approval.token}")
+        self._require_runs_of(events)
         self._approvals[approval.token] = approval.model_copy(deep=True)
         self._save_run(run)
+        self._append(events)
 
     async def get_approval(self, token: str) -> Approval:
         if token not in self._approvals:
@@ -107,15 +111,23 @@ class InMemoryRunStore:
         if current.decision != "pending":
             raise ApprovalAlreadyDecided(token)
         self._require_claim(run.id, run.claim)
-        for event in events:
-            self._require_run(event.run_id)
+        self._require_runs_of(events)
         decided = current.model_copy(update={"decision": decision, "decided_at": decided_at})
         self._approvals[token] = decided
         self._save_run(run)
-        self._audit.extend(e.model_copy(deep=True) for e in events)
+        self._append(events)
         return decided.model_copy(deep=True)
 
-    async def spend_approval(self, token: str, spent_at: datetime, *, run: Run) -> Approval:
+    def _require_runs_of(self, events: Sequence[AuditEvent]) -> None:
+        for event in events:
+            self._require_run(event.run_id)
+
+    def _append(self, events: Sequence[AuditEvent]) -> None:
+        self._audit.extend(e.model_copy(deep=True) for e in events)
+
+    async def spend_approval(
+        self, token: str, spent_at: datetime, *, run: Run, events: Sequence[AuditEvent] = ()
+    ) -> Approval:
         # No await between the checks and the write, so concurrent spends and claims cannot
         # interleave.
         self._require_claim(run.id, run.claim)
@@ -124,8 +136,10 @@ class InMemoryRunStore:
             raise ApprovalRunMismatch(token)
         if current.decision != "approved" or current.spent_at is not None:
             raise ApprovalNotSpendable(token)
+        self._require_runs_of(events)
         spent = current.model_copy(update={"spent_at": spent_at})
         self._approvals[token] = spent
+        self._append(events)
         return spent.model_copy(deep=True)
 
     async def list_approvals(self, run_id: str) -> list[Approval]:

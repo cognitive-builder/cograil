@@ -7,6 +7,7 @@ tokens that work as a CLI argument are issue #113.
 
 import asyncio
 import re
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -469,9 +470,11 @@ async def test_run_of_an_ended_run_raises_and_changes_nothing(
 class RacedStore(InMemoryRunStore):
     """Another resume spends each Approval just before this one tries to."""
 
-    async def spend_approval(self, token: str, spent_at: datetime, *, run: Run) -> Approval:
+    async def spend_approval(
+        self, token: str, spent_at: datetime, *, run: Run, events: Sequence[AuditEvent] = ()
+    ) -> Approval:
         await super().spend_approval(token, spent_at, run=run)
-        return await super().spend_approval(token, spent_at, run=run)
+        return await super().spend_approval(token, spent_at, run=run, events=events)
 
 
 async def test_an_approval_spent_by_a_racing_call_raises_gate_required(
@@ -488,26 +491,28 @@ async def test_an_approval_spent_by_a_racing_call_raises_gate_required(
 
 
 class CrashingAuditStore(InMemoryRunStore):
-    """Dies at a separate append of a decision's AuditEvent, as a crash after the decision's
-    commit would."""
+    """Dies at a separate append of a pause's, decision's or spend's AuditEvent, as a crash
+    after that store write's commit would."""
 
     async def append_audit_event(self, event: AuditEvent) -> None:
-        if event.kind in {"gate.resumed", "run.escalated"}:
-            raise RuntimeError("crashed after the decision was committed")
+        if event.kind in {"gate.paused", "gate.resumed", "gate.spent", "run.escalated"}:
+            raise RuntimeError("crashed after the store write was committed")
         await super().append_audit_event(event)
 
 
 @pytest.mark.parametrize(
-    ("decision", "kind"), [("approved", "gate.resumed"), ("declined", "run.escalated")]
+    ("decision", "kinds"),
+    [("approved", ["gate.resumed", "gate.spent"]), ("declined", ["run.escalated"])],
 )
-async def test_a_decision_is_never_saved_without_its_audit_event(
+async def test_a_gate_is_never_saved_without_its_audit_events(
     store: InMemoryRunStore,
     protocol: Protocol,
     tools: Tools,
     decision: Literal["approved", "declined"],
-    kind: str,
+    kinds: list[str],
 ) -> None:
-    """Issue #104: the decision's AuditEvent is written in the decision's own transaction."""
+    """Issues #104 and #173: the pause's, the decision's and the spend's AuditEvents are
+    written in their own store transactions, so a crash after a commit cannot lose them."""
     crashing = CrashingAuditStore()
     await crashing.create_run(await store.get_run("r1"))
     registry, clock = build_registry(crashing, tools), Clock()
@@ -519,11 +524,14 @@ async def test_a_decision_is_never_saved_without_its_audit_event(
     await runner(TO_GATE).run("r1", protocol)
     (paused,) = await crashing.list_approvals("r1")
     await runner(AFTER_GATE).resume(paused.token, protocol, decider=CONTACT, decision=decision)
-    assert (await crashing.get_approval(paused.token)).decision == decision
-    events = [e for e in await crashing.list_audit_events("r1") if e.kind == kind]
-    assert [(e.detail["token"], e.detail["decided_by"]) for e in events] == [
-        (paused.token, CONTACT)
-    ]
+    approval = await crashing.get_approval(paused.token)
+    assert approval.decision == decision
+    assert (approval.spent_at is not None) == (decision == "approved")
+    gate_kinds = {"gate.paused", "gate.resumed", "gate.spent", "run.escalated"}
+    events = [e for e in await crashing.list_audit_events("r1") if e.kind in gate_kinds]
+    assert [e.kind for e in events] == ["gate.paused", *kinds]
+    assert {e.detail["token"] for e in events} == {paused.token}
+    assert [e.detail["decided_by"] for e in events if "decided_by" in e.detail] == [CONTACT]
 
 
 async def test_a_token_the_run_is_not_paused_on_cannot_resume_it(

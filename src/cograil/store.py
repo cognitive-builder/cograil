@@ -9,7 +9,8 @@ claim over by compare-and-set on the claim and status the caller read, so of two
 started from the same read exactly one goes on; every other save is conditional on the claim,
 so an execution whose claim was taken over gets RunClaimLost at its next save and stops.
 Creating and spending an Approval are conditional on the claim too (#143), so such an
-execution neither spends an Approval nor leaves a pending one behind.
+execution neither spends an Approval nor leaves a pending one behind. Creating, deciding and
+spending an Approval append their AuditEvents in the same transaction (#104, #173).
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
-from pydantic_core import to_jsonable_python
 from sqlalchemy import insert, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
@@ -34,6 +34,14 @@ from cograil.errors import (
     RunNotFound,
 )
 from cograil.store_memory import RUN_MUTABLE, InMemoryRunStore
+from cograil.store_rows import (
+    approval_values,
+    call_values,
+    event_values,
+    run_values,
+    sqlstate,
+    without,
+)
 from cograil.store_tables import approvals, audit_events, runs, tool_calls
 
 _UNIQUE_VIOLATION = "23505"
@@ -68,10 +76,12 @@ class RunStore(Protocol):
 
     async def list_tool_calls(self, run_id: str) -> list[ToolCall]: ...
 
-    async def create_approval(self, approval: Approval, *, run: Run) -> None:
-        """Create the pending `approval` of `run` and save `run` as update_run does,
-        atomically: both or neither. RunClaimLost when the stored claim is no longer
-        `run.claim`; ApprovalRunMismatch when `approval` belongs to another Run."""
+    async def create_approval(
+        self, approval: Approval, *, run: Run, events: Sequence[AuditEvent] = ()
+    ) -> None:
+        """Create the pending `approval` of `run`, save `run` as update_run does and append
+        `events`, atomically: all of them or none. RunClaimLost when the stored claim is no
+        longer `run.claim`; ApprovalRunMismatch when `approval` belongs to another Run."""
         ...
 
     async def get_approval(self, token: str) -> Approval: ...
@@ -91,9 +101,12 @@ class RunStore(Protocol):
         ApprovalRunMismatch."""
         ...
 
-    async def spend_approval(self, token: str, spent_at: datetime, *, run: Run) -> Approval:
-        """Spend an approved Approval of `run` once, atomically: of two concurrent spends one
-        wins and the other raises ApprovalNotSpendable, as does spending one not approved.
+    async def spend_approval(
+        self, token: str, spent_at: datetime, *, run: Run, events: Sequence[AuditEvent] = ()
+    ) -> Approval:
+        """Spend an approved Approval of `run` once and append `events`, atomically: both or
+        neither. Of two concurrent spends one wins and the other raises ApprovalNotSpendable,
+        as does spending one not approved.
 
         Spends only while the stored claim is still `run.claim`, which no claim can take over
         until the spend commits; otherwise RunClaimLost. ApprovalRunMismatch when the
@@ -125,47 +138,6 @@ class RunStore(Protocol):
         ...
 
 
-def _json(value: Any) -> Any:
-    """Make a value safe for a JSONB column (datetimes, enums, nested models)."""
-    return to_jsonable_python(value)
-
-
-def _run_values(run: Run) -> dict[str, Any]:
-    values = run.model_dump()
-    for name in ("principal", "trigger", "context"):
-        values[name] = _json(values[name])
-    values["status"] = str(run.status)
-    return values
-
-
-def _call_values(run_id: str, call: ToolCall) -> dict[str, Any]:
-    values = call.model_dump()
-    values["args"] = _json(values["args"])
-    values["result"] = _json(values["result"])
-    return {"run_id": run_id, **values}
-
-
-def _approval_values(approval: Approval) -> dict[str, Any]:
-    values = approval.model_dump()
-    values["args"] = _json(values["args"])
-    return values
-
-
-def _event_values(event: AuditEvent) -> dict[str, Any]:
-    values = event.model_dump()
-    values["detail"] = _json(values["detail"])
-    return values
-
-
-def _without(row: Mapping[Any, Any], *keys: str) -> dict[str, Any]:
-    """A row as a dict, minus storage-only columns the domain model does not carry."""
-    return {name: value for name, value in row.items() if name not in keys}
-
-
-def _sqlstate(exc: IntegrityError) -> str | None:
-    return getattr(exc.orig, "sqlstate", None)
-
-
 class PostgresRunStore:
     """RunStore on Postgres through SQLAlchemy async Core. Schema comes from Alembic."""
 
@@ -193,7 +165,7 @@ class PostgresRunStore:
         try:
             await conn.execute(insert(table).values(**values))
         except IntegrityError as exc:
-            state = _sqlstate(exc)
+            state = sqlstate(exc)
             if state == _UNIQUE_VIOLATION:
                 raise DuplicateRecord(what) from exc
             if state == _FOREIGN_KEY_VIOLATION:
@@ -201,7 +173,7 @@ class PostgresRunStore:
             raise
 
     async def create_run(self, run: Run) -> None:
-        await self._insert(runs, _run_values(run), what=f"run {run.id}", run_id=run.id)
+        await self._insert(runs, run_values(run), what=f"run {run.id}", run_id=run.id)
 
     async def get_run(self, run_id: str) -> Run:
         async with self._engine.connect() as conn:
@@ -236,7 +208,7 @@ class PostgresRunStore:
     ) -> None:
         """One conditional UPDATE: a concurrent claim that committed first makes it match no
         row, since Postgres re-checks the WHERE clause against the committed row."""
-        values = _run_values(run)
+        values = run_values(run)
         changes = {name: values[name] for name in (*RUN_MUTABLE, "claim")}
         held = (runs.c.id == run.id) & runs.c.claim.is_not_distinct_from(claim)
         if status is not None:
@@ -248,24 +220,28 @@ class PostgresRunStore:
 
     async def record_tool_call(self, run_id: str, call: ToolCall) -> None:
         await self._insert(
-            tool_calls, _call_values(run_id, call), what=f"tool call {call.tool}", run_id=run_id
+            tool_calls, call_values(run_id, call), what=f"tool call {call.tool}", run_id=run_id
         )
 
     async def list_tool_calls(self, run_id: str) -> list[ToolCall]:
         query = select(tool_calls).where(tool_calls.c.run_id == run_id).order_by(tool_calls.c.id)
         async with self._engine.connect() as conn:
             rows = (await conn.execute(query)).mappings().all()
-        return [ToolCall.model_validate(_without(r, "id", "run_id")) for r in rows]
+        return [ToolCall.model_validate(without(r, "id", "run_id")) for r in rows]
 
-    async def create_approval(self, approval: Approval, *, run: Run) -> None:
+    async def create_approval(
+        self, approval: Approval, *, run: Run, events: Sequence[AuditEvent] = ()
+    ) -> None:
         if approval.run_id != run.id:
             raise ApprovalRunMismatch(approval.token)
-        values, what = _approval_values(approval), f"approval {approval.token}"
+        values, what = approval_values(approval), f"approval {approval.token}"
         # The fenced save comes first and locks the Run's row, so a claim that took the Run
         # over makes it fail before the insert, and none can take it over before the commit.
+        # The AuditEvents commit with it, so a crash cannot leave a pause without them.
         async with self._engine.begin() as conn:
             await self._update_run(conn, run, run.claim)
             await self._insert_in(conn, approvals, values, what=what, run_id=run.id)
+            await self._append(conn, events)
 
     async def get_approval(self, token: str) -> Approval:
         async with self._engine.connect() as conn:
@@ -316,13 +292,15 @@ class PostgresRunStore:
     async def _append(conn: AsyncConnection, events: Sequence[AuditEvent]) -> None:
         for event in events:
             try:
-                await conn.execute(insert(audit_events).values(**_event_values(event)))
+                await conn.execute(insert(audit_events).values(**event_values(event)))
             except IntegrityError as exc:
-                if _sqlstate(exc) == _FOREIGN_KEY_VIOLATION:
+                if sqlstate(exc) == _FOREIGN_KEY_VIOLATION:
                     raise RunNotFound(event.run_id) from exc
                 raise
 
-    async def spend_approval(self, token: str, spent_at: datetime, *, run: Run) -> Approval:
+    async def spend_approval(
+        self, token: str, spent_at: datetime, *, run: Run, events: Sequence[AuditEvent] = ()
+    ) -> Approval:
         spendable = (
             (approvals.c.token == token)
             & (approvals.c.run_id == run.id)
@@ -334,10 +312,12 @@ class PostgresRunStore:
         )
         # Run row, then Approval row: decide_approval locks the other way round, but only
         # on a pending row, never the approved one a spend locks, so the two cannot deadlock.
+        # The AuditEvents commit with the spend, so a crash cannot leave a spend without them.
         async with self._engine.begin() as conn:
             await self._hold_claim(conn, run)
             row = (await conn.execute(statement)).mappings().first()
             if row is not None:
+                await self._append(conn, events)
                 return Approval.model_validate(dict(row))
             current = await self._get_approval(conn, token)  # ApprovalNotFound when absent
         if current.run_id != run.id:
@@ -363,14 +343,14 @@ class PostgresRunStore:
 
     async def append_audit_event(self, event: AuditEvent) -> None:
         await self._insert(
-            audit_events, _event_values(event), what="audit event", run_id=event.run_id
+            audit_events, event_values(event), what="audit event", run_id=event.run_id
         )
 
     async def list_audit_events(self, run_id: str) -> list[AuditEvent]:
         query = select(audit_events).where(audit_events.c.run_id == run_id)
         async with self._engine.connect() as conn:
             rows = (await conn.execute(query.order_by(audit_events.c.id))).mappings().all()
-        return [AuditEvent.model_validate(_without(r, "id")) for r in rows]
+        return [AuditEvent.model_validate(without(r, "id")) for r in rows]
 
     async def page_audit_events(
         self,
@@ -393,7 +373,7 @@ class PostgresRunStore:
         query = query.order_by(audit_events.c.id).limit(limit).offset(offset)
         async with self._engine.connect() as conn:
             rows = (await conn.execute(query)).mappings().all()
-        return [AuditEvent.model_validate(_without(r, "id")) for r in rows]
+        return [AuditEvent.model_validate(without(r, "id")) for r in rows]
 
 
 __all__ = ["ApprovalDecision", "InMemoryRunStore", "PostgresRunStore", "RunStore"]

@@ -3,11 +3,13 @@
 A scope=write Tool with confirm_before_write runs only against an approved, unspent
 Approval for the same Run, step, Tool and arguments, and each Approval authorises one call:
 `RunStore.spend_approval` lets it through once, atomically, and a `gate.spent` AuditEvent
-records it. `require_approval` is the fail-closed core and raises GateRequired.
+written in the same store transaction records it. `require_approval` is the fail-closed
+core and raises GateRequired.
 
 Where no such Approval exists the runner pauses instead of failing: `Gates.pause` creates a
 pending Approval, saves the Step's progress (turn, messages, tool results and the plan
-waiting at the gate) in `Run.context["paused"]`, and sets the Run awaiting_approval.
+waiting at the gate) in `Run.context["paused"]`, sets the Run awaiting_approval and writes
+the `gate.paused` AuditEvent, all in one store transaction.
 `Gates.resume` decides the Approval once, so of two racing resumes only one goes on, and
 saves the Run and writes the `gate.resumed` or `run.escalated` AuditEvent in the same store
 transaction, so a crash cannot leave one without the others. Only the Approval's approver
@@ -166,22 +168,25 @@ class Gates:
         run = run.model_copy(update={"status": RunStatus.awaiting_approval, "context": context,
                                      "updated_at": self._clock()})  # fmt: skip
         # One transaction fenced by the claim: an execution whose claim was taken over gets
-        # RunClaimLost and leaves no pending Approval behind (#143).
-        await self._store.create_approval(approval, run=run)
-        detail = {**_about(approval), "approver": approval.approver}
-        await self._audit(run, "gate.paused", {**detail, "expires_at": approval.expires_at})
+        # RunClaimLost and leaves no pending Approval behind (#143). The gate.paused
+        # AuditEvent is written in it too, so a crash cannot leave a pause without it (#173).
+        detail = {**_about(approval), "approver": approval.approver,
+                  "expires_at": approval.expires_at}  # fmt: skip
+        event = self._event(run, "gate.paused", detail)
+        await self._store.create_approval(approval, run=run, events=[event])
         log_event("gate.paused", step=approval.step, tool=approval.tool)
         return run
 
     async def spend(self, run: Run, approval: Approval) -> None:
         """Let the one call an Approval authorises through; losing a race raises GateRequired.
 
-        An execution whose claim on the Run was taken over spends nothing: RunClaimLost."""
+        An execution whose claim on the Run was taken over spends nothing: RunClaimLost.
+        The gate.spent AuditEvent is written in the spend's transaction (#173)."""
+        event = self._event(run, "gate.spent", _about(approval))
         try:
-            await self._store.spend_approval(approval.token, self._clock(), run=run)
+            await self._store.spend_approval(approval.token, self._clock(), run=run, events=[event])
         except ApprovalNotSpendable as exc:
             raise GateRequired(f"{approval.tool}: its Approval is already spent") from exc
-        await self._audit(run, "gate.spent", _about(approval))
 
     async def resume(
         self, token: str, decision: Literal["approved", "declined"], decider: str
