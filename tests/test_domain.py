@@ -116,6 +116,30 @@ def test_run_mirrors_principal_and_trigger() -> None:
         Run.model_validate({**RUN.model_dump(), "principal_id": "mallory@example.com"})
 
 
+@pytest.mark.parametrize(
+    ("key", "value", "loc", "mirror"),
+    [
+        ("principal", {"groups": ["all-employees"]}, ("principal", "id"), "principal_id"),
+        ("trigger", {"channel": "web"}, ("trigger", "kind"), "trigger_kind"),
+    ],
+    ids=["principal-without-id", "trigger-without-kind"],
+)
+def test_run_missing_mirror_key_names_the_field(
+    key: str, value: dict[str, Any], loc: tuple[str, str], mirror: str
+) -> None:
+    data = {**RUN.model_dump(), key: value}
+    del data[mirror]
+    with pytest.raises(ValidationError) as exc:
+        Run.model_validate(data)
+    errors = exc.value.errors()
+    assert (loc, "missing") in [(e["loc"], e["type"]) for e in errors]
+    assert all(e["type"] == "missing" for e in errors)
+
+
+def test_trigger_kind_is_defined_once() -> None:
+    assert Trigger.model_fields["kind"].annotation is Run.model_fields["trigger_kind"].annotation
+
+
 ENDPOINT = {"method": "GET", "path": "/people"}
 STDIO = {"transport": "stdio", "command": "calendar-mcp"}
 

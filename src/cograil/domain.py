@@ -270,8 +270,11 @@ class Principal(Entity):
     kind: Literal["user", "system"] = "user"
 
 
+type TriggerKind = Literal["chat", "schedule", "webhook"]
+
+
 class Trigger(Entity):
-    kind: Literal["chat", "schedule", "webhook"]
+    kind: TriggerKind
     channel: str | None = None
     cron: str | None = None
 
@@ -335,7 +338,7 @@ class Run(Entity):
     principal: Principal
     principal_id: str
     trigger: Trigger
-    trigger_kind: Literal["chat", "schedule", "webhook"]
+    trigger_kind: TriggerKind
     status: RunStatus = RunStatus.received
     cursor: int = 0
     context: dict[str, Any] = Field(default_factory=dict)
@@ -352,10 +355,12 @@ class Run(Entity):
         principal, trigger = data.get("principal"), data.get("trigger")
         if principal is not None:
             pid = principal.id if isinstance(principal, Principal) else principal.get("id")
-            data.setdefault("principal_id", pid)
+            if pid is not None:
+                data.setdefault("principal_id", pid)
         if trigger is not None:
             kind = trigger.kind if isinstance(trigger, Trigger) else trigger.get("kind")
-            data.setdefault("trigger_kind", kind)
+            if kind is not None:
+                data.setdefault("trigger_kind", kind)
         return data
 
     @model_validator(mode="after")
