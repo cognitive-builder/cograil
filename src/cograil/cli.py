@@ -1,4 +1,4 @@
-"""The cograil command line: validate, run, approve, runs and decide.
+"""The cograil command line: validate, run, approve, runs, decide and knowledge sync.
 
 `run` and `approve` are a local and demo tool. `--as` is taken at face value: nothing here
 authenticates the principal, and the safety comes from needing DATABASE_URL. A principal's
@@ -37,6 +37,7 @@ from cograil.errors import (
     ToolNotFound,
     WorkspaceError,
 )
+from cograil.knowledge.cli import knowledge_app
 from cograil.progress import ProgressStore
 from cograil.providers import AnthropicProvider, FakeProvider, Provider
 from cograil.providers.fake import load_script
@@ -68,6 +69,7 @@ app = typer.Typer(
     help="Cograil: run Markdown runbooks as an AI colleague.\n\n" + _EXIT_CODES,
     no_args_is_help=True,
 )
+app.add_typer(knowledge_app, name="knowledge")
 AsOption = Annotated[
     str, typer.Option("--as", help="The principal acting (for approve, the deciding approver).")
 ]

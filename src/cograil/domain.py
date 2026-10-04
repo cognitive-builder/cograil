@@ -156,11 +156,20 @@ class Audience(Entity):
 
 
 class KnowledgeSource(Entity):
+    """A folder of Markdown and PDF files. `chunk_size` and `chunk_overlap` count characters;
+    `acl_groups` is the default for files with no sidecar or folder ACL file."""
+
     name: str
     path: str
     acl_groups: list[str]
-    chunk_size: int = 800
-    chunk_overlap: int = 120
+    chunk_size: int = Field(default=800, gt=0)
+    chunk_overlap: int = Field(default=120, ge=0)
+
+    @model_validator(mode="after")
+    def _overlap_is_smaller_than_size(self) -> KnowledgeSource:
+        if self.chunk_overlap >= self.chunk_size:
+            raise ValueError("chunk_overlap must be smaller than chunk_size")
+        return self
 
 
 class Chunk(Entity):
