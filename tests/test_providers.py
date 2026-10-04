@@ -90,7 +90,7 @@ async def test_plan_returns_text_and_structured_tool_calls() -> None:
         },
         STEP_COMPLETE_SPEC,
     ]
-    assert "Find the leave balance." in request["system"]
+    assert "Find the leave balance." in request["system"][-1]["text"]
 
 
 async def test_tool_not_offered_keeps_its_name_so_the_runner_can_reject_it() -> None:

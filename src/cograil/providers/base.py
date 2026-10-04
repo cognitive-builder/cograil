@@ -33,10 +33,16 @@ class PlannedToolCall(ProviderModel):
 
 
 class Usage(ProviderModel):
-    """Token usage of one call, for cost telemetry."""
+    """Token usage of one call, for cost telemetry.
+
+    `input_tokens` counts only the prompt that was neither read from nor written to the saved
+    context (ADR 0013); the two cache counts are reported by the provider, never estimated.
+    """
 
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
 
 
 STEP_COMPLETE = "step_complete"
@@ -84,10 +90,14 @@ class Provider(Protocol):
         *,
         model: str | None = None,
         effort: Effort | None = None,
+        prefix: str = "",
     ) -> Plan:
         """Ask the model what to do next in `step`, offering only `tools`.
 
         The runner names the `model` its tier maps to and the Step's `effort`; without them
-        the provider uses the model it was built with and its own effort default.
+        the provider uses the model it was built with and its own effort default. `prefix` is
+        the text that does not change between calls of a Run (persona and protocol text, see
+        `ContextBuilder.prefix`): it goes first in the prompt, and a provider that has saved
+        context marks it for caching (ADR 0013).
         """
         ...

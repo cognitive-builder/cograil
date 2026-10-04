@@ -21,12 +21,14 @@ class FakeCall:
         tools: list[Tool],
         model: str | None = None,
         effort: Effort | None = None,
+        prefix: str = "",
     ) -> None:
         self.step = step
         self.context = context
         self.tools = tools
         self.model = model
         self.effort = effort
+        self.prefix = prefix
 
 
 class FakeProvider:
@@ -43,8 +45,9 @@ class FakeProvider:
         *,
         model: str | None = None,
         effort: Effort | None = None,
+        prefix: str = "",
     ) -> Plan:
-        self.calls.append(FakeCall(step, list(context), list(tools), model, effort))
+        self.calls.append(FakeCall(step, list(context), list(tools), model, effort, prefix))
         if len(self.calls) > len(self._script):
             raise ProviderError(f"FakeProvider script exhausted after {len(self._script)} plans")
         return self._script[len(self.calls) - 1]
@@ -57,6 +60,8 @@ def scripted(
     input_tokens: int = 10,
     output_tokens: int = 5,
     confidence: float | None = None,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
 ) -> Plan:
     """Build a Plan for a script without spelling out the usage each time.
 
@@ -66,7 +71,12 @@ def scripted(
         text=text,
         tool_calls=list(tool_calls),
         step_complete=StepComplete(output=text, confidence=confidence) if done else None,
-        usage=Usage(input_tokens=input_tokens, output_tokens=output_tokens),
+        usage=Usage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+        ),
         model="fake-model",
         stop_reason="tool_use" if tool_calls else "end_turn",
     )

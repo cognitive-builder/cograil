@@ -10,7 +10,14 @@ inside the block, `<` is escaped so that no text can close it early.
 The Window Ledger counts the tokens of each source, per Step, in `Run.context["ledger"]`:
 instruction, prior_steps, tools (schemas and results) and knowledge (results of knowledge
 Tools). Counts are estimates (`estimate_tokens`), made before the model is called, so a
-provider's own usage figure stays the figure for cost.
+provider's own usage figure stays the figure for cost. The cache read and write tokens a
+provider reports for each call (never estimated) are added to the Step's row beside them.
+
+Saved context (ADR 0013): a call's prompt is ordered from the most stable part to the least.
+First the tool schemas (offered by the provider), then `ContextBuilder.prefix`, the persona and
+protocol text, which is the same on every call of a Run; after the marked prefix come the
+Step's own text and the per-run data. A provider that has saved context marks the prefix for
+caching, so repeated calls pay the cache-read rate.
 """
 
 from __future__ import annotations
@@ -22,7 +29,7 @@ from typing import Any, Literal, get_args
 
 from pydantic_core import to_jsonable_python
 
-from cograil.domain import Harness, Run, Step, Tool
+from cograil.domain import Colleague, Harness, Protocol, Run, Step, Tool
 from cograil.providers.base import Message
 
 Source = Literal["instruction", "prior_steps", "tools", "knowledge"]
@@ -36,6 +43,7 @@ DATA_PREAMBLE = (
 )
 LEDGER_KEY = "ledger"
 RAW_KEY, COMPRESSED_KEY = "raw_tokens", "compressed_tokens"  # the ledger row's compression sizes
+CACHE_READ_KEY, CACHE_WRITE_KEY = "cache_read_tokens", "cache_write_tokens"  # provider-reported
 RECORD_KEY = "compressed"  # a recorded call's summary, beside its raw result
 NOTE = "[compressed by the small tier to fit the context; the full output is kept on the Run]"
 CHARS_PER_TOKEN = 4
@@ -90,6 +98,28 @@ class ContextBuilder:
 
     def __init__(self, harness: Harness) -> None:
         self._prior = harness.context.default_prior_steps
+
+    def prefix(self, colleague: Colleague, protocol: Protocol) -> str:
+        """The text that is the same on every call of a Run: persona, then protocol text.
+
+        It holds no per-run data and no per-step choice, so every Step of a Run sends it
+        unchanged. Steps are listed by number, name and instruction; their tool lists are not,
+        because a Step's tools are only those its whitelist offers.
+        """
+        persona = (
+            f"You are {colleague.name}, {colleague.role}. "
+            f"When you cannot go on, escalate to {colleague.escalation_contact}."
+        )
+        steps = [f"Step {s.number}: {s.name}\n{s.instruction}" for s in protocol.steps]
+        rules = [
+            f"{title}:\n" + "\n".join(f"- {line}" for line in lines)
+            for title, lines in (("Error handling", protocol.error_handling),
+                                 ("Guardrails", protocol.guardrails))
+            if lines
+        ]  # fmt: skip
+        about = f": {protocol.description}" if protocol.description else ""
+        head = f"Protocol {protocol.name}{about}"
+        return "\n\n".join([persona, head, *steps, *rules])
 
     def prior_step_numbers(self, step: Step) -> list[int]:
         """The declared Steps, else the previous `default_prior_steps` Steps."""
@@ -160,6 +190,26 @@ def add_compression(
     return {**context, LEDGER_KEY: ledger}
 
 
+def add_cache_usage(context: dict[str, Any], step: int, read: int, write: int) -> dict[str, Any]:
+    """`context` with one call's cache read and write tokens added to the Step's ledger row."""
+    ledger = {**context.get(LEDGER_KEY, {})}
+    row = {**ledger.get(str(step), {})}
+    row[CACHE_READ_KEY] = row.get(CACHE_READ_KEY, 0) + read
+    row[CACHE_WRITE_KEY] = row.get(CACHE_WRITE_KEY, 0) + write
+    ledger[str(step)] = row
+    return {**context, LEDGER_KEY: ledger}
+
+
+def cache_ledger(run: Run) -> dict[int, tuple[int, int]]:
+    """(read, write) cache tokens of each Step that had any; empty when nothing was cached."""
+    saved = run.context.get(LEDGER_KEY, {})
+    sizes = {
+        int(step): (row.get(CACHE_READ_KEY, 0), row.get(CACHE_WRITE_KEY, 0))
+        for step, row in sorted(saved.items(), key=lambda item: int(item[0]))
+    }
+    return sizes if any(read or write for read, write in sizes.values()) else {}
+
+
 def compression_ledger(run: Run) -> dict[int, tuple[int, int]]:
     """(raw, compressed) tokens of what was compressed, for each Step that compressed anything."""
     saved = run.context.get(LEDGER_KEY, {})
@@ -180,19 +230,23 @@ def window_ledger(run: Run) -> dict[int, TokenCounts]:
 
 
 def format_ledger(
-    ledger: Mapping[int, TokenCounts], compression: Mapping[int, tuple[int, int]] | None = None
+    ledger: Mapping[int, TokenCounts],
+    compression: Mapping[int, tuple[int, int]] | None = None,
+    cache: Mapping[int, tuple[int, int]] | None = None,
 ) -> list[str]:
     """One aligned line per Step, plus a total line; for `cograil runs --ledger`.
 
     With `compression`, two more columns give the raw and compressed tokens of the results
-    that were compressed; the source columns count what the model was given.
+    that were compressed; the source columns count what the model was given. With `cache`, two
+    more give the cache read and write tokens the provider reported for the Step's calls.
     """
     if not ledger:
         return ["  (no ledger: no Step has started)"]
-    sizes = compression or {}
+    sizes, saved = compression or {}, cache or {}
     width = max(len(source) for source in SOURCES)
     header = "  step  " + "  ".join(f"{source:>{width}}" for source in SOURCES) + "  total"
     header += "  raw_tokens  compressed" if sizes else ""
+    header += "  cache_read  cache_write" if saved else ""
     lines = [header]
     totals = dict.fromkeys(SOURCES, 0)
     for step, row in ledger.items():
@@ -200,10 +254,12 @@ def format_ledger(
             totals[source] += row[source]
         cells = "  ".join(f"{row[source]:>{width}}" for source in SOURCES)
         line = f"  {step:>4}  {cells}  {sum(row.values()):>5}"
-        lines.append(line + _size_cells(sizes.get(step), bool(sizes)))
+        line += _size_cells(sizes.get(step), bool(sizes))
+        lines.append(line + _cache_cells(saved.get(step), bool(saved)))
     cells = "  ".join(f"{totals[source]:>{width}}" for source in SOURCES)
     total = f"  {'all':>4}  {cells}  {sum(totals.values()):>5}"
-    lines.append(total + _size_cells(_sum_sizes(sizes), bool(sizes)))
+    total += _size_cells(_sum_sizes(sizes), bool(sizes))
+    lines.append(total + _cache_cells(_sum_sizes(saved), bool(saved)))
     return lines
 
 
@@ -216,3 +272,10 @@ def _size_cells(size: tuple[int, int] | None, shown: bool) -> str:
         return ""
     raw, compressed = size or (0, 0)
     return f"  {raw:>10}  {compressed:>10}"
+
+
+def _cache_cells(cached: tuple[int, int] | None, shown: bool) -> str:
+    if not shown:
+        return ""
+    read, write = cached or (0, 0)
+    return f"  {read:>10}  {write:>11}"

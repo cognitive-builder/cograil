@@ -39,6 +39,19 @@ def _tool_spec(tool: Tool) -> dict[str, Any]:
     }
 
 
+def _system(step: Step, prefix: str) -> list[dict[str, Any]]:
+    """The system prompt as blocks: the stable prefix, marked for caching, then the Step's text.
+
+    The marker caches everything before it (the tool schemas and the prefix); the Step's own
+    text and the messages come after it, so they never break a cache hit.
+    """
+    blocks: list[dict[str, Any]] = []
+    if prefix:
+        blocks.append({"type": "text", "text": prefix, "cache_control": {"type": "ephemeral"}})
+    blocks.append({"type": "text", "text": system_prompt(step)})
+    return blocks
+
+
 def _complete(done: dict[str, Any]) -> StepComplete:
     return StepComplete(
         output=str(done.get("output", "")), confidence=parse_confidence(done.get("confidence"))
@@ -54,8 +67,12 @@ def _to_plan(response: SdkMessage, names: dict[str, str]) -> Plan:
         if b.name != STEP_COMPLETE
     ]
     done = next((dict(b.input) for b in uses if b.name == STEP_COMPLETE), None)
+    sdk = response.usage
     usage = Usage(
-        input_tokens=response.usage.input_tokens, output_tokens=response.usage.output_tokens
+        input_tokens=sdk.input_tokens,
+        output_tokens=sdk.output_tokens,
+        cache_read_tokens=sdk.cache_read_input_tokens or 0,
+        cache_write_tokens=sdk.cache_creation_input_tokens or 0,
     )
     return Plan(
         text="".join(texts),
@@ -87,12 +104,13 @@ class AnthropicProvider:
         *,
         model: str | None = None,
         effort: Effort | None = None,
+        prefix: str = "",
     ) -> Plan:
         names = wire_names(tools)
         kwargs: dict[str, Any] = {
             "model": model or self.model,
             "max_tokens": self.max_tokens,
-            "system": system_prompt(step),
+            "system": _system(step, prefix),
             "messages": messages(context),
             "tools": [*(_tool_spec(t) for t in tools), STEP_COMPLETE_SPEC],
         }

@@ -49,6 +49,26 @@ against the Step and the Run. If the compression fails, the Run fails closed; th
 never passed on instead. `cograil runs <id> --ledger` adds `raw_tokens` and `compressed` columns
 when a Run compressed anything; the source columns count what the model was given.
 
+### Saved context
+
+The parts of a prompt that do not change between calls are sent first and marked for caching, so
+repeated calls pay the cache-read rate (ADR 0013). A call's prompt is ordered from the most
+stable part to the least: the Step's tool schemas, then the Run's prefix (the Colleague's persona
+and the Protocol's text: its steps, error handling and guardrails), then the Step's own
+instruction and the per-run data (prior outputs and Tool results). The prefix is built from
+the Colleague and the Protocol only, so every Step of a Run sends it unchanged.
+
+The Anthropic provider puts a cache marker on the prefix. The Ollama provider has no saved
+context and sends the prefix as the start of its system message. A Step's tool schemas come
+before the prefix and differ between Steps with different whitelists, so a cache hit across
+Steps needs the same tools; within a Step, every turn after the first can hit.
+
+The provider reports cache read and cache write tokens for each call, and the runner adds them
+to the Step's row of the Window Ledger. `cograil runs <id> --ledger` adds `cache_read` and
+`cache_write` columns when a Run used any. They are not part of `input_tokens`. They count
+against `token_budget_per_step`, and they cost 0.1 (read) and 1.25 (write) times the model's
+input price in `usd_budget_per_run`.
+
 ## Effort
 
 Effort tells a model how hard to think. A Step's effort is the first of these that is set:

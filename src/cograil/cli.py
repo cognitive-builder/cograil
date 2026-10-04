@@ -28,7 +28,7 @@ from cograil.cliexit import (
     await_command,
     fail,
 )
-from cograil.context import compression_ledger, format_ledger, window_ledger
+from cograil.context import cache_ledger, compression_ledger, format_ledger, window_ledger
 from cograil.decisions import parse_inputs, table_for
 from cograil.domain import Colleague, Principal, Protocol, Run, RunStatus, Trigger, Workspace
 from cograil.errors import (
@@ -369,7 +369,9 @@ async def _show_runs(run_id: str | None, ledger: bool, limit: int) -> None:
     for each in found:
         typer.echo(f"{each.id}  {each.status}  {each.protocol}  ${each.cost_usd:.4f}")
         if ledger:
-            for line in format_ledger(window_ledger(each), compression_ledger(each)):
+            for line in format_ledger(
+                window_ledger(each), compression_ledger(each), cache_ledger(each)
+            ):
                 typer.echo(line)
 
 
