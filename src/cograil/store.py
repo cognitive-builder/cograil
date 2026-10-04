@@ -3,11 +3,16 @@
 AuditEvents are append-only. The protocol offers `append_audit_event` and
 `list_audit_events` and nothing else; PostgresRunStore also has a database trigger
 (see migrations/versions) that rejects UPDATE, DELETE and TRUNCATE on the table.
+
+A Run is saved only by the execution holding its claim (`Run.claim`). `claim_run` takes the
+claim over by compare-and-set on the claim and status the caller read, so of two executions
+started from the same read exactly one goes on; every other save is conditional on the claim,
+so an execution whose claim was taken over gets RunClaimLost at its next save and stops.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
@@ -16,12 +21,13 @@ from sqlalchemy import insert, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
-from cograil.domain import Approval, ApprovalDecision, AuditEvent, Run, ToolCall
+from cograil.domain import Approval, ApprovalDecision, AuditEvent, Run, RunStatus, ToolCall
 from cograil.errors import (
     ApprovalAlreadyDecided,
     ApprovalNotFound,
     ApprovalNotSpendable,
     DuplicateRecord,
+    RunClaimLost,
     RunNotFound,
 )
 from cograil.store_memory import RUN_MUTABLE, InMemoryRunStore
@@ -44,7 +50,15 @@ class RunStore(Protocol):
 
     async def update_run(self, run: Run) -> None:
         """Save status, cursor, context, cost_usd, harness_version and updated_at; identity
-        fields never change. The runner stamps harness_version when it runs the Run."""
+        fields never change. The runner stamps harness_version when it runs the Run.
+
+        Saves only while the stored claim is still `run.claim`; otherwise RunClaimLost."""
+        ...
+
+    async def claim_run(self, run: Run, read: Run) -> None:
+        """Save `run` as update_run does, and its new claim, if the stored claim and status are
+        still those of `read`, the Run as the caller read it: of two claims made from one read
+        one wins, and the other raises RunClaimLost, as does a claim from a stale read."""
         ...
 
     async def record_tool_call(self, run_id: str, call: ToolCall) -> None: ...
@@ -56,10 +70,16 @@ class RunStore(Protocol):
     async def get_approval(self, token: str) -> Approval: ...
 
     async def decide_approval(
-        self, token: str, decision: ApprovalDecision, decided_at: datetime, *, run: Run
+        self,
+        token: str,
+        decision: ApprovalDecision,
+        decided_at: datetime,
+        *,
+        run: Run,
+        events: Sequence[AuditEvent] = (),
     ) -> Approval:
-        """Decide a pending Approval once and save `run` as update_run does, atomically:
-        both change or neither. A second decision raises ApprovalAlreadyDecided."""
+        """Decide a pending Approval once, save `run` as update_run does and append `events`,
+        atomically: all of them or none. A second decision raises ApprovalAlreadyDecided."""
         ...
 
     async def spend_approval(self, token: str, spent_at: datetime) -> Approval:
@@ -166,7 +186,11 @@ class PostgresRunStore:
 
     async def get_run(self, run_id: str) -> Run:
         async with self._engine.connect() as conn:
-            row = (await conn.execute(select(runs).where(runs.c.id == run_id))).mappings().first()
+            return await self._get_run(conn, run_id)
+
+    @staticmethod
+    async def _get_run(conn: AsyncConnection, run_id: str) -> Run:
+        row = (await conn.execute(select(runs).where(runs.c.id == run_id))).mappings().first()
         if row is None:
             raise RunNotFound(run_id)
         return Run.model_validate(dict(row))
@@ -181,15 +205,27 @@ class PostgresRunStore:
 
     async def update_run(self, run: Run) -> None:
         async with self._engine.begin() as conn:
-            await self._update_run(conn, run)
+            await self._update_run(conn, run, run.claim)
 
-    @staticmethod
-    async def _update_run(conn: AsyncConnection, run: Run) -> None:
+    async def claim_run(self, run: Run, read: Run) -> None:
+        async with self._engine.begin() as conn:
+            await self._update_run(conn, run, read.claim, read.status)
+
+    @classmethod
+    async def _update_run(
+        cls, conn: AsyncConnection, run: Run, claim: str | None, status: RunStatus | None = None
+    ) -> None:
+        """One conditional UPDATE: a concurrent claim that committed first makes it match no
+        row, since Postgres re-checks the WHERE clause against the committed row."""
         values = _run_values(run)
-        changes = {name: values[name] for name in RUN_MUTABLE}
-        result = await conn.execute(update(runs).where(runs.c.id == run.id).values(**changes))
+        changes = {name: values[name] for name in (*RUN_MUTABLE, "claim")}
+        held = (runs.c.id == run.id) & runs.c.claim.is_not_distinct_from(claim)
+        if status is not None:
+            held &= runs.c.status == str(status)
+        result = await conn.execute(update(runs).where(held).values(**changes))
         if result.rowcount == 0:
-            raise RunNotFound(run.id)
+            await cls._get_run(conn, run.id)  # raises RunNotFound when absent
+            raise RunClaimLost(run.id)
 
     async def record_tool_call(self, run_id: str, call: ToolCall) -> None:
         await self._insert(
@@ -223,7 +259,13 @@ class PostgresRunStore:
         return Approval.model_validate(dict(row))
 
     async def decide_approval(
-        self, token: str, decision: ApprovalDecision, decided_at: datetime, *, run: Run
+        self,
+        token: str,
+        decision: ApprovalDecision,
+        decided_at: datetime,
+        *,
+        run: Run,
+        events: Sequence[AuditEvent] = (),
     ) -> Approval:
         pending = (approvals.c.token == token) & (approvals.c.decision == "pending")
         statement = (
@@ -232,14 +274,26 @@ class PostgresRunStore:
             .values(decision=decision, decided_at=decided_at)
             .returning(approvals)
         )
-        # An error raised inside begin() rolls the decision back with the Run's save.
+        # An error raised inside begin() rolls the decision back with the Run's save and the
+        # AuditEvents, so a crash cannot leave a decided Approval without its AuditEvent.
         async with self._engine.begin() as conn:
             row = (await conn.execute(statement)).mappings().first()
             if row is None:
                 await self._get_approval(conn, token)  # raises ApprovalNotFound when absent
                 raise ApprovalAlreadyDecided(token)
-            await self._update_run(conn, run)
+            await self._update_run(conn, run, run.claim)
+            await self._append(conn, events)
         return Approval.model_validate(dict(row))
+
+    @staticmethod
+    async def _append(conn: AsyncConnection, events: Sequence[AuditEvent]) -> None:
+        for event in events:
+            try:
+                await conn.execute(insert(audit_events).values(**_event_values(event)))
+            except IntegrityError as exc:
+                if _sqlstate(exc) == _FOREIGN_KEY_VIOLATION:
+                    raise RunNotFound(event.run_id) from exc
+                raise
 
     async def spend_approval(self, token: str, spent_at: datetime) -> Approval:
         spendable = (

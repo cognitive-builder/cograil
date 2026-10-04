@@ -32,6 +32,7 @@ from cograil.errors import (
     AudienceDenied,
     CograilError,
     DecisionError,
+    RunClaimLost,
     RunNotFound,
     RunNotPaused,
     ToolNotFound,
@@ -320,7 +321,7 @@ async def _decide(deciding: Awaitable[Run]) -> Run:
     """The Runner's result of a decision; refusals exit 1, a Run that failed exits 5."""
     try:
         return await deciding
-    except (ApprovalNotAllowed, RunNotPaused, ApprovalAlreadyDecided) as exc:
+    except (ApprovalNotAllowed, RunNotPaused, ApprovalAlreadyDecided, RunClaimLost) as exc:
         fail(f"refused: {exc}")
     except CograilError as exc:
         fail(f"failed: {type(exc).__name__}: {exc}", EXIT_FAILED)

@@ -96,7 +96,19 @@ a `Runner`.
 A paused Run continues with `cograil approve <token> --as <approver>`, which calls
 `Runner.resume`. Only the Approval's approver may decide it, never the Run's own principal;
 anyone else is refused and the attempt is audited. Two racing resumes cannot both succeed:
-the Approval is decided once, and the decision and the Run are saved in the same transaction.
+the Approval is decided once, and the decision, the Run and the decision's `gate.resumed` or
+`run.escalated` AuditEvent are saved in the same transaction, so a crash cannot leave a
+decided Approval without its AuditEvent.
+
+`Runner.run` and `Runner.resume` each claim the Run for their execution: `RunStore.claim_run`
+compares the claim and status the caller read and sets a fresh claim, and every later save of
+the Run is conditional on that claim. Of two executions started from the same read, exactly
+one goes on and the other raises `RunClaimLost`. A Run left `running` by a killed process can
+still be run again; its new claim takes the Run over, and an execution whose claim was taken
+over stops at its next save without failing the Run. The claim fences Run saves only: until
+that next save, the execution that was taken over may still make provider and tool calls, as
+a process killed mid-Step would have. A gated write still needs an Approval, and each
+Approval lets one call through.
 Approved, the Run continues exactly at the paused Step and runs the plan that was waiting.
 Declined or past its expiry, it escalates to the Colleague's escalation contact. A Protocol
 whose version has changed since the Run started is refused.

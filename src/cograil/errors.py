@@ -108,3 +108,7 @@ class ApprovalAlreadyDecided(StoreError):
 
 class ApprovalNotSpendable(StoreError):
     """An Approval is spent once, and only after it was approved."""
+
+
+class RunClaimLost(StoreError):
+    """Another execution claimed the Run since this one read it; this one must stop."""

@@ -18,6 +18,7 @@ from cograil.errors import (
     CograilError,
     GateRequired,
     LoopBudgetExceeded,
+    RunClaimLost,
     RunEnded,
     ToolNotFound,
     WorkspaceError,
@@ -31,7 +32,8 @@ type Work = Callable[[Emit], Awaitable[None]]
 # Errors whose message says something the caller can act on. The message of any other
 # CograilError (a provider or tool failure) can carry connection detail, so it stays in the logs.
 _CALLER_ERRORS = (
-    AudienceDenied, GateRequired, LoopBudgetExceeded, RunEnded, ToolNotFound, WorkspaceError,
+    AudienceDenied, GateRequired, LoopBudgetExceeded, RunClaimLost, RunEnded, ToolNotFound,
+    WorkspaceError,
 )  # fmt: skip
 
 

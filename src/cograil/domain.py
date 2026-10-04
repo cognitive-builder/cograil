@@ -391,6 +391,7 @@ class Run(Entity):
     cursor: int = 0
     context: dict[str, Any] = Field(default_factory=dict)
     cost_usd: float = 0.0
+    claim: str | None = None  # the execution that may save the Run; RunStore.claim_run
     created_at: datetime
     updated_at: datetime
 

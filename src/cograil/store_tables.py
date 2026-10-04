@@ -41,6 +41,7 @@ runs = Table(
     Column("cursor", Integer, nullable=False),
     Column("context", JSONB, nullable=False),
     Column("cost_usd", Float, nullable=False),
+    Column("claim", Text),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
