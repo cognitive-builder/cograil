@@ -6,7 +6,7 @@ Think of Cloud Run as a shop that opens only when a customer walks in. The first
 
 ## The Image
 
-The `Dockerfile` has two stages. The first installs Cograil and its dependencies into a virtualenv. The second copies only that virtualenv, the Workspace, and the Alembic migrations onto a clean `python:3.12-slim`. It runs as an unprivileged user (`cograil`) and listens on `$PORT` (Cloud Run sets it; the fallback is 8080). It trusts proxy headers from any address (`--forwarded-allow-ips='*'`), which is safe only behind Cloud Run. Do not publish the container port directly.
+The `Dockerfile` has two stages. The first installs Cograil and its dependencies into a virtualenv. The second copies only that virtualenv, the Workspace, and the Alembic migrations onto a clean `python:3.12-slim`. It runs as an unprivileged user (`cograil`) and listens on `$PORT` (Cloud Run sets it; the fallback is 8080). It trusts forwarded headers (`X-Forwarded-For`) only from the addresses in `FORWARDED_ALLOW_IPS`, which defaults to loopback, so a directly published port cannot spoof them. The Cloud Run deploy sets `FORWARDED_ALLOW_IPS=*`, which is safe only behind Cloud Run. Do not publish the container port directly with that setting.
 
 | Build argument | Default | Meaning |
 | --- | --- | --- |
