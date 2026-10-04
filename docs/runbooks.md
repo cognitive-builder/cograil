@@ -73,7 +73,7 @@ tool call the model plans in a turn is checked before any of them runs:
   and the run's status becomes `awaiting_approval` (a `gate.paused` AuditEvent). Nothing from
   that plan runs. When the approver would be the run's own principal, nobody may decide the
   Approval, so none is created: the run escalates at once, with a `run.escalated` AuditEvent
-  that has the reason `approver_is_requester`.
+  that has the reason `approver_is_principal`.
 - `Runner.resume(token, protocol, decider=...)` approves and continues exactly at the paused step.
   The saved plan runs without asking the model again, then the step goes on. Only the Approval's
   approver may decide it, and never the run's own principal, so a run cannot approve its own

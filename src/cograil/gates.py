@@ -57,7 +57,7 @@ GateAuditKind = Literal[
 EscalationReason = Literal[
     "approval_declined",
     "approval_expired",
-    "approver_is_requester",
+    "approver_is_principal",
     "failure_threshold",
     "loop_budget_exceeded",
 ]
@@ -142,7 +142,7 @@ class Gates:
         approver = self._colleague.escalation_contact
         if approver == run.principal_id:
             detail = {"step": progress.step, "tool": tool.name, "approver": approver}
-            return await self.escalate(run, "approver_is_requester", detail)
+            return await self.escalate(run, "approver_is_principal", detail)
         approval = Approval(
             token=secrets.token_urlsafe(16),
             run_id=run.id,

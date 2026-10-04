@@ -218,7 +218,7 @@ async def test_only_the_approver_may_decide_an_approval(
     assert (refused.principal_id, refused.detail["run_principal"]) == (decider, PRINCIPAL)
 
 
-async def test_an_approver_who_is_the_requester_escalates_at_pause_time(
+async def test_an_approver_who_is_the_runs_principal_escalates_at_pause_time(
     store: InMemoryRunStore, registry: ToolRegistry, protocol: Protocol, tools: Tools
 ) -> None:
     """Issue #102: nobody may decide such a gate, so the Run escalates now, not at timeout."""
@@ -232,7 +232,7 @@ async def test_an_approver_who_is_the_requester_escalates_at_pause_time(
     assert "gate.paused" not in await kinds(store)
     last = (await store.list_audit_events("r1"))[-1]
     assert (last.kind, last.principal_id) == ("run.escalated", PRINCIPAL)
-    assert last.detail == {"reason": "approver_is_requester", "contact": PRINCIPAL, "step": 2,
+    assert last.detail == {"reason": "approver_is_principal", "contact": PRINCIPAL, "step": 2,
                            "tool": "hris.submit_leave", "approver": PRINCIPAL}  # fmt: skip
 
 
