@@ -21,6 +21,18 @@ class ToolArgumentError(CograilError):
     """Tool arguments failed schema validation."""
 
 
+class ToolNotFound(CograilError):
+    """No Tool with that name is registered."""
+
+
+class ToolConfigError(CograilError):
+    """A Tool cannot be built: bad dotted path, schema, Connection or MCP server."""
+
+
+class ToolExecutionError(CograilError):
+    """A Tool was invoked with valid arguments and failed."""
+
+
 class GateRequired(CograilError):
     """A write tool was invoked without the required approval."""
 
