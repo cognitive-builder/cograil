@@ -8,7 +8,7 @@ the signed-in Principal (`decide`); nothing a client sends can name another.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -102,8 +102,19 @@ class Services:
             provider = self._provider_for(protocol, colleague)
             yield Runner(provider, registry, store, colleague, harness=harness), store
 
-    async def chat(self, principal: Principal, message: str, emit: Emit) -> None:
-        """Route a message, then start and run the Run it asks for, emitting as it goes."""
+    async def chat(
+        self,
+        principal: Principal,
+        message: str,
+        emit: Emit,
+        *,
+        channel: str = CHANNEL,
+        context: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Route a message, then start and run the Run it asks for, emitting as it goes.
+
+        `channel` names where the message came from; `context` is extra data for the Run's
+        context (the Slack thread of a Run)."""
         routing = await classify_intent(
             self.workspace, principal, message, self._classifier, self._redactor
         )
@@ -120,8 +131,9 @@ class Services:
                 protocol,
                 colleague,
                 principal,
-                channel=CHANNEL,
+                channel=channel,
                 message=message,
+                extra=context,
             )
             await store.create_run(run)
             emit("run", {"run_id": run.id})
@@ -131,10 +143,16 @@ class Services:
             emit("done", (await self.outcome(ended)).model_dump(mode="json"))
 
     async def decide(
-        self, token: str, principal: Principal, decision: Literal["approved", "declined"]
+        self,
+        token: str,
+        principal: Principal,
+        decision: Literal["approved", "declined"],
+        *,
+        via: str | None = None,
     ) -> RunOutcome:
-        """Decide the Approval as `principal`; the Runner refuses anyone but its approver."""
-        return await self._decide(token, principal.id, decision, via=None)
+        """Decide the Approval as `principal`; the Runner refuses anyone but its approver.
+        `via` names the channel the decision came through, for the AuditEvent."""
+        return await self._decide(token, principal.id, decision, via=via)
 
     async def decide_by_link(
         self, token: str, decision: Literal["approved", "declined"]

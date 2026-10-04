@@ -12,8 +12,10 @@ again, and is never written to an AuditEvent or a log line.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from cograil.domain import Colleague, Principal, Protocol, Run, Trigger
 
@@ -34,9 +36,11 @@ def received_run(
     *,
     channel: str,
     message: str,
+    extra: Mapping[str, Any] | None = None,
 ) -> Run:
     """A received chat Run with its input; its workspace folder is recorded so that
-    `cograil approve` can resume it."""
+    `cograil approve` can resume it. `extra` adds keys to the Run's context, such as the
+    Slack thread the Run belongs to; it cannot replace the two keys above."""
     now = datetime.now(UTC)
     trigger = Trigger(kind="chat", channel=channel)
     return Run(
@@ -52,6 +56,7 @@ def received_run(
         created_at=now,
         updated_at=now,
         context={
+            **(extra or {}),
             "workspace_path": str(path.resolve()),
             INPUT_KEY: run_input(message, principal),
         },

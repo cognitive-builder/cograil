@@ -368,11 +368,13 @@ class RunStatus(StrEnum):
 class Principal(Entity):
     """`id` and `aliases` are normalised (cograil.identity), so spellings cannot split one
     principal in two. `oid` is the immutable Entra object id, kept exactly as Entra sends it
-    (lower-case); an Entra sign-in needs it to match too (cograil.api.auth)."""
+    (lower-case); an Entra sign-in needs it to match too (cograil.api.auth). `slack_id` is the
+    Slack member id (`U...`) the Slack channel maps to this principal (cograil.channels.slack)."""
 
     id: PrincipalId
     aliases: list[PrincipalId] = Field(default_factory=list)
     oid: str | None = Field(default=None, min_length=1)
+    slack_id: str | None = Field(default=None, min_length=1)
     groups: list[str] = Field(default_factory=list)
     kind: Literal["user", "system"] = "user"
 

@@ -1,9 +1,10 @@
 """The web service: FastAPI app over a workspace, a RunStore and the sign-in of cograil.api.auth.
 
 Routes: POST /chat (SSE), GET /runs, GET /runs/{id}, GET and POST /approvals/{token}, GET /audit,
-GET /health, the sign-in routes of cograil.api.auth, the web pages at GET / (the chat) and
-GET /history (the run history), and the OpenAPI docs at /docs. Everything but /health, the web
-pages, the sign-in routes and the signed email links of GET and POST /approvals/link/{token}
+GET /health, POST /slack/events (when Slack is set up), the sign-in routes of cograil.api.auth,
+the web pages at GET / (the chat) and GET /history (the run history), and the OpenAPI docs at
+/docs. Everything but /health, the web pages, the sign-in routes, POST /slack/events (Slack's own
+signature) and the signed email links of GET and POST /approvals/link/{token}
 needs a signed-in Principal.
 """
 
@@ -14,7 +15,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 
 from cograil import __version__
 from cograil.api import approvals, audit, chat, link_decisions, runs
@@ -23,10 +24,20 @@ from cograil.api.auth import install_auth
 from cograil.api.auth_settings import AuthSettings
 from cograil.api.services import ProviderFactory, RegistryOpener, Services
 from cograil.channels import web
+from cograil.channels.slack import SlackSettings
 from cograil.domain import Workspace
+from cograil.errors import SlackNotConfigured
 from cograil.providers.base import Provider
 from cograil.redaction import Redactor
 from cograil.store import RunStore
+
+
+def _slack_router(settings: SlackSettings, services: Services) -> APIRouter:
+    try:
+        from cograil.channels.slack.bolt import slack_router
+    except ImportError as exc:  # the optional `slack` extra
+        raise SlackNotConfigured("SLACK_BOT_TOKEN is set; install the `slack` extra") from exc
+    return slack_router(settings, services)
 
 
 def create_app(
@@ -41,13 +52,14 @@ def create_app(
     close: Callable[[], Awaitable[None]] | None = None,
     redactor: Redactor | None = None,
     approval_mail: ApprovalMail | None = None,
+    slack: SlackSettings | None = None,
 ) -> FastAPI:
     """The service for the workspace loaded from `path`.
 
     `classifier` routes chat messages on the small tier, `provider_for` gives the Provider a
     Protocol's Runs use, `redactor` redacts the opt-in message snippet log, `approval_mail`
-    emails approvers a signed link (without it the link routes answer 404), and `close` runs
-    at shutdown.
+    emails approvers a signed link (without it the link routes answer 404), `slack` turns on
+    POST /slack/events (cograil.channels.slack), and `close` runs at shutdown.
     """
 
     @asynccontextmanager
@@ -76,6 +88,8 @@ def create_app(
     )
     for router in routers:
         app.include_router(router)
+    if slack is not None:
+        app.include_router(_slack_router(slack, services))
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str]:
