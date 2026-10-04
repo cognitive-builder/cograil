@@ -22,6 +22,7 @@ from cograil.domain import Workspace
 from cograil.errors import StoreNotConfigured
 from cograil.knowledge.store import PostgresKnowledgeStore
 from cograil.knowledge.tool import add_knowledge
+from cograil.observability import configure_tracing
 from cograil.orchestrator import classification_model
 from cograil.providers import make_provider
 from cograil.redaction import Redactor, small_tier_redactor
@@ -44,6 +45,7 @@ async def open_registry(
 
 
 def app_from_env() -> FastAPI:
+    configure_tracing()
     url = os.environ.get("DATABASE_URL")
     if not url:
         raise StoreNotConfigured("DATABASE_URL is not set")
