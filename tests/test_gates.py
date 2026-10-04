@@ -243,8 +243,29 @@ async def test_an_approver_who_is_the_runs_principal_escalates_at_pause_time(
     assert "gate.paused" not in await kinds(store)
     last = (await store.list_audit_events("r1"))[-1]
     assert (last.kind, last.principal_id) == ("run.escalated", PRINCIPAL)
+    # Issue #107: with no Approval row, the attempted call's args are in the detail, and the
+    # Step's progress is kept in the Run's context as for a declined or expired Approval.
     assert last.detail == {"reason": "approver_is_principal", "contact": contact, "step": 2,
-                           "tool": "hris.submit_leave", "approver": contact}  # fmt: skip
+                           "tool": "hris.submit_leave", "args": SUBMIT,
+                           "approver": contact}  # fmt: skip
+    paused = (await store.get_run("r1")).context["paused"]
+    assert (paused["step"], paused["turn"], paused["token"]) == (2, 1, None)
+    assert paused["planned"] == [call("hris.submit_leave", **SUBMIT).model_dump()]
+
+
+@pytest.mark.parametrize("decider", ["", "  "], ids=["empty", "blank"])
+async def test_an_empty_decider_is_refused_before_anything_is_audited(
+    store: InMemoryRunStore, make: Any, protocol: Protocol, decider: str
+) -> None:
+    """Issue #107: an AuditEvent needs a principal, so nobody cannot decide an Approval."""
+    token = await pause(make, protocol, store)
+    before = await kinds(store)
+    runner, provider = make(AFTER_GATE)
+    with pytest.raises(ApprovalNotAllowed):
+        await runner.resume(token, protocol, decider=decider)
+    assert (await store.get_run("r1")).status == RunStatus.awaiting_approval
+    assert (await store.get_approval(token)).decision == "pending"
+    assert (await kinds(store), provider.calls) == (before, [])
 
 
 async def test_the_approver_may_decide_in_any_spelling(

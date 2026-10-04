@@ -46,7 +46,7 @@ class RunEnded(CograilError):
 
 
 class ApprovalNotAllowed(CograilError):
-    """The deciding principal is not the Approval's approver, or is the Run's own principal."""
+    """The deciding principal is empty, not the Approval's approver, or the Run's own principal."""
 
 
 class AudienceDenied(CograilError):

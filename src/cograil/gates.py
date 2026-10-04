@@ -17,13 +17,16 @@ may decide it, and never the Run's own principal: any other decider raises
 ApprovalNotAllowed and leaves the Run and the Approval as they were (principal ids are
 compared normalised, so a spelling cannot slip past; cograil.identity),
 with a `gate.refused` AuditEvent whose principal is that decider, the Run's principal in its
-detail; the decider is written on the `gate.resumed` or `run.escalated` AuditEvent. A gate
-whose approver would be the Run's own principal, whom nobody else may stand in for, escalates
-at pause time instead of waiting out the timeout. An approved Approval resumes the Run exactly
-at the paused Step; a declined one, or one past its expires_at, escalates the Run to the
-Colleague's escalation_contact, as does a Tool reaching its FailureThreshold
-(`Gates.escalate`) or a Step hitting a loop bound (`Gates.bounded`, ADR 0008). An Approval
-expires after harness.yaml's approvals.timeout_hours.
+detail; the decider is written on the `gate.resumed` or `run.escalated` AuditEvent. An empty
+decider is refused with ApprovalNotAllowed before anything is audited. A gate whose
+approver would be the Run's own principal, whom nobody else may stand in for, escalates at
+pause time instead of waiting out the timeout, with the attempted call's args in its
+`run.escalated` detail and the Step's progress in `Run.context["paused"]` (#107). An
+approved Approval resumes the Run exactly at the paused Step; a declined one, or one past
+its expires_at, escalates the Run to the Colleague's escalation_contact, as does a Tool
+reaching its FailureThreshold (`Gates.escalate`) or a Step hitting a loop bound
+(`Gates.bounded`, ADR 0008). An Approval expires after harness.yaml's
+approvals.timeout_hours.
 
 Interim rules until their issues land: the approver is the Colleague's escalation_contact
 (approver routing from decision tables still needs a directory lookup from tier to
@@ -148,11 +151,16 @@ class Gates:
         """Ask for an Approval of this call and park the Run awaiting_approval.
 
         When the approver would be the Run's own principal, who may never decide it, no
-        Approval is created and the Run escalates now.
+        Approval is created and the Run escalates now. With no Approval row to hold them, the
+        attempted call's args go in the `run.escalated` detail (#107), and the Step's progress
+        is saved in `Run.context["paused"]` as for a declined or expired Approval.
         """
         approver = self._colleague.escalation_contact
         if same_principal(approver, run.principal_id):
-            detail = {"step": progress.step, "tool": tool.name, "approver": approver}
+            paused = progress.model_dump(mode="json")
+            run = run.model_copy(update={"context": {**run.context, "paused": paused}})
+            detail = {"step": progress.step, "tool": tool.name, "args": dict(args),
+                      "approver": approver}  # fmt: skip
             return await self.escalate(run, "approver_is_principal", detail)
         approval = Approval(
             token=new_approval_token(),
@@ -194,10 +202,14 @@ class Gates:
         """Decide the Approval the Run is paused on: running again, or escalated.
 
         Raises ApprovalNotAllowed, leaving the Run and the Approval as they were, unless
-        `decider` is the Approval's approver and not the Run's own principal.
+        `decider` is the Approval's approver and not the Run's own principal. An empty
+        `decider` is refused before anything is read or audited: an AuditEvent needs a
+        principal (product rule 6).
         """
-        approval, run = await self._paused_on(token)
         decider = normalise_principal_id(decider)  # one spelling in the audit trail
+        if not decider:
+            raise ApprovalNotAllowed("an Approval is decided by a named principal, not by nobody")
+        approval, run = await self._paused_on(token)
         is_approver = same_principal(decider, approval.approver)
         if not is_approver or same_principal(decider, run.principal_id):
             detail = {**_about(approval), "approver": approval.approver, "decided_by": decider,

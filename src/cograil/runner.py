@@ -185,7 +185,7 @@ class Runner:
 
         `decider` is the principal deciding it, who must be the Approval's approver. Declined
         or expired, the Run escalates instead. Errors in deciding (ApprovalNotAllowed for a
-        decider who is not the approver or is the Run's own principal, RunNotPaused,
+        decider who is empty, not the approver or the Run's own principal, RunNotPaused,
         ApprovalAlreadyDecided for a resume that lost a race) leave the Run as it was.
         RunClaimLost means a `run` claimed the decided Run first and goes on with it.
         """
