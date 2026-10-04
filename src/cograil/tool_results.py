@@ -23,6 +23,8 @@ from cograil.registry import CallContext, ToolRegistry
 
 
 class ToolResults:
+    """The Runner's handling of tool calls that already ran: results absorbed, failures counted."""
+
     def __init__(
         self,
         registry: ToolRegistry,

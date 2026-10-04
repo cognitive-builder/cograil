@@ -22,12 +22,12 @@ module that implements it.
       |
 +---------------------------------------------------------------------------+
 | Runner                                                       ADR 0011      |
-| runner.py Runner: runs the Steps, checks every call, invokes Tools        |
+| runner.py Runner: runs the Steps, checks every call, invokes the Tools    |
 | graph.py compile_protocol: a LangGraph graph, one node per Step           |
 | graph.py compile_graph: the same shape as data, rendered as Mermaid       |
 |                                                                           |
 |   context.py   what a Step sees; the Window Ledger           ADR 0007     |
-|   tool_results.py Tool results to the model; failure thresholds           |
+|   tool_results.py  Tool results to the model, failure thresholds          |
 |   compression.py long Tool results, small tier               ADR 0007     |
 |   harness.py   version, loop bounds, cost                 ADR 0008, 0012  |
 |   gates.py     Approvals, escalation                        ADR 0002     |
@@ -76,8 +76,8 @@ a `Runner`.
    chat message. The message is the user's own data: it stays on the Run (a resumed Run needs
    it) and never goes into an AuditEvent or a log line.
 10. `Runner.run` stamps the harness and tool pack versions on the Run, writes `run.started`,
-    and `compile_protocol` (`graph.py`) builds the graph: one node per Step, edges in step order, entry at
-    the Step after `Run.cursor`.
+    and `compile_protocol` (`graph.py`) builds the graph: one node per Step, edges in step
+    order, entry at the Step after `Run.cursor`.
 11. Inside a Step, until `step_complete` or a bound:
     - `ContextBuilder.opening` builds what the model sees: the Run's input (on every Step),
       the prior Steps the Step declares (else the harness default), the schemas of its
