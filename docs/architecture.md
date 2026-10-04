@@ -113,7 +113,9 @@ spend an Approval nor create one. `RunStore.spend_approval` spends only while th
 claim is still the caller's, and no claim can take the Run over until the spend commits;
 `Gates.pause` saves the paused Run and its pending Approval together in one fenced
 transaction, so a taken-over execution leaves no Approval behind. Each Approval lets one
-gated call through.
+gated call through. The pause's `gate.paused` and the spend's `gate.spent` AuditEvents are
+written in those same transactions, so a crash cannot leave a paused Run or a spent Approval
+without its AuditEvent.
 Approved, the Run continues exactly at the paused Step and runs the plan that was waiting.
 Declined or past its expiry, it escalates to the Colleague's escalation contact. A Protocol
 whose version has changed since the Run started is refused.
