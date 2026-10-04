@@ -100,7 +100,8 @@ def test_run_without_a_message_is_a_usage_error(
     args = ["run", str(DEMO), "--protocol", "record_item", "--as", ALICE, *ask]
     result = runner.invoke(app, [*args, "--fake-script", script(tmp_path, RUN_SCRIPT)])
     assert result.exit_code == 2
-    assert "--message" in result.output
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)  # CI colours the usage panel
+    assert "--message" in plain
     assert asyncio.run(shared_store.list_runs()) == []
 
 
