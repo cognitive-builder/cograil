@@ -65,3 +65,11 @@ def test_an_invalid_harness_yaml_is_a_workspace_error(workspace: Path, old: str,
     file.write_text(file.read_text().replace(old, new, 1))
     with pytest.raises(WorkspaceError, match=r"harness\.yaml"):
         load_workspace(workspace)
+
+
+def test_message_snippet_logging_is_off_unless_harness_yaml_opts_in(workspace: Path) -> None:
+    """Issue #78: the orchestrator's snippet log is opt-in per workspace."""
+    assert load_workspace(workspace).harness.logging.message_snippets is False
+    file = workspace / "harness.yaml"
+    file.write_text(file.read_text() + "logging:\n  message_snippets: true\n")
+    assert load_workspace(workspace).harness.logging.message_snippets is True

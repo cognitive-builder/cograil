@@ -20,6 +20,7 @@ from cograil.domain import AuditEvent, Run, RunStatus
 from cograil.errors import RunClaimLost
 from cograil.gates import Clock
 from cograil.observability import log_event
+from cograil.redaction import Redactor
 from cograil.store import RunStore
 
 RunAuditKind = Literal["run.started", "run.completed", "run.failed"]
@@ -28,9 +29,10 @@ RunAuditKind = Literal["run.started", "run.completed", "run.failed"]
 class RunClaims:
     """Claims, saves and audits a Run for one Runner, stamping each change with the clock."""
 
-    def __init__(self, store: RunStore, clock: Clock) -> None:
+    def __init__(self, store: RunStore, clock: Clock, redactor: Redactor | None = None) -> None:
         self._store = store
         self._clock = clock
+        self._redactor = redactor or Redactor()
 
     @asynccontextmanager
     async def failing_closed(self, run_id: str) -> AsyncIterator[str]:
@@ -80,6 +82,7 @@ class RunClaims:
             log_event("run.fail.skipped", logging.WARNING, error=type(exc).__name__,
                       reason="claim_lost")  # fmt: skip
             return
-        detail = {"error": type(exc).__name__, "message": str(exc), "cursor": run.cursor}
+        message = await self._redactor.redact(str(exc))  # may carry a tool's error text
+        detail = {"error": type(exc).__name__, "message": message, "cursor": run.cursor}
         await self.audit(run, "run.failed", detail)
         log_event("run.failed", logging.WARNING, error=type(exc).__name__, cursor=run.cursor)

@@ -21,14 +21,17 @@ from cograil.knowledge.store import PostgresKnowledgeStore
 from cograil.knowledge.tool import add_knowledge
 from cograil.orchestrator import classification_model
 from cograil.providers import AnthropicProvider
+from cograil.redaction import Redactor, small_tier_redactor
 from cograil.registry import ToolRegistry, build_registry
 from cograil.store import PostgresRunStore, RunStore
 from cograil.workspace import load_workspace
 
 
-async def open_registry(workspace: Workspace, store: RunStore, root: Path) -> ToolRegistry:
+async def open_registry(
+    workspace: Workspace, store: RunStore, root: Path, redactor: Redactor | None = None
+) -> ToolRegistry:
     """The Tools of the workspace; knowledge Tools search the Chunks in DATABASE_URL."""
-    registry = await build_registry(workspace, store, root)
+    registry = await build_registry(workspace, store, root, redactor=redactor)
     url = os.environ.get("DATABASE_URL")
     if url and any(tool.kind == "knowledge" for tool in workspace.tools):
         knowledge = PostgresKnowledgeStore.from_url(url)
@@ -44,6 +47,13 @@ def app_from_env() -> FastAPI:
     path = Path(os.environ.get("COGRAIL_WORKSPACE", "."))
     workspace = load_workspace(path)
     store = PostgresRunStore.from_url(url)
+    redactor = small_tier_redactor(workspace)  # ADR 0010
+
+    async def open_with_redaction(
+        workspace: Workspace, store: RunStore, root: Path
+    ) -> ToolRegistry:
+        return await open_registry(workspace, store, root, redactor)
+
     return create_app(
         workspace,
         path,
@@ -51,6 +61,7 @@ def app_from_env() -> FastAPI:
         auth=auth_settings(os.environ),
         classifier=AnthropicProvider(classification_model(workspace)),
         provider_for=AnthropicProvider.for_protocol,
-        open_registry=open_registry,
+        open_registry=open_with_redaction,
         close=store.dispose,
+        redactor=redactor,
     )

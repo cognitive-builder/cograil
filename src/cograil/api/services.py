@@ -34,6 +34,7 @@ from cograil.identity import same_principal
 from cograil.orchestrator import classify_intent
 from cograil.progress import ProgressStore
 from cograil.providers.base import Provider
+from cograil.redaction import Redactor
 from cograil.registry import ToolRegistry
 from cograil.runner import Runner
 from cograil.store import RunStore
@@ -54,6 +55,7 @@ class Services:
         classifier: Provider,
         provider_for: ProviderFactory,
         open_registry: RegistryOpener,
+        redactor: Redactor | None = None,
     ) -> None:
         self.workspace = workspace
         self.path = path
@@ -62,6 +64,7 @@ class Services:
         self._classifier = classifier
         self._provider_for = provider_for
         self._open_registry = open_registry
+        self._redactor = redactor
 
     def protocol(self, name: str) -> Protocol | None:
         return next((p for p in self.workspace.protocols if p.name == name), None)
@@ -99,7 +102,9 @@ class Services:
 
     async def chat(self, principal: Principal, message: str, emit: Emit) -> None:
         """Route a message, then start and run the Run it asks for, emitting as it goes."""
-        routing = await classify_intent(self.workspace, principal, message, self._classifier)
+        routing = await classify_intent(
+            self.workspace, principal, message, self._classifier, self._redactor
+        )
         emit("routed", routing.model_dump(include={"colleague", "protocol", "confidence"}))
         if not routing.matched or routing.protocol is None or routing.colleague is None:
             emit("refusal", {"text": routing.refusal or ""})
