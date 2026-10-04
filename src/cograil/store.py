@@ -25,7 +25,7 @@ from cograil.errors import (
 )
 from cograil.store_tables import approvals, audit_events, runs, tool_calls
 
-Decision = Literal["approved", "declined", "expired"]
+ApprovalDecision = Literal["approved", "declined", "expired"]
 
 _UNIQUE_VIOLATION = "23505"
 _FOREIGN_KEY_VIOLATION = "23503"
@@ -50,12 +50,14 @@ class RunStore(Protocol):
     async def get_approval(self, token: str) -> Approval: ...
 
     async def decide_approval(
-        self, token: str, decision: Decision, decided_at: datetime
+        self, token: str, decision: ApprovalDecision, decided_at: datetime
     ) -> Approval:
         """Decide a pending Approval once; a second decision raises ApprovalAlreadyDecided."""
         ...
 
-    async def list_approvals(self, run_id: str) -> list[Approval]: ...
+    async def list_approvals(self, run_id: str) -> list[Approval]:
+        """Ordered by token, the same in every implementation."""
+        ...
 
     async def append_audit_event(self, event: AuditEvent) -> None: ...
 
@@ -111,7 +113,7 @@ class InMemoryRunStore:
         return self._approvals[token].model_copy(deep=True)
 
     async def decide_approval(
-        self, token: str, decision: Decision, decided_at: datetime
+        self, token: str, decision: ApprovalDecision, decided_at: datetime
     ) -> Approval:
         current = await self.get_approval(token)
         if current.decision != "pending":
@@ -121,7 +123,7 @@ class InMemoryRunStore:
         return decided.model_copy(deep=True)
 
     async def list_approvals(self, run_id: str) -> list[Approval]:
-        found = (a for a in self._approvals.values() if a.run_id == run_id)
+        found = sorted((a for a in self._approvals.values() if a.run_id == run_id), key=_token)
         return [a.model_copy(deep=True) for a in found]
 
     async def append_audit_event(self, event: AuditEvent) -> None:
@@ -130,6 +132,10 @@ class InMemoryRunStore:
 
     async def list_audit_events(self, run_id: str) -> list[AuditEvent]:
         return [e.model_copy(deep=True) for e in self._audit.get(run_id, [])]
+
+
+def _token(approval: Approval) -> str:
+    return approval.token
 
 
 def _json(value: Any) -> Any:
@@ -251,7 +257,7 @@ class PostgresRunStore:
         return Approval.model_validate(dict(row))
 
     async def decide_approval(
-        self, token: str, decision: Decision, decided_at: datetime
+        self, token: str, decision: ApprovalDecision, decided_at: datetime
     ) -> Approval:
         pending = (approvals.c.token == token) & (approvals.c.decision == "pending")
         statement = (
@@ -285,4 +291,4 @@ class PostgresRunStore:
         return [AuditEvent.model_validate(_without(r, "id")) for r in rows]
 
 
-__all__ = ["Decision", "InMemoryRunStore", "PostgresRunStore", "RunStore"]
+__all__ = ["ApprovalDecision", "InMemoryRunStore", "PostgresRunStore", "RunStore"]
