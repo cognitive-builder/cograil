@@ -32,10 +32,52 @@ def test_non_test_commands_pass(command: str, tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "command", ["uv run pytest -m live", "COGRAIL_LIVE=1 uv run cograil eval ws"]
+    "command",
+    [
+        "uv run pytest -m live",
+        "uv run pytest -mlive",
+        'PYTEST_ADDOPTS="-m live" uv run pytest',
+        "COGRAIL_LIVE=1 uv run cograil eval ws",
+    ],
 )
 def test_real_model_runs_are_always_blocked(command: str, tmp_path: Path) -> None:
     assert run_hook(command, tmp_path) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "for i in 1 2 3; do uv run pytest; done",
+        "ls tests | xargs uv run pytest",
+        "uv run pytest --count 5",
+    ],
+)
+def test_loops_are_refused(command: str, tmp_path: Path) -> None:
+    assert run_hook(command, tmp_path) == 2
+
+
+def test_each_run_in_a_chain_counts(tmp_path: Path) -> None:
+    budget = {"targeted": 20, "repeat": 5, "full": 2, "e2e": 1, "live": 0}
+    chain = "scripts/check.sh full && scripts/check.sh full"
+    assert [
+        run_hook(chain, tmp_path, budget),
+        run_hook("scripts/check.sh full", tmp_path, budget),
+    ] == [0, 2]
+
+
+def test_reordering_does_not_reset_the_repeat_count(tmp_path: Path) -> None:
+    budget = {"targeted": 20, "repeat": 2, "full": 2, "e2e": 1, "live": 0}
+    commands = [
+        "uv run pytest tests/a.py -q",
+        "uv run pytest -q tests/a.py",
+        "uv run pytest tests/a.py -q",
+    ]
+    assert [run_hook(c, tmp_path, budget) for c in commands] == [0, 0, 2]
+
+
+def test_unreadable_tally_blocks_instead_of_resetting(tmp_path: Path) -> None:
+    (tmp_path / "cograil-test-budget-s1.json").write_text("not json")
+    assert run_hook("uv run pytest tests/test_a.py", tmp_path) == 2
 
 
 def test_full_suite_limit(tmp_path: Path) -> None:

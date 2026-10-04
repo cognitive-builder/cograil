@@ -207,7 +207,8 @@
       "size": "L",
       "title": "feat: runner with one LangGraph node per Step",
       "body": "Goal: execute a Protocol step by step; the model may only call tools listed in the current Step.\n\nAcceptance criteria:\n- [ ] A call to a tool not in Step.tools raises ToolNotAllowed and the run fails closed\n- [ ] Context accumulates step outputs; the cursor advances only after a step completes\n- [ ] Provider interface injected; FakeProvider drives unit tests\n- [ ] End-to-end test runs leave_request with FakeProvider to completion",
-      "lane": 1
+      "lane": 1,
+      "e2e": true
     },
     {
       "id": 7,
@@ -299,7 +300,7 @@
       "size": "S",
       "title": "feat: audience checks in the orchestrator",
       "body": "Acceptance criteria:\n- [ ] A principal outside a Protocol's audiences gets a refusal with the escalation contact, not an error\n- [ ] Audience intersection when a Colleague and Protocol both declare audiences\n- [ ] Tests for allowed, denied and scheduled (system actor) cases",
-      "lane": 2
+      "lane": 1
     },
     {
       "id": 17,
@@ -452,7 +453,7 @@
       "size": "M",
       "title": "feat: hardening (rate limits, size caps, secret scanning)",
       "body": "Context: injection defence for retrieved content moved to #47 (Phase 3); this issue covers the rest.\n\nAcceptance criteria:\n- [ ] Per-principal rate limit on /chat\n- [ ] Message and knowledge chunk size caps\n- [ ] gitleaks or GitHub secret scanning enabled",
-      "lane": 2
+      "lane": 1
     },
     {
       "id": 34,

@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Test budget guard for Claude Code build sessions (PreToolUse hook on Bash).
 
-Counts test runs per session and blocks the ones beyond the budget in
-.claude/test-budget.json. Limits are read from origin/main, so edits made
-during a session cannot loosen them. Any internal error lets the command
-through: a broken guard must never stop work. See ADR 0014.
+Counts every test run in a command, per session, and blocks the ones beyond the
+budget in .claude/test-budget.json. Limits are read from origin/main, so edits
+made during a session cannot loosen them. Loops around tests are refused, and an
+unreadable tally blocks instead of resetting. A crash in the guard itself lets
+the command through, so a guard bug never stops work. See ADR 0014 for the
+limits of what a command-text guard can see.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -22,35 +23,70 @@ from pathlib import Path
 DEFAULT_LIMITS = {"targeted": 20, "repeat": 5, "full": 2, "e2e": 1, "live": 0}
 RANK = {"targeted": 0, "full": 1, "e2e": 2, "live": 3}
 LABEL = {"targeted": "targeted test", "full": "full-suite", "e2e": "end-to-end"}
-TEST_COMMAND = re.compile(r"\bpytest\b|check\.sh|\bcograil\s+eval\b")
-MARKER = re.compile(r"(?<![\w-])-m\s+(?:\"([^\"]*)\"|'([^']*)'|(\S+))")
+PYTEST_RUN = r"\bpytest\b(?![.\w-])"
+TEST_COMMAND = re.compile(PYTEST_RUN + r"|\bpytest\.main\b|check\.sh|\bcograil\s+eval\b|\bptw\b")
+IMPORT = re.compile(r"\b(?:import|from)\s+pytest\b")
+SEPARATOR = re.compile(r"&&|\|\||[;|&\n]")
+LOOP = re.compile(
+    r"\b(?:for|while|until)\b[^;\n]*[;\n]\s*do\b|\bxargs\b|\bparallel\b|\bwatch\b|\bptw\b"
+    r"|--count\b|--looponfail\b"
+)
+LIVE_ENV = re.compile(r"COGRAIL_LIVE\s*=\s*[\"']?(?:1|true|yes|on)\b", re.IGNORECASE)
+CALL_MARKERS = re.compile(r"[\"']-m[\"']\s*,\s*[\"']([^\"']*)[\"']|[\"']-m([^\"'\s]+)[\"']")
 VALUE_OPTIONS = {"-m", "-k", "-p", "-c", "-o", "--tb", "--maxfail", "--rootdir", "--timeout"}
 
+BLOCK_LIVE = (
+    "Blocked by the test budget: tests against real models never run in build sessions. "
+    "GitHub runs them on releases."
+)
+BLOCK_LOOP = (
+    "Blocked by the test budget: tests run one command at a time, never in a loop or repeat "
+    "mode, so every run can be counted."
+)
+BLOCK_TALLY = (
+    "Blocked by the test budget: this session's tally file is unreadable, so the budget cannot "
+    "be checked. Stop and report this in the pull request."
+)
 
-def selects(term: str, cmd: str) -> bool:
-    """True if any -m marker expression in cmd selects term rather than excluding it."""
-    for match in MARKER.finditer(cmd):
-        expr = next(group for group in match.groups() if group is not None)
+
+def split(segment: str) -> list[str]:
+    try:
+        return shlex.split(segment)
+    except ValueError:
+        return segment.split()
+
+
+def marker_expressions(tokens: list[str]) -> list[str]:
+    """Every -m expression in a token list, in '-m expr' and attached '-mexpr' forms."""
+    found: list[str] = []
+    for index, token in enumerate(tokens):
+        if token == "-m" and index + 1 < len(tokens):
+            found.append(tokens[index + 1])
+        elif token.startswith("-m") and not token.startswith("--") and len(token) > 2:
+            found.append(token[2:].lstrip("="))
+        elif token.startswith("PYTEST_ADDOPTS="):
+            found.extend(marker_expressions(split(token.split("=", 1)[1])))
+    return found
+
+
+def selects(term: str, expressions: list[str]) -> bool:
+    """True if any marker expression selects term rather than only excluding it."""
+    for expr in expressions:
         if re.search(rf"\b{term}\b", re.sub(rf"\bnot\s+{term}\b", "", expr)):
             return True
     return False
 
 
-def pytest_scope(segment: str) -> str:
+def pytest_scope(tokens: list[str]) -> str:
     """'targeted' when a pytest call names paths or -k, otherwise 'full'."""
-    try:
-        tokens = shlex.split(segment)
-    except ValueError:
-        return "full"
     if "pytest" not in tokens:
-        return "targeted"
-    args = tokens[tokens.index("pytest") + 1 :]
+        return "full"
     skip_next = False
-    for arg in args:
+    for arg in tokens[tokens.index("pytest") + 1 :]:
         if skip_next:
             skip_next = False
             continue
-        if arg == "-k" or arg.startswith("-k"):
+        if arg.startswith("-k"):
             return "targeted"
         if arg in VALUE_OPTIONS:
             skip_next = True
@@ -60,18 +96,40 @@ def pytest_scope(segment: str) -> str:
     return "full"
 
 
-def classify(cmd: str) -> str:
-    if selects("live", cmd) or re.search(r"COGRAIL_LIVE\s*=\s*[\"']?1", cmd):
+def classify(segment: str) -> str | None:
+    """The kind of test run in one simple command, or None if it runs no tests."""
+    if not TEST_COMMAND.search(IMPORT.sub("", segment)):
+        return None
+    tokens = split(segment)
+    markers = marker_expressions(tokens)
+    markers += [a or b for a, b in CALL_MARKERS.findall(segment)]
+    if selects("live", markers) or LIVE_ENV.search(segment):
         return "live"
-    if selects("e2e", cmd) or "tests/e2e" in cmd or re.search(r"check\.sh\s+e2e\b", cmd):
+    if (
+        selects("e2e", markers)
+        or "tests/e2e" in segment
+        or re.search(r"check\.sh\s+e2e\b", segment)
+    ):
         return "e2e"
-    kinds = ["targeted"]
-    if re.search(r"check\.sh\s+full\b", cmd) or selects("integration", cmd):
-        kinds.append("full")
-    for segment in re.split(r"&&|\|\||;|\|", cmd):
-        if re.search(r"\bpytest\b", segment):
-            kinds.append(pytest_scope(segment))
-    return max(kinds, key=RANK.__getitem__)
+    if re.search(r"check\.sh\s+full\b", segment) or selects("integration", markers):
+        return "full"
+    if "pytest.main" in segment:
+        return "full"
+    if re.search(PYTEST_RUN, segment):
+        return pytest_scope(tokens)
+    return "targeted"
+
+
+def runs(command: str) -> list[tuple[str, str]]:
+    """(kind, repeat key) for every test run in a possibly compound command."""
+    found = []
+    for segment in SEPARATOR.split(command):
+        kind = classify(segment)
+        if kind is not None:
+            found.append((kind, kind + ":" + " ".join(sorted(split(segment)))))
+    if LIVE_ENV.search(command) and found:
+        found = [("live", key) for _, key in found]
+    return found
 
 
 def load_limits(project_dir: str) -> dict[str, int]:
@@ -99,23 +157,44 @@ def state_file(session_id: str) -> Path:
     return base / f"cograil-test-budget-{safe}.json"
 
 
-def verdict(kind: str, used: int, repeats: int, limits: dict[str, int]) -> str:
-    if kind == "live" or limits[kind] <= 0:
-        return (
-            "Blocked by the test budget: tests against real models never run in build "
-            "sessions. GitHub runs them on releases."
-        )
-    if used >= limits[kind]:
-        return (
-            f"Blocked by the test budget: this session has used its {limits[kind]} "
-            f"{LABEL[kind]} run(s). Push the branch and let GitHub run the rest, or stop "
-            "and report what is failing in the pull request."
-        )
-    if repeats >= limits["repeat"]:
-        return (
-            f"Blocked by the test budget: this exact test command has run {repeats} times "
-            "this session. Change approach, or stop and report the failure in the pull request."
-        )
+def load_tally(path: Path) -> dict[str, dict[str, int]] | None:
+    """The session's tally; an empty one if none exists yet; None if it is unreadable."""
+    if not path.exists():
+        return {"counts": {}, "repeats": {}}
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    for part in ("counts", "repeats"):
+        table = data.get(part)
+        if not isinstance(table, dict) or not all(isinstance(v, int) for v in table.values()):
+            return None
+    return {"counts": data["counts"], "repeats": data["repeats"]}
+
+
+def verdict(
+    planned: list[tuple[str, str]], tally: dict[str, dict[str, int]], limits: dict[str, int]
+) -> str:
+    counts, repeats = dict(tally["counts"]), dict(tally["repeats"])
+    for kind, key in planned:
+        if kind == "live" or limits[kind] <= 0:
+            return BLOCK_LIVE
+        if counts.get(kind, 0) >= limits[kind]:
+            return (
+                f"Blocked by the test budget: this session has used its {limits[kind]} "
+                f"{LABEL[kind]} run(s). Push the branch and let GitHub run the rest, or stop "
+                "and report what is failing in the pull request."
+            )
+        if repeats.get(key, 0) >= limits["repeat"]:
+            return (
+                f"Blocked by the test budget: this test command has run {repeats[key]} times this "
+                "session. Change approach, or stop and report the failure in the pull request."
+            )
+        counts[kind] = counts.get(kind, 0) + 1
+        repeats[key] = repeats.get(key, 0) + 1
+    tally["counts"], tally["repeats"] = counts, repeats
     return ""
 
 
@@ -125,20 +204,23 @@ def main() -> int:
         command = str(event.get("tool_input", {}).get("command", ""))
         if not TEST_COMMAND.search(command):
             return 0
+        if LOOP.search(command):
+            print(BLOCK_LOOP, file=sys.stderr)
+            return 2
+        planned = runs(command)
+        if not planned:
+            return 0
         project = os.environ.get("CLAUDE_PROJECT_DIR") or str(event.get("cwd", "."))
         limits = load_limits(project)
-        kind = classify(command)
         path = state_file(str(event.get("session_id", "")))
-        tally = json.loads(path.read_text()) if path.exists() else {}
-        counts = tally.setdefault("counts", {})
-        repeats = tally.setdefault("repeats", {})
-        key = hashlib.sha1(" ".join(command.split()).encode()).hexdigest()
-        reason = verdict(kind, counts.get(kind, 0), repeats.get(key, 0), limits)
+        tally = load_tally(path)
+        if tally is None:
+            print(BLOCK_TALLY, file=sys.stderr)
+            return 2
+        reason = verdict(planned, tally, limits)
         if reason:
             print(reason, file=sys.stderr)
             return 2
-        counts[kind] = counts.get(kind, 0) + 1
-        repeats[key] = repeats.get(key, 0) + 1
         path.write_text(json.dumps(tally))
         return 0
     except Exception:
