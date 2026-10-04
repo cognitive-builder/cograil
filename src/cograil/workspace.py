@@ -70,9 +70,10 @@ def check_workspace(path: Path | str) -> WorkspaceReport:
         problems.found.append(f"{root}: workspace folder not found")
         return WorkspaceReport(Workspace(name=root.resolve().name, colleagues=[], protocols=[],
                                          tools=[]), problems.found)  # fmt: skip
+    before = len(problems.found)
     tools = _load_list(problems, root / "tools.yaml", "tools", Tool, required=True)
-    # Without a readable tools.yaml the @refs cannot be checked, but the Steps still parse.
-    known = {tool.name for tool in tools} if tools else None
+    # If any Tool failed to load the @refs cannot be checked, but the Steps still parse.
+    known = {tool.name for tool in tools} if len(problems.found) == before else None
     workspace = Workspace(
         name=root.resolve().name,
         colleagues=_load_colleagues(problems, root / "colleagues"),

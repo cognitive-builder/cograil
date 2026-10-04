@@ -72,7 +72,8 @@ FakeScript = Annotated[
     Path | None,
     typer.Option(
         "--fake-script",
-        help="Use the FakeProvider with the plans in this YAML file instead of Anthropic.",
+        help="Use the FakeProvider with the plans in this YAML file instead of Anthropic. "
+        "Ignored with --decline.",
     ),
 ]
 
@@ -161,12 +162,23 @@ def _check_tools(workspace: Workspace, protocol: Protocol, registry: ToolRegistr
 def _new_run(
     workspace: Workspace, path: Path, protocol: Protocol, colleague: Colleague, principal: Principal
 ) -> Run:
+    """A received Run. Trigger.kind has no "cli": a CLI Run is a chat on the channel "cli"."""
     now = datetime.now(UTC)
-    return Run(id=uuid.uuid4().hex, workspace=workspace.name, colleague=colleague.name,
-               protocol=protocol.name, protocol_version=protocol.version, principal=principal,
-               principal_id=principal.id, trigger_kind="chat",
-               trigger=Trigger(kind="chat", channel="cli"), created_at=now, updated_at=now,
-               context={"workspace_path": str(path.resolve())})  # fmt: skip
+    trigger = Trigger(kind="chat", channel="cli")
+    return Run(
+        id=uuid.uuid4().hex,
+        workspace=workspace.name,
+        colleague=colleague.name,
+        protocol=protocol.name,
+        protocol_version=protocol.version,
+        principal=principal,
+        principal_id=principal.id,
+        trigger=trigger,
+        trigger_kind=trigger.kind,
+        created_at=now,
+        updated_at=now,
+        context={"workspace_path": str(path.resolve())},
+    )
 
 
 @app.command()
