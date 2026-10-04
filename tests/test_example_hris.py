@@ -16,7 +16,7 @@ HRIS_NAMES = {"hris.get_balance", "hris.get_manager", "hris.submit_leave"}
 
 
 def hris_workspace() -> Workspace:
-    """The example workspace cut down to its hris tools (notify.send lands with its own issue)."""
+    """The example workspace cut down to its hris pack (notify has its own tests)."""
     workspace = load_workspace(EXAMPLE)
     return workspace.model_copy(
         update={"tools": [t for t in workspace.tools if t.name in HRIS_NAMES]}
