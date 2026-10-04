@@ -4,7 +4,7 @@
 #   autopilot status             state, next task, caps used today, estimated spend
 #   autopilot balance <amount>   post "balance $<amount>" on the Credit Ledger
 #   autopilot run [--dry-run]    one pass now; --dry-run changes nothing
-#   autopilot install            enable repo auto-merge and a launchd agent every 30 minutes
+#   autopilot install            enable repo auto-merge, create labels, launchd agent every 30 min
 #   autopilot uninstall          remove the launchd agent
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,7 +16,11 @@ dispatch() { python3 "$here/dispatch.py" "$@"; }
 usage() { sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 install_agent() {
-  gh api -X PATCH "repos/$repo" -f allow_auto_merge=true >/dev/null
+  gh api -X PATCH "repos/$repo" -F allow_auto_merge=true >/dev/null
+  gh label create needs:human -R "$repo" --force --color B60205 \
+    --description "A person must act; the autopilot pauses and never removes it"
+  gh label create status:in-progress -R "$repo" --force --color FBCA04 \
+    --description "Started by the autopilot"
   mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.cograil"
   # launchd starts with a bare PATH; keep the one that finds gh, claude and python3 now.
   cat >"$plist" <<EOF

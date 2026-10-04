@@ -104,9 +104,10 @@ class Autopilot:
             self.state_path.write_text(json.dumps(self.state, indent=2) + "\n")
 
     def pause(self, reason: str) -> None:
-        self.gh.comment(self.ledger, f"Autopilot paused: {reason}. `autopilot on` resumes.")
         self.state.update(paused=True, paused_reason=reason)
+        self.save()  # before the ledger note, so a failed note never lets the next pass launch
         self.decide(f"paused: {reason}")
+        self.gh.comment(self.ledger, f"Autopilot paused: {reason}. `autopilot on` resumes.")
 
     def run_pass(self) -> int:
         if self.gh.switch() != "on":
@@ -239,7 +240,11 @@ class Autopilot:
             print(f"[dry-run] would run: {' '.join(cmd)}")
             link = "(dry run)"
         else:
-            proc = run(cmd, timeout=600)
+            try:
+                proc = run(cmd, timeout=600)
+            except AutopilotError as exc:  # the session may exist: pause rather than relaunch
+                self.pause(f"launching #{issue} failed: {exc}")
+                return
             output = proc.stdout + proc.stderr
             self.decide(f"#{issue} claude output: {json.dumps(output)}")
             if proc.returncode != 0:
@@ -313,7 +318,10 @@ def main(argv: list[str] | None = None, now: datetime | None = None) -> int:
         if args.dry_run:
             return pilot.run_pass()
         with pass_lock(home / "autopilot.lock") as acquired:
-            return pilot.run_pass() if acquired else 0
+            if acquired:
+                return pilot.run_pass()
+            pilot.decide("another pass holds the lock: skipped")
+            return 0
     except AutopilotError as exc:
         pilot.decide(f"error: {exc}")
         print(f"autopilot: {exc}", file=sys.stderr)

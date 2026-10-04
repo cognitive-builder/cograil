@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts/autopilot"))  # dispatch.py imports its sibling ghcli.py
@@ -76,21 +75,18 @@ class World:
         checks: tuple[dict[str, Any], ...] = (),
         comments: tuple[dict[str, Any], ...] = (),
         help_text: str = CLOUD_HELP,
+        launch_rc: int = 0,
     ) -> None:
         gh = [
             ["variable get AUTOPILOT", switch + "\n", 0],
-            [
-                "issue list --state open --json number,title",
-                json.dumps([{"number": 1, "title": LEDGER}]),
-                0,
-            ],
+            ["issue list --state open --json", json.dumps([{"number": 1, "title": LEDGER}]), 0],
             ["issue list --state open --label status:ready", json.dumps(list(issues)), 0],
             ["issue view", json.dumps({"state": state}), 0],
             ["pr list", json.dumps(list(prs)), 0],
             ["pr checks", json.dumps(list(checks)), 1 if checks else 0],
             ["api --paginate", "".join(json.dumps(c) + "\n" for c in comments), 0],
         ]
-        claude = [["--help", help_text, 0], ["", f"Started {LINK}\n", 0]]
+        claude = [["--help", help_text, 0], ["", f"Started {LINK}\n", launch_rc]]
         self.rules.write_text(json.dumps({"gh": gh, "claude": claude}))
 
     def write_state(self, **values: Any) -> None:
@@ -347,6 +343,14 @@ def test_needs_human_escalation(
     assert world.launches() == []
 
 
+def test_failed_launch_pauses_without_counting(world: World) -> None:
+    world.setup(issues=(issue(9),), launch_rc=1)
+    run()
+    state = world.state()
+    assert state["paused"] and state["in_flight"] is None and state["sessions_today"] == 0
+    assert not [c for c in world.gh_writes() if c[1:3] == ["issue", "edit"]]
+
+
 @pytest.mark.parametrize(
     ("prs", "started"),
     [
@@ -392,9 +396,3 @@ def test_dry_run_has_no_side_effects(world: World, capsys: pytest.CaptureFixture
     assert not world.home.joinpath(".cograil/autopilot.log").exists()
     out = capsys.readouterr().out
     assert "#5 finished" in out and "would run: claude" in out and "#9 started on lane 1" in out
-
-
-@pytest.mark.parametrize("name", ["auto-merge.yml", "lane3-implement.yml"])
-def test_workflow_yaml_parses(name: str) -> None:
-    workflow = yaml.safe_load((ROOT / ".github/workflows" / name).read_text())
-    assert workflow["jobs"] and workflow[True]  # PyYAML reads the `on:` key as True

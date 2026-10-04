@@ -40,4 +40,8 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ZAI_API_KEY }}
           prompt: "Follow .claude/commands/implement-issue.md for GitHub issue #${{ inputs.issue }}."
-          claude_args: "--max-turns 40"
+          # implement-issue.md step 2 hands lane:3 issues to "@claude on GitHub": that is this run.
+          claude_args: |
+            --max-turns 40
+            --append-system-prompt "You are the @claude GitHub runner for lane:3 issues: the lane check in implement-issue.md passes here, so continue with the task."
+            --allowedTools "Bash(git:*),Bash(gh:*),Bash(scripts/check.sh:*),Bash(uv:*)"

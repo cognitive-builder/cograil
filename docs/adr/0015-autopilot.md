@@ -16,7 +16,7 @@ Lane 1 and lane 2 start a cloud session (Opus 5.5 xhigh, Sonnet 5.5 high). Lane 
 
 Caps: at most 6 cloud sessions per calendar day (UTC). Estimated spend plus the lane's target must stay at or under $225 of the $250 credit. Targets are $11 for Lane 1 and $3.75 for Lane 2. There is no programmatic way to read the real credit balance. The owner posts `balance $X` on the Credit Ledger issue, and estimated spend resets to 250 minus X.
 
-`.github/workflows/auto-merge.yml` turns on GitHub auto-merge (squash) for `claude/*` pull requests from this repo. GitHub merges only once required checks pass and conversations are resolved. This depends on branch protection with required checks on `main`.
+`.github/workflows/auto-merge.yml` turns on GitHub auto-merge (squash) for `claude/*` pull requests from this repo. GitHub merges only once required checks pass and conversations are resolved. This depends on branch protection with required checks on `main`. Labelling a pull request `needs:human` turns its auto-merge off, so a person merges it.
 
 The off switch is the repo variable `AUTOPILOT`, which must equal `on`. `scripts/autopilot/autopilot on|off` sets it.
 
