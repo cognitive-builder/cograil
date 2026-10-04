@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, NoReturn
+from typing import Annotated
 
 import typer
 
+from cograil.cliexit import await_command, fail
 from cograil.errors import KnowledgeSourceError, WorkspaceError
 from cograil.knowledge.store import KnowledgeStore, PostgresKnowledgeStore
 from cograil.knowledge.sync import sync_workspace
@@ -19,17 +19,12 @@ from cograil.workspace import load_workspace
 knowledge_app = typer.Typer(help="Load a workspace's knowledge folders.", no_args_is_help=True)
 
 
-def _fail(message: str) -> NoReturn:
-    typer.echo(message, err=True)
-    raise typer.Exit(code=1)
-
-
 @asynccontextmanager
 async def open_knowledge_store() -> AsyncIterator[KnowledgeStore]:
     """The Postgres KnowledgeStore named by DATABASE_URL (postgresql+asyncpg://...)."""
     url = os.environ.get("DATABASE_URL")
     if not url:
-        _fail("DATABASE_URL is not set")
+        fail("DATABASE_URL is not set")
     store = PostgresKnowledgeStore.from_url(url)
     try:
         yield store
@@ -51,21 +46,21 @@ def sync(
 
     \b
     Exit codes: 0 synced; 1 error (invalid workspace, unreadable folder, document or ACL
-    file, missing DATABASE_URL); 2 usage error.
+    file, missing DATABASE_URL, database unreachable); 2 usage error.
     """
-    asyncio.run(_sync(workspace))
+    await_command(_sync(workspace))
 
 
 async def _sync(path: Path) -> None:
     try:
         loaded = load_workspace(path)
     except WorkspaceError as exc:
-        _fail(f"invalid: {exc}")
+        fail(f"invalid: {exc}")
     async with open_knowledge_store() as store:
         try:
             reports = await sync_workspace(path, loaded, store)
         except KnowledgeSourceError as exc:
-            _fail(f"invalid: {exc}")
+            fail(f"invalid: {exc}")
     for each in reports:
         c = each.counts
         typer.echo(

@@ -8,7 +8,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from cograil.cli import EXIT_AWAITING_APPROVAL, app
+from cograil.cli import app
+from cograil.cliexit import EXIT_AWAITING_APPROVAL
 from cograil.domain import RunStatus
 from cograil.store import PostgresRunStore
 

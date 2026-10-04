@@ -196,4 +196,5 @@ if the colleague's and the protocol's audiences both allow them: `everyone`, or 
 Exit codes (also in `--help`): `0` done (valid, or the run completed); `1` error (invalid
 workspace, denied audience, missing `DATABASE_URL` or `ANTHROPIC_API_KEY`, a tool that is not built
 yet, a refused decision); `2` usage error; `3` the run is awaiting approval; `4` it was escalated;
-`5` it failed.
+`5` it failed. An error outside Cograil's own — a database that cannot be reached, for example — is
+one `error:` line, not a traceback, and also exits `1`.
