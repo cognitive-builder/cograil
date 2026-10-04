@@ -310,7 +310,7 @@ class Principal(Entity):
 
     id: PrincipalId
     aliases: list[PrincipalId] = Field(default_factory=list)
-    oid: str | None = None
+    oid: str | None = Field(default=None, min_length=1)
     groups: list[str] = Field(default_factory=list)
     kind: Literal["user", "system"] = "user"
 
