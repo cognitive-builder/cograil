@@ -37,8 +37,8 @@ class ProgressStore:
         self._cursors.setdefault(run_id, run.cursor)
         return run
 
-    async def list_runs(self, limit: int = 20) -> list[Run]:
-        return await self._inner.list_runs(limit)
+    async def list_runs(self, limit: int = 20, *, principal_id: str | None = None) -> list[Run]:
+        return await self._inner.list_runs(limit, principal_id=principal_id)
 
     async def update_run(self, run: Run) -> None:
         await self._inner.update_run(run)
@@ -76,3 +76,16 @@ class ProgressStore:
 
     async def list_audit_events(self, run_id: str) -> list[AuditEvent]:
         return await self._inner.list_audit_events(run_id)
+
+    async def page_audit_events(
+        self,
+        *,
+        owner_id: str,
+        run_id: str | None = None,
+        principal_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[AuditEvent]:
+        return await self._inner.page_audit_events(
+            owner_id=owner_id, run_id=run_id, principal_id=principal_id, limit=limit, offset=offset
+        )

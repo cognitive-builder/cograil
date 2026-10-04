@@ -332,6 +332,10 @@ class ToolCall(Entity):
     ended_at: datetime | None = None
 
 
+ApprovalDecision = Literal["approved", "declined", "expired"]
+"""What decide_approval can record; a pending Approval is decided once."""
+
+
 class Approval(Entity):
     """Authorises one call of a gated Tool; spent_at is set when that call is let through."""
 
@@ -353,6 +357,7 @@ class AuditEvent(Entity):
     principal_id: str
     kind: Literal[
         "run.started",
+        "orchestrator.classified",
         "tool.started",
         "tool.called",
         "decision.evaluated",
