@@ -32,7 +32,10 @@ The runtime parses the steps, restricts each step to the tools it names, pauses 
 uv sync
 uv run cograil validate workspaces/example-smb
 uv run cograil run workspaces/example-smb --protocol leave_request --as alice@example.com
+# a paused run prints: cograil approve <token> --as <approver>
 ```
+
+`run` and `approve` need `DATABASE_URL` (and `ANTHROPIC_API_KEY`, or `--fake-script`). They are a local and demo tool: `--as` is not authenticated. See `docs/runbooks.md`, "The command line".
 
 ## Design decisions
 

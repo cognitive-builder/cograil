@@ -1,6 +1,10 @@
 """FakeProvider: replays scripted Plans so unit tests never touch a real model."""
 
 from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
+
+import yaml
 
 from cograil.domain import Step, Tool
 from cograil.errors import ProviderError
@@ -48,3 +52,32 @@ def scripted(
         model="fake-model",
         stop_reason="tool_use" if tool_calls else "end_turn",
     )
+
+
+def load_script(path: Path) -> list[Plan]:
+    """Plans from a YAML (or JSON) file: a list of {text, done, tool_calls: [{tool, args}]}.
+
+    For demos and tests of the CLI (`--fake-script`); unknown keys are an error.
+    """
+    try:
+        data = yaml.safe_load(path.read_text())
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise ProviderError(f"{path}: cannot read script: {exc}") from exc
+    if not isinstance(data, list):
+        raise ProviderError(f"{path}: a script is a list of plans")
+    return [_plan(path, number, item) for number, item in enumerate(data, start=1)]
+
+
+def _plan(path: Path, number: int, item: Any) -> Plan:
+    if not isinstance(item, dict) or not item.keys() <= {"text", "done", "tool_calls"}:
+        raise ProviderError(f"{path}: plan {number} must hold only text, done and tool_calls")
+    calls = item.get("tool_calls") or []
+    if not isinstance(calls, list) or not all(
+        isinstance(c, dict) and isinstance(c.get("tool"), str) for c in calls
+    ):
+        raise ProviderError(f"{path}: plan {number}: tool_calls need a tool name each")
+    planned = [
+        PlannedToolCall(id=f"call-{number}-{i}", tool=c["tool"], args=c.get("args") or {})
+        for i, c in enumerate(calls, start=1)
+    ]
+    return scripted(str(item.get("text", "")), *planned, done=bool(item.get("done", False)))

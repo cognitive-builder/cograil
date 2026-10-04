@@ -3,7 +3,7 @@
 The real example workspace, its parsed Protocol, the mock HRIS pack and the runner, with
 FakeProvider in place of the model. Two Tools have no kind built yet, so they stand in:
 decide.approval_routing (decision tables) and notify.send (its own issue). The approved
-Approval stands in for `cograil approve`, which arrives with the CLI issue (#13).
+Approval stands in for `cograil approve` (issue #13).
 """
 
 from pathlib import Path

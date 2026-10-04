@@ -1,0 +1,12 @@
+tools:
+  - name: demo.lookup
+    kind: python
+    scope: read
+    description: Look up a value.
+    args_schema: {type: object, properties: {key: {type: string}}, required: [key]}
+  - name: demo.record
+    kind: python
+    scope: write
+    confirm_before_write: true
+    description: Record an item.
+    args_schema: {type: object, properties: {item: {type: string}}, required: [item]}

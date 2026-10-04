@@ -1,0 +1,5 @@
+principals:
+  - id: alice@example.com
+    groups: [all-employees]
+  - id: bob@example.com
+    groups: [all-employees, managers]

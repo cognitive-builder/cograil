@@ -81,7 +81,7 @@ tool call the model plans in a turn is checked before any of them runs:
   AuditEvent records the attempt. Its principal is the one who tried to decide, and its detail
   names the run's principal as `run_principal`. The decider is recorded
   as `decided_by` on the `gate.resumed` or `run.escalated` AuditEvent. The
-  `cograil approve <token>` command that calls it comes with the CLI issue (#13). An Approval is
+  `cograil approve <token> --as <approver>` command calls it (see "The command line" below). An Approval is
   decided once, so of two racing resumes only one goes on. The decision and the run's new status
   are saved together in one store transaction, so a crash cannot leave one without the other.
 - A declined Approval, or one past its `expires_at`, escalates the run instead. The timeout comes
@@ -156,3 +156,39 @@ and layout do not. The `run.started` AuditEvent records it too.
 
 `tiers`, `context`, `defaults` and `retry` are loaded and validated now. Later issues will use them
 (tier routing, compressing large outputs and tool retries).
+
+## The command line
+
+```bash
+cograil validate workspaces/example-smb
+cograil run workspaces/example-smb --protocol leave_request --as alice@example.com
+cograil approve <token> --as hr-ops@example.com
+```
+
+`validate` reports every problem in the workspace, one `invalid:` line each, not just the first.
+It also checks that no step whitelists two tools whose Anthropic wire names collide (`a.b` and
+`a__b` both become `a__b`), so you find out here and not in the middle of a run.
+
+`run` streams one line per AuditEvent and per finished step. When a write needs approval, the run
+pauses and prints the `cograil approve` command with its token. `approve` decides that Approval
+through `Runner.resume` and goes on at the paused step; `--decline` declines it instead. The run
+remembers the workspace folder it started from; `--workspace` overrides it. A paused run must
+outlive the process, so both commands need `DATABASE_URL`. `run` uses Anthropic
+(`ANTHROPIC_API_KEY`). `--fake-script FILE` uses the FakeProvider with the plans in a YAML file,
+for demos and tests: a list of `{text, done, tool_calls: [{tool, args}]}`. With `approve`, the
+script holds the plans for the rest of the run.
+
+`--as` is taken at face value. This is a local and demo tool, and nothing in it authenticates the
+principal. The approver check still applies, since `approve` goes through the runner: anyone but
+the Approval's approver is refused and a `gate.refused` AuditEvent records it. The web and Slack
+channels are where real authentication of the decider belongs.
+
+A principal's groups come from the optional `principals.yaml` in the workspace
+(`principals: [{id: alice@example.com, groups: [all-employees]}]`). `run` allows the principal only
+if the colleague's and the protocol's audiences both allow them: `everyone`, or an audience in
+`audiences.yaml` that shares a group with the principal. A principal not listed has no groups.
+
+Exit codes (also in `--help`): `0` done (valid, or the run completed); `1` error (invalid
+workspace, denied audience, missing `DATABASE_URL` or `ANTHROPIC_API_KEY`, a tool that is not built
+yet, a refused decision); `2` usage error; `3` the run is awaiting approval; `4` it was escalated;
+`5` it failed.
