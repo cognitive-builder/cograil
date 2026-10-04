@@ -109,6 +109,10 @@ class ProviderError(CograilError):
     """A model provider call failed, or a FakeProvider script ran out."""
 
 
+class EvalError(CograilError):
+    """An eval case file is invalid, or an eval level cannot run here (cograil.evals)."""
+
+
 class StoreError(CograilError):
     """A RunStore operation failed."""
 
