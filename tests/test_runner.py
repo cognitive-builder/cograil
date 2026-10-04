@@ -5,6 +5,7 @@ step loop, step_complete and the harness version stamp are issue #44.
 """
 
 import ast
+import re
 from pathlib import Path
 from typing import Any
 
@@ -36,7 +37,7 @@ from cograil.providers import (
     scripted,
 )
 from cograil.registry import ToolRegistry
-from cograil.runner import DATA, NOT_COMPLETE, Runner
+from cograil.runner import NOT_COMPLETE, Runner
 from cograil.store import InMemoryRunStore
 
 SRC = Path(__file__).parents[1] / "src/cograil"
@@ -200,9 +201,9 @@ async def test_context_accumulates_step_outputs(
     assert steps["2"]["tool_calls"][0]["result"] == {"tool": "hris.submit_leave", "ok": True}
     # Step 2 sees the previous step by default; step 3 declares steps 1 and 2.
     first_plan_of = {c.step.number: c.context for c in reversed(provider.calls)}
-    headings = {n: [m.content.split("\n")[0] for m in ms] for n, ms in first_plan_of.items()}
-    one, two = f"Step 1 output {DATA}:", f"Step 2 output {DATA}:"
-    assert headings == {1: [], 2: [one], 3: [one, two]}
+    seen = {n: re.findall(r'<data source="(.+?)">', "".join(m.content for m in ms))
+            for n, ms in first_plan_of.items()}  # fmt: skip
+    assert seen == {1: [], 2: ["step 1"], 3: ["step 1", "step 2"]}
     assert "25 days left" in first_plan_of[2][0].content
 
 

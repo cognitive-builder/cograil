@@ -38,6 +38,10 @@ class RunStore(Protocol):
 
     async def get_run(self, run_id: str) -> Run: ...
 
+    async def list_runs(self, limit: int = 20) -> list[Run]:
+        """The most recently created Runs first, at most `limit`."""
+        ...
+
     async def update_run(self, run: Run) -> None:
         """Save status, cursor, context, cost_usd, harness_version and updated_at; identity
         fields never change. The runner stamps harness_version when it runs the Run."""
@@ -95,6 +99,10 @@ class InMemoryRunStore:
     async def get_run(self, run_id: str) -> Run:
         self._require_run(run_id)
         return self._runs[run_id].model_copy(deep=True)
+
+    async def list_runs(self, limit: int = 20) -> list[Run]:
+        newest = sorted(self._runs.values(), key=lambda r: (r.created_at, r.id), reverse=True)
+        return [r.model_copy(deep=True) for r in newest[:limit]]
 
     async def update_run(self, run: Run) -> None:
         self._require_run(run.id)
@@ -232,6 +240,12 @@ class PostgresRunStore:
         if row is None:
             raise RunNotFound(run_id)
         return Run.model_validate(dict(row))
+
+    async def list_runs(self, limit: int = 20) -> list[Run]:
+        query = select(runs).order_by(runs.c.created_at.desc(), runs.c.id.desc()).limit(limit)
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [Run.model_validate(dict(r)) for r in rows]
 
     async def update_run(self, run: Run) -> None:
         values = _run_values(run)

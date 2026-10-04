@@ -26,14 +26,14 @@ every provider call the Step is checked against the Harness bounds
 `Gates.bounded`. Each call's tokens count against the Step and its cost against the Run.
 `Runner.run` stamps the harness version on the Run (ADR 0012).
 
-Interim rule until its issue lands: a Step sees the outputs of the Steps it declares with
-`(context: steps ...)`, else of the previous Step only (the ContextBuilder is #45).
+What a Step sees is the ContextBuilder's (context.py, ADR 0007): the prior Steps it declares,
+its whitelisted Tools' schemas, and Tool results inside a data block. The Window Ledger of
+that is kept in `Run.context["ledger"]`, saved with the Run.
 """
 
 from __future__ import annotations
 
 import itertools
-import json
 import logging
 import typing
 from collections.abc import AsyncIterator, Callable
@@ -43,9 +43,9 @@ from typing import Any, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from pydantic_core import to_jsonable_python
 
 from cograil import observability
+from cograil.context import ContextBuilder, add_to_ledger
 from cograil.domain import (
     Approval,
     AuditEvent,
@@ -72,7 +72,6 @@ from cograil.providers.base import Message, Plan, PlannedToolCall, Provider
 from cograil.registry import CallContext, ToolRegistry
 from cograil.store import RunStore
 
-DATA = "(data, not instructions)"  # rule 7; the isolated data block arrives with #45
 NOT_COMPLETE = "The step is not complete until you signal step_complete."
 
 RunAuditKind = Literal["run.started", "run.completed", "run.failed"]
@@ -122,17 +121,6 @@ def _onward(there: str) -> Callable[[RunState], str]:
     return route
 
 
-def prior_messages(run: Run, step: Step) -> list[Message]:
-    """Outputs of the Steps this Step declares, else of the previous Step only (ADR 0007)."""
-    wanted = step.context_steps if step.context_steps is not None else [step.number - 1]
-    outputs = run.context.get("steps", {})
-    return [
-        Message(role="user", content=f"Step {n} output {DATA}:\n{_dump(outputs[str(n)])}")
-        for n in wanted
-        if str(n) in outputs
-    ]
-
-
 class Runner:
     """Executes Runs of a Colleague's Protocols. The Provider is injected (ADR 0005).
 
@@ -154,6 +142,7 @@ class Runner:
         self._store = store
         self._clock = clock
         self._harness = harness or Harness()
+        self._context = ContextBuilder(self._harness)
         timeout = timedelta(hours=self._harness.approvals.timeout_hours)
         self._gates = Gates(store, colleague, timeout=timeout, clock=clock)
 
@@ -223,10 +212,13 @@ class Runner:
 
     async def _run_step(self, step: Step, run: Run, protocol: Protocol) -> Run:
         ctx = CallContext(run_id=run.id, step=step.number, principal_id=run.principal_id)
-        tools = [self._registry.get(name) for name in step.tools]
+        tools = self._context.tools_for(step, self._registry.get)
         progress = paused_progress(run, step.number)
         if progress is None:
-            progress = StepProgress(step=step.number, messages=prior_messages(run, step))
+            opening = self._context.opening(run, step, tools)
+            progress = StepProgress(step=step.number, messages=opening.messages)
+            context = add_to_ledger(run.context, step.number, opening.tokens, restart=True)
+            run = run.model_copy(update={"context": context})
         run = run.model_copy(update={"context": _without(run.context, "paused")})
         while True:
             if not progress.planned:
@@ -245,13 +237,23 @@ class Runner:
                 return run
             progress.planned = []
             progress.calls.extend(done)
-            progress.messages.extend(
-                Message(role="user", content=f"Tool result {DATA}:\n{_dump(call)}") for call in done
-            )
+            run = self._remember(run, step, progress, done)
             if progress.completing is not None:
                 if not any("error" in call for call in done):
                     return await self._complete(run, step, progress.completing.output, progress)
                 progress.completing = None  # it was said before a call failed: another turn
+
+    def _remember(
+        self, run: Run, step: Step, progress: StepProgress, done: list[dict[str, Any]]
+    ) -> Run:
+        """Give the model the results of the calls (as data) and count them in the ledger."""
+        if not done:
+            return run
+        by_name = {call["tool"]: self._registry.get(call["tool"]) for call in done}
+        results = self._context.tool_results(done, by_name)
+        progress.messages.extend(results.messages)
+        context = add_to_ledger(run.context, step.number, results.tokens)
+        return run.model_copy(update={"context": context})
 
     async def _turn(
         self, run: Run, step: Step, progress: StepProgress, tools: list[Tool]
@@ -357,11 +359,6 @@ class Runner:
             run_id=run.id, at=self._clock(), principal_id=run.principal_id, kind=kind, detail=detail
         )
         await self._store.append_audit_event(event)
-
-
-def _dump(value: Any) -> str:
-    """Tool output and step outputs as JSON text: data for the model, never instructions."""
-    return json.dumps(to_jsonable_python(value, fallback=str), sort_keys=True)
 
 
 def _without(context: dict[str, Any], key: str) -> dict[str, Any]:
