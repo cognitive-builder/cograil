@@ -81,7 +81,7 @@ from cograil.gates import (
 from cograil.harness import call_cost, check_bounds, harness_version
 from cograil.observability import log_event
 from cograil.providers.base import Message, Plan, PlannedToolCall, Provider
-from cograil.registry import CallContext, ToolRegistry
+from cograil.registry import UNVERSIONED, CallContext, ToolRegistry
 from cograil.store import RunStore
 
 _ENDED = frozenset({RunStatus.escalated, RunStatus.failed, RunStatus.completed})
@@ -162,6 +162,7 @@ class Runner:
 
         A Run awaiting approval moves on only through `resume`: this raises GateRequired.
         An escalated, failed or completed Run never runs again: this raises RunEnded.
+        A Run already stamped with another tool pack raises ToolPackChanged.
         Another execution claiming the Run first raises RunClaimLost.
         """
         run = await self._store.get_run(run_id)
@@ -169,6 +170,8 @@ class Runner:
             raise GateRequired(f"run {run_id} is awaiting approval; resume it with its token")
         if run.status in _ENDED:
             raise RunEnded(f"run {run_id} is {run.status}; it does not run again")
+        if run.tool_pack_version != UNVERSIONED:  # running again, as after a crash
+            self._require_tool_pack(run)
         version, pack = harness_version(self._harness), self._registry.tool_pack_version
         async with self._claims.failing_closed(run_id) as claim:
             run = await self._claims.claim(
@@ -197,7 +200,8 @@ class Runner:
         RunClaimLost means a `run` claimed the decided Run first and goes on with it.
         ToolPackChanged, for a Run started with another tool pack, leaves it as it was too.
         """
-        await self._require_tool_pack(token)
+        approval = await self._store.get_approval(token)
+        self._require_tool_pack(await self._store.get_run(approval.run_id))
         run = await self._gates.resume(token, decision, decider)
         if run.status is not RunStatus.running:
             return run
@@ -205,9 +209,8 @@ class Runner:
             run = await self._claims.claim(run, claim)
             return await self._execute(run, protocol)
 
-    async def _require_tool_pack(self, token: str) -> None:
-        """Refuse the Run paused on this Approval if its tool pack is not this registry's."""
-        run = await self._store.get_run((await self._store.get_approval(token)).run_id)
+    def _require_tool_pack(self, run: Run) -> None:
+        """Refuse a Run stamped with another tool pack than this registry's (issue #110)."""
         pack = self._registry.tool_pack_version
         if run.tool_pack_version != pack:
             log_event("run.tool_pack_changed", logging.WARNING, run_id=run.id)

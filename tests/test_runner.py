@@ -26,7 +26,7 @@ from cograil.domain import (
     Tiers,
     Tool,
 )
-from cograil.errors import ProviderError, ToolNotAllowed
+from cograil.errors import ProviderError, ToolNotAllowed, ToolPackChanged
 from cograil.harness import harness_version
 from cograil.parser import parse_protocol
 from cograil.providers import (
@@ -365,6 +365,21 @@ async def test_the_harness_and_tool_pack_versions_are_stamped_on_the_run(
     started = (await store.list_audit_events("r1"))[0]
     assert started.detail["harness_version"] == stored.harness_version
     assert started.detail["tool_pack_version"] == "pack-1"
+
+
+async def test_running_again_refuses_a_run_stamped_with_another_tool_pack(
+    store: InMemoryRunStore, registry: ToolRegistry, protocol: Protocol, invoked: list[str]
+) -> None:
+    """A Run left running, as by a crash after its Approval was decided, keeps its pin."""
+    stored = await store.get_run("r1")
+    pinned = {"status": RunStatus.running, "cursor": 2, "tool_pack_version": "pack-1"}
+    await store.update_run(stored.model_copy(update=pinned))
+    registry.tool_pack_version = "pack-2"
+    with pytest.raises(ToolPackChanged, match="pack-1"):
+        await run(store, registry, protocol, NOTIFIED)
+    after = await store.get_run("r1")
+    assert (after.status, after.tool_pack_version) == (RunStatus.running, "pack-1")
+    assert invoked == [] and await store.list_audit_events("r1") == []
 
 
 def test_the_runner_is_the_only_caller_of_registry_invoke() -> None:

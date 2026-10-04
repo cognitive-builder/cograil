@@ -105,7 +105,9 @@ The tool pack version is a sha256 of the workspace's validated Tools and of the 
 workspace python module they resolve to (`build_registry`); the resolver runs the bytes it
 hashed. `Runner.resume` refuses a Run whose tool pack has changed since it started with
 `ToolPackChanged`, before deciding the Approval, so an approved write never runs other code than
-the Run started with. The Run stays paused; its Approval can still expire.
+the Run started with. The Run stays paused; its Approval can still expire. `Runner.run` keeps
+the pin too: a Run left `running` that was stamped with another tool pack is refused, not
+re-stamped.
 
 `Runner.run` and `Runner.resume` each claim the Run for their execution: `RunStore.claim_run`
 compares the claim and status the caller read and sets a fresh claim, and every later save of
