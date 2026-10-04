@@ -27,6 +27,7 @@ from cograil.cliexit import (
     fail,
 )
 from cograil.context import cache_ledger, compression_ledger, format_ledger, window_ledger
+from cograil.cost import cost_by_protocol, format_cost_table
 from cograil.decisions import parse_inputs, table_for
 from cograil.domain import Colleague, Protocol, Run, RunStatus, Workspace
 from cograil.errors import (
@@ -336,23 +337,29 @@ async def open_store() -> AsyncIterator[RunStore]:
 def runs(
     run_id: Annotated[str | None, typer.Argument(help="Show only this Run.")] = None,
     ledger: Annotated[bool, typer.Option("--ledger", help="Show the Window Ledger.")] = False,
-    limit: Annotated[int, typer.Option(help="How many Runs to list.", min=1)] = 20,
+    cost: Annotated[bool, typer.Option("--cost", help="Cost by Protocol, not Runs.")] = False,
+    limit: Annotated[int, typer.Option(help="How many of the newest Runs to show.", min=1)] = 20,
 ) -> None:
     """List Runs, newest first; with --ledger, the tokens by source of each Step.
+    With --cost, a table by Protocol: tokens by category, cost, cost per resolved run.
 
     \b
     Exit codes: 0 listed; 1 error (unknown Run, missing DATABASE_URL, database unreachable);
     2 usage error.
     """
-    await_command(_show_runs(run_id, ledger, limit))
+    await_command(_show_runs(run_id, ledger, cost, limit))
 
 
-async def _show_runs(run_id: str | None, ledger: bool, limit: int) -> None:
+async def _show_runs(run_id: str | None, ledger: bool, cost: bool, limit: int) -> None:
     async with open_store() as store:
         try:
             found = [await store.get_run(run_id)] if run_id else await store.list_runs(limit)
         except RunNotFound as exc:
             fail(f"no such run: {exc}")
+    if cost:
+        for line in format_cost_table(cost_by_protocol(found)):
+            typer.echo(line)
+        return
     for each in found:
         typer.echo(f"{each.id}  {each.status}  {each.protocol}  ${each.cost_usd:.4f}")
         if ledger:

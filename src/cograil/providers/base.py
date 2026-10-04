@@ -43,6 +43,8 @@ class Usage(ProviderModel):
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    batch: bool = False  # the call went through the provider's batch path: cost telemetry counts
+    # all its tokens as batch tokens, apart from fresh ones (ADR 0013)
 
 
 STEP_COMPLETE = "step_complete"

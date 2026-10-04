@@ -35,10 +35,11 @@ from pydantic_core import to_jsonable_python
 
 from cograil.claims import RunClaims
 from cograil.context import SCREENED_KEY, data_message
+from cograil.cost import charge
 from cograil.domain import Harness, Run, Step
 from cograil.errors import ProviderError
 from cograil.gates import StepProgress
-from cograil.harness import call_cost, task_tier, tier_model
+from cograil.harness import task_tier, tier_model
 from cograil.providers.base import SCREEN_STEP, Provider
 
 REMOVED = "[removed: instruction-like text]"
@@ -190,8 +191,7 @@ class Screen:
         verdict = plan.text or (plan.step_complete.output if plan.step_complete else "")
         usage = plan.usage
         progress.tokens += usage.input_tokens + usage.output_tokens
-        cost = call_cost(self._harness, plan.model, usage.input_tokens, usage.output_tokens)
-        run = run.model_copy(update={"cost_usd": run.cost_usd + cost})
+        run = charge(self._harness, run, plan.model, usage)
         return run, parse_verdict(verdict, len(items))
 
 

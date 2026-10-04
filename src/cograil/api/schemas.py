@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from cograil.cost import RunUsage, run_usage
 from cograil.domain import Approval, AuditEvent, Run, RunStatus, Step, ToolCall
 
 MAX_MESSAGE_CHARS = 8000
@@ -41,6 +42,7 @@ class RunSummary(BaseModel):
     principal_id: str = Field(description="The Principal who started the Run.")
     status: RunStatus
     cost_usd: float
+    usage: RunUsage = Field(description="Tokens by category: fresh, cache read and write, batch.")
     created_at: datetime
     updated_at: datetime
 
@@ -53,6 +55,7 @@ class RunSummary(BaseModel):
             protocol=run.protocol,
             status=run.status,
             cost_usd=run.cost_usd,
+            usage=run_usage(run),
             created_at=run.created_at,
             updated_at=run.updated_at,
         )
