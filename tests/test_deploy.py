@@ -53,6 +53,7 @@ def test_deploy_scales_to_zero_and_guards_image_size(workflow_text: str) -> None
 def test_the_image_does_not_trust_forwarded_headers_by_itself(workflow_text: str) -> None:
     dockerfile = (ROOT / "Dockerfile").read_text()
     assert "--forwarded-allow-ips" not in dockerfile  # uvicorn then reads FORWARDED_ALLOW_IPS
+    assert "--proxy-headers" in dockerfile  # else the Cloud Run opt-in below would do nothing
     assert "FORWARDED_ALLOW_IPS=*" in workflow_text  # only the Cloud Run service opts in
 
 
