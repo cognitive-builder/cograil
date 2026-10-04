@@ -39,12 +39,12 @@ def call(tool: str, args: dict[str, Any]) -> PlannedToolCall:
 
 SCRIPT = [
     scripted("", call("hris.get_balance", {"employee": "alice"})),
-    scripted("You have 25 annual and 10 sick days."),
-    scripted("Confirmed: annual leave from 2026-11-02 to 2026-11-04."),
+    scripted("You have 25 annual and 10 sick days.", done=True),
+    scripted("Confirmed: annual leave from 2026-11-02 to 2026-11-04.", done=True),
     scripted("", call("decide.approval_routing", ROUTING), call("hris.submit_leave", LEAVE)),
-    scripted("Submitted; your manager bob must approve."),
+    scripted("Submitted; your manager bob must approve.", done=True),
     scripted("", call("notify.send", NOTE)),
-    scripted("Done."),
+    scripted("Done.", done=True),
 ]
 
 

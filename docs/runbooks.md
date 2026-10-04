@@ -75,10 +75,10 @@ tool call the model plans in a turn is checked before any of them runs:
   plan runs without asking the model again, then the step goes on. The `cograil approve <token>`
   command that calls it comes with the CLI issue (#13). An Approval is decided once, so of two
   racing resumes only one goes on.
-- A declined Approval, or one past its `expires_at` (72 hours by default), escalates the run
-  instead. The status becomes `escalated`, and a `run.escalated` AuditEvent names the Colleague's
-  `escalation_contact`. `Runner.expire(token)` escalates an overdue Approval, for a scheduler to
-  call.
+- A declined Approval, or one past its `expires_at`, escalates the run instead. The timeout comes
+  from `harness.yaml` (`approvals.timeout_hours`, 72 by default). The status becomes `escalated`,
+  and a `run.escalated` AuditEvent names the Colleague's `escalation_contact`.
+  `Runner.expire(token)` escalates an overdue Approval, for a scheduler to call.
 - `GateRequired` is still raised when a racing call spent the Approval first (the run fails
   closed), and when `run` is called on a run that is awaiting approval.
 
@@ -88,8 +88,51 @@ AuditEvent that has the reason `failure_threshold` and the rule. Any other error
 closed. The run's status becomes `failed`, and a `run.failed` AuditEvent records the error and the
 principal. The error is then raised again.
 
-A step is complete when the model answers without calling a tool. Its text and tool results are
-saved in the run's context. Only then does the cursor move to that step. A step sees the outputs of
-the steps it declares with `(context: steps 1, 2)`. Without a declaration it sees only the
-previous step. `(turns: N)` limits a step to N model turns, and the default is 6. A step that is
-not complete after its last turn raises `LoopBudgetExceeded`.
+A step ends only when the model sends the structured `step_complete` signal, or when a bound is
+hit. The signal carries the step's `output`, which later steps see. The output and the tool results
+are saved in the run's context. Only then does the cursor move to that step. A plain answer without
+the signal is not the end. The runner reminds the model and gives it another turn. If a plan has
+tool calls and `step_complete` together, the calls run first (through the whitelist and gates as
+usual), then the step ends.
+
+A step sees the outputs of the steps it declares with `(context: steps 1, 2)`. Without a
+declaration it sees only the previous step.
+
+The bounds come from the workspace's `harness.yaml` and are checked before every model call:
+
+- `loop.max_turns` limits the model turns in a step. The default is 6. A step's `(turns: N)`
+  overrides it.
+- `loop.token_budget_per_step` limits the tokens spent in the step.
+- `loop.usd_budget_per_run` limits the run's cost. The cost is worked out from the `pricing` block,
+  in USD per million tokens.
+
+So a step spends at most a budget plus one call. With a dollar budget, a model that has no price
+counts as a breach, and every tier model must have a price or the workspace is invalid.
+
+Hitting a bound raises `LoopBudgetExceeded`. It never fails the run. The run escalates through the
+gates instead. A `loop.bounded` AuditEvent names the bound, its limit and what was used. Then a
+`run.escalated` AuditEvent has the reason `loop_budget_exceeded` and the Colleague's
+`escalation_contact`.
+
+## harness.yaml
+
+`harness.yaml` in the workspace folder is optional. Without it, the defaults apply. The example is
+`workspaces/example-smb/harness.yaml`. It holds:
+
+- `version`: a semantic version such as `1.0.0`.
+- `loop`: `max_turns`, `token_budget_per_step` and `usd_budget_per_run`.
+- `tiers`: the model names for `small`, `standard` and `strong`.
+- `pricing`: the price of each model, in USD per million tokens.
+- `context`: `default_prior_steps` and `compression_threshold_tokens`.
+- `defaults`: `classification_tier` and `judgment_tier`.
+- `retry`: `tool_attempts` and `backoff_seconds`.
+- `approvals`: `timeout_hours`.
+
+Unknown keys are errors.
+
+The runtime stamps a harness version on every run. It is the semantic version plus a hash of the
+validated content, such as `1.0.0+3f2a9c1b7d4e`. Changing any value changes the version. Comments
+and layout do not. The `run.started` AuditEvent records it too.
+
+`tiers`, `context`, `defaults` and `retry` are loaded and validated now. Later issues will use them
+(tier routing, the ContextBuilder and tool retries).

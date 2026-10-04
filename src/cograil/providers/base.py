@@ -40,11 +40,25 @@ class Usage(ProviderModel):
     output_tokens: int = 0
 
 
+STEP_COMPLETE = "step_complete"
+
+
+class StepComplete(ProviderModel):
+    """The structured signal that ends a Step (ADR 0008); output is passed to later Steps."""
+
+    output: str = ""
+
+
 class Plan(ProviderModel):
-    """What one `Provider.plan` call returns."""
+    """What one `Provider.plan` call returns.
+
+    A Step ends only on step_complete; when the same Plan also has tool calls, they run
+    first, through every check, and the Step ends after them.
+    """
 
     text: str = ""
     tool_calls: list[PlannedToolCall] = Field(default_factory=list)
+    step_complete: StepComplete | None = None
     usage: Usage
     model: str
     stop_reason: str | None = None

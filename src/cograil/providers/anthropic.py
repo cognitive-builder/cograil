@@ -9,10 +9,31 @@ from anthropic.types import Message as SdkMessage
 from cograil.domain import Colleague, Step, Tool
 from cograil.domain import Protocol as ProtocolDef
 from cograil.errors import ProviderError
-from cograil.providers.base import Message, Plan, PlannedToolCall, Usage, resolve_model
+from cograil.providers.base import (
+    STEP_COMPLETE,
+    Message,
+    Plan,
+    PlannedToolCall,
+    StepComplete,
+    Usage,
+    resolve_model,
+)
 
 DEFAULT_MAX_TOKENS = 4096
 _EMPTY_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}}
+# Offered on every call: the structured signal that ends a Step (ADR 0008). Its name is
+# reserved, so no Tool may share its wire name.
+STEP_COMPLETE_SPEC: dict[str, Any] = {
+    "name": STEP_COMPLETE,
+    "description": "Call this when the step's work is done. The step ends only through it.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "output": {"type": "string", "description": "The step's result, for later steps."}
+        },
+        "required": ["output"],
+    },
+}
 
 
 def _wire_name(name: str) -> str:
@@ -41,7 +62,7 @@ def _messages(context: Sequence[Message]) -> list[dict[str, str]]:
 
 def _wire_names(tools: Sequence[Tool]) -> dict[str, str]:
     """Map each wire name back to its tool; two tools sharing a wire name would misroute calls."""
-    names: dict[str, str] = {}
+    names: dict[str, str] = {STEP_COMPLETE: STEP_COMPLETE}
     for tool in tools:
         wire = _wire_name(tool.name)
         if wire in names:
@@ -54,17 +75,20 @@ def _wire_names(tools: Sequence[Tool]) -> dict[str, str]:
 
 def _to_plan(response: SdkMessage, names: dict[str, str]) -> Plan:
     texts = [b.text for b in response.content if b.type == "text"]
+    uses = [b for b in response.content if b.type == "tool_use"]
     calls = [
         PlannedToolCall(id=b.id, tool=names.get(b.name, b.name), args=dict(b.input))
-        for b in response.content
-        if b.type == "tool_use"
+        for b in uses
+        if b.name != STEP_COMPLETE
     ]
+    done = next((dict(b.input) for b in uses if b.name == STEP_COMPLETE), None)
     usage = Usage(
         input_tokens=response.usage.input_tokens, output_tokens=response.usage.output_tokens
     )
     return Plan(
         text="".join(texts),
         tool_calls=calls,
+        step_complete=None if done is None else StepComplete(output=str(done.get("output", ""))),
         usage=usage,
         model=response.model,
         stop_reason=response.stop_reason,
@@ -99,9 +123,8 @@ class AnthropicProvider:
             "max_tokens": self.max_tokens,
             "system": _system_prompt(step),
             "messages": _messages(context),
+            "tools": [*(_tool_spec(t) for t in tools), STEP_COMPLETE_SPEC],
         }
-        if tools:
-            kwargs["tools"] = [_tool_spec(t) for t in tools]
         try:
             response = await self._client.messages.create(**kwargs)
         except anthropic.APIError as exc:
