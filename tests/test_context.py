@@ -4,6 +4,7 @@ import asyncio
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -18,7 +19,17 @@ from cograil.context import (
     estimate_tokens,
     window_ledger,
 )
-from cograil.domain import Colleague, ContextSettings, Harness, RunStatus, Step, Tool
+from cograil.domain import (
+    Colleague,
+    ContextSettings,
+    Harness,
+    Principal,
+    Run,
+    RunStatus,
+    Step,
+    Tool,
+    Trigger,
+)
 from cograil.parser import parse_protocol
 from cograil.providers import FakeProvider, PlannedToolCall, scripted
 from cograil.registry import ToolRegistry
@@ -59,9 +70,11 @@ def registry(store: InMemoryRunStore) -> ToolRegistry:
     return registry
 
 
-async def run_demo(store: InMemoryRunStore, registry: ToolRegistry, script: list[Any]) -> Any:
+async def run_demo(
+    store: InMemoryRunStore, registry: ToolRegistry, script: list[Any], run_id: str = "r1"
+) -> Any:
     provider = FakeProvider(script)
-    await Runner(provider, registry, store, HARPER).run("r1", parse_protocol(PROTOCOL))
+    await Runner(provider, registry, store, HARPER).run(run_id, parse_protocol(PROTOCOL))
     return provider
 
 
@@ -181,7 +194,13 @@ def test_a_restarted_step_replaces_its_ledger_row() -> None:
 async def test_runs_ledger_shows_the_ledger(
     store: InMemoryRunStore, registry: ToolRegistry, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    await run_demo(store, registry, SCRIPT)
+    started = datetime.now(UTC)  # after the fixture's T0, so r2 is listed first
+    await store.create_run(
+        Run(id="r2", workspace="example-smb", colleague="harper", protocol="demo",
+            protocol_version=1, principal=Principal(id="alice@example.com", groups=["staff"]),
+            trigger=Trigger(kind="chat"), created_at=started, updated_at=started)
+    )  # fmt: skip
+    await run_demo(store, registry, SCRIPT, run_id="r2")
 
     @asynccontextmanager
     async def open_store() -> AsyncIterator[RunStore]:
@@ -191,9 +210,9 @@ async def test_runs_ledger_shows_the_ledger(
     invoke = asyncio.to_thread  # the command runs its own event loop
     plain = await invoke(runner.invoke, cli.app, ["runs"])
     assert plain.exit_code == 0
-    assert plain.output.startswith("r1  completed  leave_request")
+    assert plain.output.startswith("r2  completed  demo")
     assert "knowledge" not in plain.output
-    shown = await invoke(runner.invoke, cli.app, ["runs", "r1", "--ledger"])
+    shown = await invoke(runner.invoke, cli.app, ["runs", "r2", "--ledger"])
     assert shown.exit_code == 0
     lines = shown.output.splitlines()
     assert "instruction" in lines[1] and "prior_steps" in lines[1] and "knowledge" in lines[1]
