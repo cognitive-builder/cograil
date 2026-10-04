@@ -13,11 +13,34 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
-from cograil.errors import CograilError
+from cograil.errors import (
+    AudienceDenied,
+    CograilError,
+    GateRequired,
+    LoopBudgetExceeded,
+    RunEnded,
+    ToolNotFound,
+    WorkspaceError,
+)
 from cograil.observability import log_event
 
 type Emit = Callable[[str, dict[str, Any]], None]
 type Work = Callable[[Emit], Awaitable[None]]
+
+
+# Errors whose message says something the caller can act on. The message of any other
+# CograilError (a provider or tool failure) can carry connection detail, so it stays in the logs.
+_CALLER_ERRORS = (
+    AudienceDenied, GateRequired, LoopBudgetExceeded, RunEnded, ToolNotFound, WorkspaceError,
+)  # fmt: skip
+
+
+def error_body(exc: CograilError) -> dict[str, str]:
+    """The `type` and `message` a client is told about a failed request."""
+    if isinstance(exc, _CALLER_ERRORS):
+        return {"type": type(exc).__name__, "message": str(exc)}
+    log_event("api.request_failed", logging.WARNING, error=type(exc).__name__, detail=str(exc))
+    return {"type": type(exc).__name__, "message": "the request failed; see the Run's audit log"}
 
 
 def frame(event: str, data: dict[str, Any]) -> str:
@@ -28,7 +51,7 @@ async def _guarded(work: Work, emit: Emit, finish: Callable[[], None]) -> None:
     try:
         await work(emit)
     except CograilError as exc:
-        emit("error", {"type": type(exc).__name__, "message": str(exc)})
+        emit("error", error_body(exc))
     except Exception as exc:  # the stream must end whatever the work did; details stay in logs
         log_event("api.stream_failed", logging.ERROR, error=type(exc).__name__, detail=str(exc))
         emit("error", {"type": "InternalError", "message": "the request could not be completed"})

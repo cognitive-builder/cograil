@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from cograil.api.auth import current_principal
 from cograil.api.deps import CurrentPrincipal, ServicesDep
 from cograil.api.schemas import ApprovalView, DecisionRequest, RunOutcome
+from cograil.api.sse import error_body
 from cograil.errors import (
     ApprovalAlreadyDecided,
     ApprovalNotAllowed,
@@ -72,4 +73,7 @@ async def decide_approval(
     except (RunNotPaused, ApprovalAlreadyDecided, WorkspaceError) as exc:
         raise HTTPException(409, str(exc)) from None
     except CograilError as exc:
-        raise HTTPException(500, f"the run failed: {type(exc).__name__}: {exc}") from None
+        failure = error_body(exc)
+        raise HTTPException(
+            500, f"the run failed: {failure['type']}: {failure['message']}"
+        ) from None

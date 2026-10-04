@@ -165,6 +165,14 @@ def test_chat_ends_with_an_error_event_when_the_work_fails(env: Env) -> None:
     assert events[0][1]["type"] == "ProviderError"
 
 
+def test_chat_starts_nothing_outside_the_principals_audience(env: Env) -> None:
+    env.route_to("helper/record_item")  # the closed list holds no pair for this principal
+    events = env.chat(as_="outsider@example.net")
+    assert [name for name, _ in events] == ["routed", "refusal"]
+    assert events[0][1]["protocol"] is None
+    assert asyncio.run(env.store.list_runs()) == []
+
+
 def test_chat_needs_a_signed_in_principal(env: Env) -> None:
     assert env.client.post("/chat", json={"message": "hi"}).status_code == 401
 

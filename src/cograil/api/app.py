@@ -7,6 +7,7 @@ but /health and the sign-in routes needs a signed-in Principal.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -43,14 +44,17 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         yield
+        # A Run is a detached task; let the ones in flight finish before the store goes.
+        await asyncio.gather(*services.tasks, return_exceptions=True)
         if close is not None:
             await close()
 
-    app = FastAPI(title="Cograil", version=__version__, lifespan=lifespan)
-    app.state.cograil_services = Services(
+    services = Services(
         workspace, path, store,
         classifier=classifier, provider_for=provider_for, open_registry=open_registry,
     )  # fmt: skip
+    app = FastAPI(title="Cograil", version=__version__, lifespan=lifespan)
+    app.state.cograil_services = services
     install_auth(app, auth, workspace)
     for router in (chat.router, runs.router, approvals.router, audit.router):
         app.include_router(router)
