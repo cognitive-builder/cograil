@@ -1,9 +1,9 @@
 """End to end for issue #10: the example leave_request Protocol runs to completion.
 
-The real example workspace, its parsed Protocol, the mock HRIS pack and the runner, with
-FakeProvider in place of the model. Two Tools have no kind built yet, so they stand in:
-decide.approval_routing (decision tables) and notify.send (its own issue). The approved
-Approval stands in for `cograil approve` (issue #13).
+The real example workspace, its parsed Protocol, the mock HRIS and notify packs and the
+runner, with FakeProvider in place of the model. One Tool has no kind built yet, so it stands
+in: decide.approval_routing (decision tables). The approved Approval stands in for
+`cograil approve` (issue #13).
 """
 
 from pathlib import Path
@@ -21,7 +21,7 @@ from cograil.workspace import load_workspace
 pytestmark = pytest.mark.e2e
 
 EXAMPLE = Path(__file__).parents[1] / "workspaces/example-smb"
-STAND_INS = {"decide.approval_routing", "notify.send"}
+STAND_INS = {"decide.approval_routing"}
 LEAVE = {
     "employee": "alice",
     "start": "2026-11-02",
@@ -49,9 +49,7 @@ SCRIPT = [
 
 
 async def stand_in(args: dict[str, Any]) -> dict[str, Any]:
-    if "duration_days" in args:
-        return {"approver_tier": "manager", "requires_hr": False, "rule": "default"}
-    return {"sent": True}
+    return {"approver_tier": "manager", "requires_hr": False, "rule": "default"}
 
 
 async def test_leave_request_runs_to_completion(store: InMemoryRunStore) -> None:
