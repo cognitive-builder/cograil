@@ -45,7 +45,7 @@ may happen. State lives in one place, behind the `RunStore` interface.
 
 ## Request path
 
-A Run arrives on the CLI. The web and Slack channels are not built yet (issue #108); when
+A Run arrives on the CLI. The web and Slack channels are not built yet (issues #17, #18, #27); when
 they are, they enter at the same place the CLI does: a loaded workspace, a provider, a store,
 a `Runner`.
 
@@ -106,7 +106,7 @@ edits, and a database trigger rejects UPDATE, DELETE and TRUNCATE.
 
 ## Not built yet
 
-- The web and Slack channels, and the API in front of them (issue #108). The CLI is the only
+- The web and Slack channels, and the API in front of them (issues #17, #18, #27). The CLI is the only
   entry point, and `--as` is not authenticated.
 - The `knowledge`, `directory` and `decision` Tool kinds, and with them retrieval's ACL
   pre-filter and decision tables. `build_registry` builds `python`, `rest` and `mcp`.
