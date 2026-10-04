@@ -8,7 +8,14 @@ import yaml
 
 from cograil.domain import Effort, Step, Tool
 from cograil.errors import ProviderError
-from cograil.providers.base import Message, Plan, PlannedToolCall, StepComplete, Usage
+from cograil.providers.base import (
+    SCREEN_STEP,
+    Message,
+    Plan,
+    PlannedToolCall,
+    StepComplete,
+    Usage,
+)
 
 
 class FakeCall:
@@ -32,10 +39,21 @@ class FakeCall:
 
 
 class FakeProvider:
-    def __init__(self, script: Sequence[Plan], model: str = "fake-model") -> None:
+    """Replays `script` for the Steps' calls, in order, recording each in `calls`.
+
+    The injection screen's calls (`SCREEN_STEP`, injection.py) are answered from `screens`
+    instead and recorded in `screened`, so a script holds only the Steps' own plans. Once
+    `screens` runs out, the screen is told `none` at no cost: a model that finds nothing.
+    """
+
+    def __init__(
+        self, script: Sequence[Plan], model: str = "fake-model", screens: Sequence[Plan] = ()
+    ) -> None:
         self._script = list(script)
+        self._screens = list(screens)
         self.model = model
         self.calls: list[FakeCall] = []
+        self.screened: list[FakeCall] = []
 
     async def plan(
         self,
@@ -47,7 +65,13 @@ class FakeProvider:
         effort: Effort | None = None,
         prefix: str = "",
     ) -> Plan:
-        self.calls.append(FakeCall(step, list(context), list(tools), model, effort, prefix))
+        made = FakeCall(step, list(context), list(tools), model, effort, prefix)
+        if step.name == SCREEN_STEP:
+            self.screened.append(made)
+            if len(self.screened) > len(self._screens):
+                return scripted("none", input_tokens=0, output_tokens=0)
+            return self._screens[len(self.screened) - 1]
+        self.calls.append(made)
         if len(self.calls) > len(self._script):
             raise ProviderError(f"FakeProvider script exhausted after {len(self._script)} plans")
         return self._script[len(self.calls) - 1]

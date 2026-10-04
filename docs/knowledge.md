@@ -153,7 +153,7 @@ The Tool returns the most similar Chunks first.
 - `passage` is the Chunk's text, word for word, so an answer can cite it.
 - `score` is the cosine similarity, rounded to 4 places. Higher is closer.
 
-The results reach the model as data, never as instructions.
+The results reach the model as data, never as instructions. See the [threat model](threat-model.md) for how instruction-like text in a passage is stripped or withheld, and where that stops.
 
 ### Embeddings
 

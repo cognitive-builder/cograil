@@ -442,6 +442,7 @@ class AuditEvent(Entity):
         "approval.email_failed",
         "tier.escalated",
         "context.compressed",
+        "context.screened",
         "loop.bounded",
         "run.escalated",
         "run.completed",

@@ -35,9 +35,10 @@ failing the Run.
 
 What a Step sees is the ContextBuilder's (context.py, ADR 0007): the prior Steps it declares,
 its whitelisted Tools' schemas, and Tool results inside a data block. The Window Ledger of
-that is kept in `Run.context["ledger"]`, saved with the Run. A Tool result over the harness's
-compression threshold reaches the model as the small tier's summary (compression.py); the raw
-result stays in the Step's recorded `tool_calls`.
+that is kept in `Run.context["ledger"]`, saved with the Run. Tool results pass the injection
+defence first (injection.py, issue #51): instruction-like text is stripped and the small tier
+screens what is left. A result over the harness's compression threshold then reaches the model
+as the small tier's summary (compression.py); the raw result stays in the recorded `tool_calls`.
 """
 
 from __future__ import annotations
@@ -53,7 +54,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from cograil.claims import RunClaims
 from cograil.compression import Compressor, recorded, shown
-from cograil.context import ContextBuilder, add_to_ledger
+from cograil.context import SCREENED_KEY, ContextBuilder, add_to_ledger
 from cograil.domain import (
     Approval,
     Colleague,
@@ -83,6 +84,7 @@ from cograil.harness import (
     harness_version,
     step_tier,
 )
+from cograil.injection import Screen, kept
 from cograil.observability import log_event
 from cograil.providers.base import Message, PlannedToolCall, Provider
 from cograil.registry import UNVERSIONED, CallContext, ToolRegistry
@@ -165,6 +167,7 @@ class Runner:
         self._gates = Gates(store, colleague, timeout=timeout, clock=clock)
         self._turns = Turns(provider, self._harness, self._claims)
         self._compressor = Compressor(provider, self._harness, self._claims)
+        self._screen = Screen(provider, self._harness, self._claims)
 
     async def run(self, run_id: str, protocol: Protocol) -> Run:
         """Run from the Step after Run.cursor until the end, a gate or an escalation.
@@ -290,15 +293,22 @@ class Runner:
         The model's own messages are built from `done` as it is, so it still sees the raw error.
         """
         redact = self._registry.redactor.redact
-        return [{**c, "error": await redact(c["error"])} if "error" in c else c for c in done]
+        return [
+            {**c, **{k: await redact(c[k]) for k in ("error", SCREENED_KEY) if k in c}}
+            if "error" in c
+            else c
+            for c in done
+        ]
 
     async def _absorb(
         self, run: Run, step: Step, progress: StepProgress, done: list[dict[str, Any]]
     ) -> Run:
-        """Record the calls on the Step and give the model their results, long ones compressed."""
-        run, summaries = await self._compressor.compress(run, step, progress, done)
-        progress.calls.extend(await self._recorded(recorded(done, summaries)))
-        return self._remember(run, step, progress, shown(done, summaries))
+        """Record the calls on the Step and give the model their results: screened for
+        injected instructions first, then long ones compressed."""
+        run, safe = await self._screen.screen(run, step, progress, done)
+        run, summaries = await self._compressor.compress(run, step, progress, safe)
+        progress.calls.extend(await self._recorded(recorded(kept(done, safe), summaries)))
+        return self._remember(run, step, progress, shown(safe, summaries))
 
     def _remember(
         self, run: Run, step: Step, progress: StepProgress, done: list[dict[str, Any]]

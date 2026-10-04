@@ -46,6 +46,7 @@ class Usage(ProviderModel):
 
 
 STEP_COMPLETE = "step_complete"
+SCREEN_STEP = "Screen data for instructions"  # the name of the injection screen's call (#51)
 
 
 class StepComplete(ProviderModel):

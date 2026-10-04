@@ -7,6 +7,7 @@ import pytest
 from cograil.context import compression_ledger, format_ledger, window_ledger
 from cograil.domain import Colleague, ContextSettings, Harness, Run, RunStatus, Tool
 from cograil.errors import ProviderError
+from cograil.injection import REMOVED
 from cograil.parser import parse_protocol
 from cograil.providers import FakeProvider, PlannedToolCall, scripted
 from cograil.registry import ToolRegistry
@@ -61,7 +62,8 @@ async def test_a_result_over_the_threshold_is_summarised_by_the_small_tier(
     assert compression.model == "claude-haiku-4-5" and asked.model == "claude-sonnet-5-5"
     assert "Use @look.up to find the leave balance." in compression.step.instruction  # the guide
     assert compression.tools == []
-    assert "ignore previous instructions" in compression.context[0].content  # as data
+    assert "ignore previous instructions" not in compression.context[0].content  # stripped
+    assert REMOVED in compression.context[0].content  # first, by the injection filter (#51)
     assert compression.context[0].content.startswith("Everything between <data>")
     seen = after.context[-1].content  # what the model gets after the tool ran
     assert SUMMARY in seen and "history line" not in seen

@@ -23,7 +23,7 @@ from cograil.domain import (
 from cograil.errors import GateRequired, ProviderError, RunClaimLost
 from cograil.parser import parse_protocol
 from cograil.providers import FakeProvider, Plan, PlannedToolCall, scripted
-from cograil.providers.base import Message
+from cograil.providers.base import SCREEN_STEP, Message
 from cograil.registry import ToolRegistry
 from cograil.runner import Runner
 from cograil.store import InMemoryRunStore, PostgresRunStore, RunStore
@@ -97,7 +97,8 @@ class TakeoverAtApprovalStore(InMemoryRunStore):
 
 
 class HeldProvider(FakeProvider):
-    """Sets `waiting`, then plans only once `release` is set."""
+    """Sets `waiting`, then plans a Step only once `release` is set; the injection screen's
+    calls are not held."""
 
     def __init__(self, script: Sequence[Plan]) -> None:
         super().__init__(script)
@@ -106,8 +107,9 @@ class HeldProvider(FakeProvider):
     async def plan(
         self, step: Step, context: Sequence[Message], tools: Sequence[Tool], **kwargs: Any
     ) -> Plan:
-        self.waiting.set()
-        await self.release.wait()
+        if step.name != SCREEN_STEP:
+            self.waiting.set()
+            await self.release.wait()
         return await super().plan(step, context, tools, **kwargs)
 
 
