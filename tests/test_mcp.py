@@ -19,8 +19,10 @@ SERVER = Path(__file__).parent / "fixtures" / "mcp" / "calendar_server.py"
 STDIO = McpServer(transport="stdio", command=sys.executable, args=[str(SERVER)])
 
 
-def calendar(server: McpServer = STDIO, scope: Literal["read", "write"] = "write") -> Workspace:
-    entry = Tool(name="calendar", kind="mcp", scope=scope, mcp=server)
+def calendar(
+    server: McpServer = STDIO, scope: Literal["read", "write"] = "write", confirm: bool = True
+) -> Workspace:
+    entry = Tool(name="calendar", kind="mcp", scope=scope, confirm_before_write=confirm, mcp=server)
     return Workspace(name="ws", colleagues=[], protocols=[], tools=[entry])
 
 
@@ -46,17 +48,27 @@ async def test_mcp_tools_are_listed_under_the_prefix_and_invoked(
 
 
 @pytest.mark.parametrize(
-    ("read_tools", "add_days_scope"),
-    [([], "write"), (["add_days"], "read")],
-    ids=["default", "opt-out"],
+    ("scope", "confirm", "read_tools", "fail_confirms", "add_days_scope"),
+    [
+        ("read", True, [], True, "write"),
+        ("read", False, [], True, "write"),
+        ("read", True, ["add_days"], True, "read"),
+        ("write", False, [], False, "write"),
+    ],
+    ids=["read-entry", "read-entry-no-confirm", "read-tools-opt-out", "write-entry-waiver"],
 )
 async def test_read_entry_tools_stay_gated_unless_named_in_read_tools(
-    read_tools: list[str], add_days_scope: str, store: InMemoryRunStore
+    scope: Literal["read", "write"],
+    confirm: bool,
+    read_tools: list[str],
+    fail_confirms: bool,
+    add_days_scope: str,
+    store: InMemoryRunStore,
 ) -> None:
-    server = STDIO.model_copy(update={"read_tools": read_tools})
-    async with await build_registry(calendar(server, "read"), store, mcp_client=in_memory) as reg:
+    ws = calendar(STDIO.model_copy(update={"read_tools": read_tools}), scope, confirm)
+    async with await build_registry(ws, store, mcp_client=in_memory) as reg:
         fail, add_days = reg.get("calendar.fail"), reg.get("calendar.add_days")
-    assert (fail.scope, fail.confirm_before_write) == ("write", True)  # pauses for approval
+    assert (fail.scope, fail.confirm_before_write) == ("write", fail_confirms)
     assert add_days.scope == add_days_scope
 
 

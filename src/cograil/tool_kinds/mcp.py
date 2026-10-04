@@ -1,9 +1,11 @@
 """kind=mcp: one Tool entry names an MCP server; its tools register under that name.
 
 An entry `github` whose server lists `create_issue` yields the Tool `github.create_issue`,
-with the server's input schema as args_schema and the entry's confirm_before_write.
+with the server's input schema as args_schema.
 Each server tool is scope=write unless the entry's `mcp.read_tools` names it; the entry's
-own scope is not inherited, because one server can expose reads and writes alike.
+own scope is not inherited, because one server can expose reads and writes alike. The
+entry's `confirm_before_write: false` is honoured only on a `scope: write` entry, so a read
+entry can never leave an unlisted server tool ungated.
 Needs the `mcp` extra (fastmcp). Server output is returned as data, never as instructions.
 """
 
@@ -67,13 +69,15 @@ class McpToolset:
             raise ToolConfigError(f"{self._entry.name}: read_tools not on the server: {unknown}")
 
     def _as_tool(self, name: str, description: str | None, schema: dict[str, Any]) -> Tool:
-        scope = "read" if name in self._read_tools else "write"
+        read = name in self._read_tools
+        unacknowledged_write = not read and self._entry.scope == "read"
         return self._entry.model_copy(
             update={
                 "name": f"{self._entry.name}.{name}",
                 "description": description or "",
                 "args_schema": schema,
-                "scope": scope,
+                "scope": "read" if read else "write",
+                "confirm_before_write": self._entry.confirm_before_write or unacknowledged_write,
             }
         )
 

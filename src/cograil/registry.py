@@ -4,8 +4,8 @@
 failure), calls the Tool, then records a ToolCall and a `tool.called` AuditEvent through
 the RunStore, whether the call succeeded or not. A scope=write Tool also gets a
 `tool.started` AuditEvent just before it runs, so a crash mid-write still leaves a record.
-Whitelists and gates are the runner's
-job; the registry only answers "what is this Tool and what did it do".
+Whitelists and gates are the runner's job; the registry only answers "what is this Tool
+and what did it do".
 
 `build_registry` builds the python, rest and mcp kinds of a Workspace. The knowledge,
 directory and decision kinds register themselves with `register` from their own modules.

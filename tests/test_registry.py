@@ -177,3 +177,14 @@ async def test_write_tool_that_crashes_mid_call_leaves_tool_started(
         "alice@example.com",
         {"tool": "hris.submit_leave", "step": 2},
     )
+
+
+async def test_write_tool_with_invalid_args_never_starts(
+    store: InMemoryRunStore, ctx: CallContext
+) -> None:
+    registry = ToolRegistry(store)
+    tool = Tool(name="hris.submit_leave", kind="python", scope="write", args_schema=EMPLOYEE)
+    registry.register(tool, _noop)
+    with pytest.raises(ToolArgumentError):
+        await registry.invoke("hris.submit_leave", {"employee": 1}, ctx)
+    assert [e.kind for e in await store.list_audit_events("r1")] == ["tool.called"]
