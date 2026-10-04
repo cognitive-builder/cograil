@@ -54,6 +54,7 @@ class RunClaims:
         return claimed
 
     async def save(self, run: Run, **changes: Any) -> Run:
+        """Save the Run with these changes; RunClaimLost if another execution holds it."""
         run = run.model_copy(update={**changes, "updated_at": self._clock()})
         await self._store.update_run(run)
         return run
