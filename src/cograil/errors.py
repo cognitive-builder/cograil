@@ -35,3 +35,7 @@ class LoopBudgetExceeded(CograilError):
 
 class DecisionError(CograilError):
     """A decision table is invalid or no rule matched under hit_policy first."""
+
+
+class ProviderError(CograilError):
+    """A model provider call failed, or a FakeProvider script ran out."""
