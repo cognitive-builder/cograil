@@ -51,6 +51,6 @@ jobs:
           # Edit and Write are granted so the run can change files (without them every write was denied, #9); gh is
           # limited to reading, commenting and opening issues and pull requests: no merge, repo or api (#63).
           claude_args: |
-            --max-turns 40
+            --max-turns 70
             --append-system-prompt "You are the @claude GitHub runner for lane:3 issues: the lane check in implement-issue.md passes here, so continue with the task."
-            --allowedTools "Edit,Write,Bash(git:*),Bash(scripts/check.sh:*),Bash(uv:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh issue create:*),Bash(gh issue comment:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh pr diff:*),Bash(gh pr comment:*)"
+            --allowedTools "Edit,Write,Bash(git:*),Bash(scripts/check.sh:*),Bash(uv:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(grep:*),Bash(wc:*),Bash(diff:*),Bash(sort:*),Bash(mkdir:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh issue create:*),Bash(gh issue comment:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh pr diff:*),Bash(gh pr comment:*)"

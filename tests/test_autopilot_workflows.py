@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
     ("name", "needles"),
     [
         ("auto-merge.yml", ["gh pr merge --auto --squash", "gh pr merge --disable-auto"]),
-        ("lane3-implement.yml", ["anthropics/claude-code-action@v1", "--max-turns 40"]),
+        ("lane3-implement.yml", ["anthropics/claude-code-action@v1", "--max-turns 70"]),
     ],
 )
 def test_workflow_yaml_parses(name: str, needles: list[str]) -> None:
