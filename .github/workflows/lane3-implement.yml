@@ -28,6 +28,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      # The run executes scripts/check.sh, which shells out to `uv run`; install uv and the dev
+      # environment the way ci.yml does (#83).
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --all-extras --dev
       - name: Run Claude Code
         uses: anthropics/claude-code-action@v1
         env:
