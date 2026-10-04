@@ -16,7 +16,7 @@ from sqlalchemy import (
     Table,
     Text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 
 metadata = MetaData()
 
@@ -82,4 +82,16 @@ audit_events = Table(
     Column("kind", Text, nullable=False),
     Column("detail", JSONB, nullable=False),
     Index("ix_audit_events_run_id", "run_id", "id"),
+)
+
+chunks = Table(
+    "chunks",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("source", Text, nullable=False),
+    Column("source_uri", Text, nullable=False),
+    Column("text", Text, nullable=False),
+    Column("acl_groups", ARRAY(Text), nullable=False),
+    Index("ix_chunks_source", "source"),
+    Index("ix_chunks_acl_groups", "acl_groups", postgresql_using="gin"),
 )

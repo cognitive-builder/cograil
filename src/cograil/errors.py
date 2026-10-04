@@ -70,6 +70,10 @@ class DecisionError(CograilError):
     """A decision table is invalid or no rule matched under hit_policy first."""
 
 
+class KnowledgeSourceError(CograilError):
+    """A KnowledgeSource folder, document or ACL file cannot be loaded."""
+
+
 class ProviderError(CograilError):
     """A model provider call failed, or a FakeProvider script ran out."""
 
