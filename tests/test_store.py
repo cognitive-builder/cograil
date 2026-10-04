@@ -16,6 +16,7 @@ from cograil.errors import (
     ApprovalAlreadyDecided,
     ApprovalNotFound,
     ApprovalNotSpendable,
+    ApprovalRunMismatch,
     DuplicateRecord,
     RunClaimLost,
     RunNotFound,
@@ -167,7 +168,10 @@ async def test_approval_is_decided_once(store: RunStore) -> None:
 
 
 async def test_deciding_an_approval_saves_its_run_with_it(store: RunStore) -> None:
-    """Issue #95: the decision and the Run's save happen together, or neither does."""
+    """Issue #95: the decision and the Run's save happen together, or neither does.
+
+    The failing half now shows the #105 pairing guard: another Run decides nothing."""
+
     run = await stored_run(store)
     token = f"tok-{uuid.uuid4().hex}"
     await store.create_approval(
@@ -177,8 +181,8 @@ async def test_deciding_an_approval_saves_its_run_with_it(store: RunStore) -> No
     await store.update_run(paused)
     resumed = paused.model_copy(update={"status": RunStatus.running, "updated_at": T0})
 
-    lost = resumed.model_copy(update={"id": "missing"})  # the save fails after the decision
-    with pytest.raises(RunNotFound):
+    lost = resumed.model_copy(update={"id": "missing"})  # not this Approval's Run (#105)
+    with pytest.raises(ApprovalRunMismatch):
         await store.decide_approval(token, "approved", T0, run=lost)
     assert (await store.get_approval(token)).decision == "pending"
     assert await store.get_run(run.id) == paused
@@ -213,6 +217,31 @@ async def test_deciding_an_approval_writes_its_audit_events_with_it(store: RunSt
     await store.decide_approval(token, "approved", T0, run=resumed, events=[event])
     assert await store.get_run(run.id) == resumed
     assert await store.list_audit_events(run.id) == [event]
+
+
+async def test_an_approval_is_decided_only_with_its_own_run(store: RunStore) -> None:
+    """Issue #105: an Approval decided with another Run's snapshot changes nothing."""
+    mine, other = make_run(), make_run()
+    await store.create_run(mine)
+    await store.create_run(other)
+    token = f"tok-{uuid.uuid4().hex}"
+    await store.create_approval(
+        Approval(token=token, run_id=mine.id, step=1, tool="hris.book", args={}, approver="bob")
+    )
+    resumed = other.model_copy(update={"status": RunStatus.running, "updated_at": T0})
+    event = AuditEvent(
+        run_id=other.id, at=T0, principal_id="bob", kind="gate.resumed", detail={"token": token}
+    )
+    with pytest.raises(ApprovalRunMismatch):
+        await store.decide_approval(token, "approved", T0, run=resumed, events=[event])
+    assert (await store.get_approval(token)).decision == "pending"
+    assert await store.get_run(mine.id) == mine
+    assert await store.get_run(other.id) == other
+    assert await store.list_audit_events(other.id) == []
+
+    decided = await store.decide_approval(token, "approved", T0, run=mine)
+    assert decided.decision == "approved"
+    assert await store.get_run(other.id) == other
 
 
 async def test_run_is_claimed_once_even_by_concurrent_claims(store: RunStore) -> None:

@@ -114,5 +114,9 @@ class ApprovalNotSpendable(StoreError):
     """An Approval is spent once, and only after it was approved."""
 
 
+class ApprovalRunMismatch(StoreError):
+    """The Approval belongs to another Run than the one it is decided with."""
+
+
 class RunClaimLost(StoreError):
     """Another execution claimed the Run since this one read it; this one must stop."""
