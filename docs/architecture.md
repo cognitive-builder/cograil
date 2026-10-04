@@ -51,8 +51,8 @@ A Run arrives on the CLI. The web and Slack channels are not built yet (issues #
 they are, they enter at the same place the CLI does: a loaded workspace, a provider, a store,
 a `Runner`.
 
-1. `cograil run workspaces/example-smb --protocol leave_request --as alice@example.com --message "Annual leave from 2026-11-02 to 2026-11-04, please"`.
-   The message is required.
+1. `cograil run workspaces/example-smb --protocol leave_request --as alice@example.com
+   --message "Annual leave from 2026-11-02 to 2026-11-04, please"`. The message is required.
 2. `load_workspace` reads the pack. Every failure is a `WorkspaceError` naming the file;
    `validate_workspace` reports every problem at once rather than the first.
 3. The Protocol is picked by name, then the Colleague whose `protocols` list names it.

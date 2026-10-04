@@ -113,8 +113,9 @@ chat message; `cograil run` needs `--message` and refuses to start without one. 
 the principal's id only, never their groups: who may do what is decided in code, not in the
 prompt. Every step sees the input, like a ticket, so the leave request knows the dates, the leave
 type and who is asking. The message is the user's own data. It is kept raw on the run, because a
-resumed run needs it again, and it is never written to an AuditEvent or a log line. A message that tries to instruct the model changes nothing: the tool
-whitelist and the gates are enforced by the runner, whatever the prompt says.
+resumed run needs it again, and it is never written to an AuditEvent or a log line. A message
+that tries to instruct the model changes nothing: the tool whitelist and the gates are enforced by
+the runner, whatever the prompt says.
 
 A step sees the outputs of the steps it declares with `(context: steps 1, 2)`. Without a
 declaration it sees the previous step only (`context.default_prior_steps` in `harness.yaml`, 1 by

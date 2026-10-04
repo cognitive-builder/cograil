@@ -114,8 +114,15 @@ class Services:
         protocol, colleague = self.pick(routing.protocol, routing.colleague)
         check_audience(self.workspace, colleague, protocol, principal)
         async with self.runner(protocol, colleague, emit) as (runner, store):
-            run = received_run(self.workspace.name, self.path, protocol, colleague, principal,
-                               channel=CHANNEL, message=message)  # fmt: skip
+            run = received_run(
+                self.workspace.name,
+                self.path,
+                protocol,
+                colleague,
+                principal,
+                channel=CHANNEL,
+                message=message,
+            )
             await store.create_run(run)
             emit("run", {"run_id": run.id})
             await store.append_audit_event(_classified(run, routing))
