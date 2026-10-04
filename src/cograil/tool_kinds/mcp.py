@@ -1,7 +1,9 @@
 """kind=mcp: one Tool entry names an MCP server; its tools register under that name.
 
 An entry `github` whose server lists `create_issue` yields the Tool `github.create_issue`,
-with the server's input schema as args_schema and the entry's scope and gate.
+with the server's input schema as args_schema and the entry's confirm_before_write.
+Each server tool is scope=write unless the entry's `mcp.read_tools` names it; the entry's
+own scope is not inherited, because one server can expose reads and writes alike.
 Needs the `mcp` extra (fastmcp). Server output is returned as data, never as instructions.
 """
 
@@ -38,8 +40,11 @@ class McpToolset:
     """The tools of one MCP server, listed once and invoked through one client."""
 
     def __init__(self, entry: Tool, client: Client[Any]) -> None:
+        if entry.mcp is None:
+            raise ToolConfigError(f"{entry.name}: kind=mcp needs an mcp block")
         self._entry = entry
         self._client = client
+        self._read_tools = frozenset(entry.mcp.read_tools)
 
     async def list_tools(self) -> list[tuple[Tool, Invoke]]:
         try:
@@ -47,6 +52,7 @@ class McpToolset:
                 listed = await self._client.list_tools()
         except Exception as exc:
             raise ToolConfigError(f"{self._entry.name}: cannot list MCP tools: {exc}") from exc
+        self._check_read_tools({t.name for t in listed})
         return [
             (self._as_tool(t.name, t.description, t.input_schema), self._invoker(t.name))
             for t in listed
@@ -55,12 +61,19 @@ class McpToolset:
     async def aclose(self) -> None:
         await self._client.close()  # type: ignore[no-untyped-call]
 
+    def _check_read_tools(self, listed: set[str]) -> None:
+        unknown = sorted(self._read_tools - listed)
+        if unknown:
+            raise ToolConfigError(f"{self._entry.name}: read_tools not on the server: {unknown}")
+
     def _as_tool(self, name: str, description: str | None, schema: dict[str, Any]) -> Tool:
+        scope = "read" if name in self._read_tools else "write"
         return self._entry.model_copy(
             update={
                 "name": f"{self._entry.name}.{name}",
                 "description": description or "",
                 "args_schema": schema,
+                "scope": scope,
             }
         )
 

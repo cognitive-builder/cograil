@@ -1,5 +1,6 @@
 """Registry tests for issue #8: python kind, argument validation, ToolCall recording."""
 
+import asyncio
 import sys
 import textwrap
 from pathlib import Path
@@ -149,4 +150,30 @@ async def test_every_invoke_records_tool_call_and_audit_event(
         "tool.called",
         "alice@example.com",
         name,
+    )
+
+
+@pytest.mark.parametrize(
+    ("crash", "raised"),
+    [(RuntimeError("hris down"), ToolExecutionError), (asyncio.CancelledError(), None)],
+    ids=["raises", "cancelled"],
+)
+async def test_write_tool_that_crashes_mid_call_leaves_tool_started(
+    crash: BaseException,
+    raised: type[BaseException] | None,
+    store: InMemoryRunStore,
+    ctx: CallContext,
+) -> None:
+    async def invoke(args: dict[str, Any]) -> None:
+        raise crash
+
+    registry = ToolRegistry(store)
+    registry.register(Tool(name="hris.submit_leave", kind="python", scope="write"), invoke)
+    with pytest.raises(raised or type(crash)):
+        await registry.invoke("hris.submit_leave", {}, ctx)
+    first, *_ = await store.list_audit_events("r1")
+    assert (first.kind, first.principal_id, first.detail) == (
+        "tool.started",
+        "alice@example.com",
+        {"tool": "hris.submit_leave", "step": 2},
     )

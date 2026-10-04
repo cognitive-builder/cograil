@@ -3,7 +3,7 @@
 import runpy
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from fastmcp import Client
@@ -19,8 +19,8 @@ SERVER = Path(__file__).parent / "fixtures" / "mcp" / "calendar_server.py"
 STDIO = McpServer(transport="stdio", command=sys.executable, args=[str(SERVER)])
 
 
-def calendar(server: McpServer = STDIO) -> Workspace:
-    entry = Tool(name="calendar", kind="mcp", scope="write", mcp=server)
+def calendar(server: McpServer = STDIO, scope: Literal["read", "write"] = "write") -> Workspace:
+    entry = Tool(name="calendar", kind="mcp", scope=scope, mcp=server)
     return Workspace(name="ws", colleagues=[], protocols=[], tools=[entry])
 
 
@@ -43,6 +43,29 @@ async def test_mcp_tools_are_listed_under_the_prefix_and_invoked(
         with pytest.raises(ToolExecutionError, match="calendar offline"):
             await registry.invoke("calendar.fail", {}, ctx)
     assert len(await store.list_tool_calls("r1")) == 3
+
+
+@pytest.mark.parametrize(
+    ("read_tools", "add_days_scope"),
+    [([], "write"), (["add_days"], "read")],
+    ids=["default", "opt-out"],
+)
+async def test_read_entry_tools_stay_gated_unless_named_in_read_tools(
+    read_tools: list[str], add_days_scope: str, store: InMemoryRunStore
+) -> None:
+    server = STDIO.model_copy(update={"read_tools": read_tools})
+    async with await build_registry(calendar(server, "read"), store, mcp_client=in_memory) as reg:
+        fail, add_days = reg.get("calendar.fail"), reg.get("calendar.add_days")
+    assert (fail.scope, fail.confirm_before_write) == ("write", True)  # pauses for approval
+    assert add_days.scope == add_days_scope
+
+
+async def test_read_tools_naming_a_missing_server_tool_is_a_config_error(
+    store: InMemoryRunStore,
+) -> None:
+    server = STDIO.model_copy(update={"read_tools": ["add_dayz"]})
+    with pytest.raises(ToolConfigError, match="add_dayz"):
+        await build_registry(calendar(server), store, mcp_client=in_memory)
 
 
 def test_http_server_uses_streamable_http_transport() -> None:

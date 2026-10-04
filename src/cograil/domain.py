@@ -62,12 +62,17 @@ class RestEndpoint(Entity):
 
 
 class McpServer(Entity):
-    """An MCP server whose tools are registered as `<Tool.name>.<server tool name>`."""
+    """An MCP server whose tools are registered as `<Tool.name>.<server tool name>`.
+
+    Every server tool is scope=write unless read_tools names it: the entry's scope is not
+    inherited, so a server that also exposes writes is never under-gated.
+    """
 
     transport: Literal["stdio", "http"]
     command: str | None = None
     args: list[str] = Field(default_factory=list)
     url: str | None = None
+    read_tools: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check_transport(self) -> McpServer:
@@ -215,6 +220,7 @@ class AuditEvent(Entity):
     principal_id: str
     kind: Literal[
         "run.started",
+        "tool.started",
         "tool.called",
         "decision.evaluated",
         "gate.paused",
