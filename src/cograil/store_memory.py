@@ -8,7 +8,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 
-from cograil.domain import Approval, ApprovalDecision, AuditEvent, MonthUsage, Run, ToolCall
+from cograil.domain import (
+    BUDGET_ALERT_KIND,
+    Approval,
+    ApprovalDecision,
+    AuditEvent,
+    MonthUsage,
+    Run,
+    ToolCall,
+)
 from cograil.errors import (
     ApprovalAlreadyDecided,
     ApprovalNotFound,
@@ -63,7 +71,7 @@ class InMemoryRunStore:
         alerts = sum(
             1
             for e in self._audit
-            if e.kind == "budget.alerted" and e.run_id in mine and since <= e.at < until
+            if e.kind == BUDGET_ALERT_KIND and e.run_id in mine and since <= e.at < until
         )
         return MonthUsage(spend_usd=spend, alerts=alerts)
 

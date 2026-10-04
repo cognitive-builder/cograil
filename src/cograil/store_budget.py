@@ -7,10 +7,8 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from cograil.domain import MonthUsage
+from cograil.domain import BUDGET_ALERT_KIND, MonthUsage
 from cograil.store_tables import audit_events, runs
-
-ALERT_KIND = "budget.alerted"
 
 
 async def month_usage(
@@ -25,7 +23,7 @@ async def month_usage(
         .select_from(audit_events.join(runs, audit_events.c.run_id == runs.c.id))
         .where(
             runs.c.workspace == workspace,
-            audit_events.c.kind == ALERT_KIND,
+            audit_events.c.kind == BUDGET_ALERT_KIND,
             audit_events.c.at >= since,
             audit_events.c.at < until,
         )
