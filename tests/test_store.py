@@ -97,6 +97,7 @@ async def test_run_round_trips_and_update_saves_progress(store: RunStore) -> Non
             "context": {"days": 3, "approved": False},
             "cost_usd": 0.0125,
             "harness_version": "1.0.0+3f2a9c1b7d4e",
+            "tool_pack_version": "9e1c" * 16,
             "updated_at": T0 + timedelta(minutes=1),
         }
     )

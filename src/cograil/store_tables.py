@@ -33,6 +33,7 @@ runs = Table(
     Column("protocol", Text, nullable=False),
     Column("protocol_version", Integer, nullable=False),
     Column("harness_version", Text, nullable=False),
+    Column("tool_pack_version", Text, nullable=False),
     Column("principal", JSONB, nullable=False),
     Column("principal_id", Text, nullable=False),
     Column("trigger", JSONB, nullable=False),

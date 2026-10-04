@@ -19,7 +19,15 @@ from cograil.errors import (
     RunNotFound,
 )
 
-RUN_MUTABLE = ("status", "cursor", "context", "cost_usd", "harness_version", "updated_at")
+RUN_MUTABLE = (
+    "status",
+    "cursor",
+    "context",
+    "cost_usd",
+    "harness_version",
+    "tool_pack_version",
+    "updated_at",
+)
 
 
 class InMemoryRunStore:

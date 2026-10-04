@@ -60,8 +60,9 @@ class RunStore(Protocol):
         ...
 
     async def update_run(self, run: Run) -> None:
-        """Save status, cursor, context, cost_usd, harness_version and updated_at; identity
-        fields never change. The runner stamps harness_version when it runs the Run.
+        """Save status, cursor, context, cost_usd, harness_version, tool_pack_version and
+        updated_at; identity fields never change. The runner stamps both versions when it runs
+        the Run.
 
         Saves only while the stored claim is still `run.claim`; otherwise RunClaimLost."""
         ...

@@ -1,7 +1,8 @@
 """Runner tests for issue #10: whitelist, gates, context, cursor, bounds, invoke's only caller.
 
 Pausing, resuming and escalating at a gate are in test_gates.py (issue #11). The bounded
-step loop, step_complete and the harness version stamp are issue #44.
+step loop, step_complete and the harness version stamp are issue #44; the tool pack version
+stamp is #110.
 """
 
 import ast
@@ -350,17 +351,20 @@ async def test_a_step_ends_only_on_step_complete(
     assert (record["output"], len(record["tool_calls"])) == ("told alice", 1)
 
 
-async def test_the_harness_version_is_stamped_on_the_run(
+async def test_the_harness_and_tool_pack_versions_are_stamped_on_the_run(
     store: InMemoryRunStore, registry: ToolRegistry, protocol: Protocol
 ) -> None:
     await start_at(store, 2)
     harness = Harness(version="1.2.3", loop=LoopBounds(max_turns=4))
+    registry.tool_pack_version = "pack-1"
     await run(store, registry, protocol, NOTIFIED, harness)
     stored = await store.get_run("r1")
     assert stored.harness_version == harness_version(harness)
     assert stored.harness_version.startswith("1.2.3+")
+    assert stored.tool_pack_version == "pack-1"
     started = (await store.list_audit_events("r1"))[0]
     assert started.detail["harness_version"] == stored.harness_version
+    assert started.detail["tool_pack_version"] == "pack-1"
 
 
 def test_the_runner_is_the_only_caller_of_registry_invoke() -> None:

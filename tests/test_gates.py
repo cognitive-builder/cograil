@@ -2,7 +2,7 @@
 
 The approval timeout comes from the Harness (issue #44). Who may decide an Approval, and
 the decider in the audit trail, is issue #94. Gate edge cases are issue #102. Approval
-tokens that work as a CLI argument are issue #113.
+tokens that work as a CLI argument are issue #113. Refusing a changed tool pack is #110.
 """
 
 import asyncio
@@ -32,6 +32,7 @@ from cograil.errors import (
     RunEnded,
     RunNotPaused,
     ToolExecutionError,
+    ToolPackChanged,
 )
 from cograil.gates import new_approval_token, require_approval
 from cograil.parser import parse_protocol
@@ -173,6 +174,31 @@ async def test_gated_write_pauses_the_run_awaiting_approval_and_persists_state(
     assert (last.kind, last.principal_id) == ("gate.paused", "alice@example.com")
     assert last.detail["token"] == token
     assert "run.failed" not in await kinds(store)
+
+
+@pytest.mark.parametrize("decision", ["approved", "declined"])
+async def test_resume_refuses_a_run_whose_tool_pack_changed(
+    store: InMemoryRunStore,
+    make: Any,
+    protocol: Protocol,
+    tools: Tools,
+    registry: ToolRegistry,
+    clock: Clock,
+    decision: Literal["approved", "declined"],
+) -> None:
+    registry.tool_pack_version = "pack-1"
+    token = await pause(make, protocol, store)
+    assert (await store.get_run("r1")).tool_pack_version == "pack-1"
+    before = await store.list_audit_events("r1")
+    changed = build_registry(store, tools)
+    changed.tool_pack_version = "pack-2"
+    runner = Runner(FakeProvider(AFTER_GATE), changed, store, HARPER, harness=HARNESS, clock=clock)
+    with pytest.raises(ToolPackChanged, match="pack-1"):
+        await runner.resume(token, protocol, decider=CONTACT, decision=decision)
+    assert (await store.get_run("r1")).status is RunStatus.awaiting_approval
+    assert (await store.get_approval(token)).decision == "pending"
+    assert tools.invoked == ["hris.get_balance"]
+    assert await store.list_audit_events("r1") == before
 
 
 async def test_resume_continues_exactly_at_the_paused_step(

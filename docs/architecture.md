@@ -66,9 +66,9 @@ a `Runner`.
 8. `build_registry` builds the `python`, `rest` and `mcp` kinds. A Step that names a Tool
    nothing implements refuses to start: the Run never begins with a whitelist it cannot honour.
 9. The Run is created — `Trigger` kind `chat`, channel `cli` — and saved.
-10. `Runner.run` stamps the harness version on the Run, writes `run.started`, and
-    `compile_protocol` builds the graph: one node per Step, edges in step order, entry at the
-    Step after `Run.cursor`.
+10. `Runner.run` stamps the harness and tool pack versions on the Run, writes `run.started`,
+    and `compile_protocol` builds the graph: one node per Step, edges in step order, entry at
+    the Step after `Run.cursor`.
 11. Inside a Step, until `step_complete` or a bound:
     - `ContextBuilder.opening` builds what the model sees: the prior Steps the Step declares
       (else the harness default), the schemas of its whitelisted Tools only, and the data
@@ -100,6 +100,12 @@ anyone else is refused and the attempt is audited. Two racing resumes cannot bot
 the Approval is decided once, and the decision, the Run and the decision's `gate.resumed` or
 `run.escalated` AuditEvent are saved in the same transaction, so a crash cannot leave a
 decided Approval without its AuditEvent.
+
+The tool pack version is a sha256 of the workspace's validated Tools and of the source of every
+workspace python module they resolve to (`build_registry`); the resolver runs the bytes it
+hashed. `Runner.resume` refuses a Run whose tool pack has changed since it started with
+`ToolPackChanged`, before deciding the Approval, so an approved write never runs other code than
+the Run started with. The Run stays paused; its Approval can still expire.
 
 `Runner.run` and `Runner.resume` each claim the Run for their execution: `RunStore.claim_run`
 compares the claim and status the caller read and sets a fresh claim, and every later save of

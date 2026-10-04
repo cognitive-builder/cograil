@@ -3,12 +3,15 @@
 `hris.get_balance` resolves to `get_balance` in the workspace's `tools/hris.py`, and
 otherwise to `cograil.tools.hris.get_balance`. Every part of the name must be a public Python
 identifier, so a name can never reach outside those two places or into module internals.
-Workspace tool files run as trusted code when the registry is built.
+Workspace tool files run as trusted code when the registry is built. The resolver runs the
+bytes it read and keeps their sha256 in `sources`, so the tool pack version (registry.py) is a
+hash of exactly the code that runs, never of a file swapped in between.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib
 import importlib.util
 import inspect
@@ -24,11 +27,15 @@ _PACKAGE = "cograil.tools"
 
 
 class PythonResolver:
-    """Resolves python Tools; tools sharing a module share one loaded copy of it."""
+    """Resolves python Tools; tools sharing a module share one loaded copy of it.
+
+    `sources` maps each workspace module loaded, by dotted path, to the sha256 of its source.
+    """
 
     def __init__(self, workspace_root: Path | None) -> None:
         self._root = workspace_root
         self._modules: dict[str, ModuleType | None] = {}
+        self.sources: dict[str, str] = {}
 
     def resolve(self, tool: Tool) -> Invoke:
         parts = tool.name.split(".")
@@ -50,7 +57,10 @@ class PythonResolver:
             return None
         key = ".".join(module_path)
         if key not in self._modules:
-            self._modules[key] = _load_file(self._root / "tools", module_path)
+            loaded = _load_file(self._root / "tools", module_path)
+            self._modules[key] = loaded[0] if loaded else None
+            if loaded:
+                self.sources[key] = hashlib.sha256(loaded[1]).hexdigest()
         return self._modules[key]
 
 
@@ -58,7 +68,9 @@ def _public(part: str) -> bool:
     return part.isidentifier() and not part.startswith("_")
 
 
-def _load_file(tools_dir: Path, module_path: list[str]) -> ModuleType | None:
+def _load_file(tools_dir: Path, module_path: list[str]) -> tuple[ModuleType, bytes] | None:
+    """The module and the source it ran, compiled from the bytes read here and not from a
+    cached .pyc, which could hold other code than the source."""
     file = tools_dir.joinpath(*module_path).with_suffix(".py")
     if not file.is_file():
         return None
@@ -69,11 +81,12 @@ def _load_file(tools_dir: Path, module_path: list[str]) -> ModuleType | None:
     if spec is None or spec.loader is None:
         raise ToolConfigError(f"{file}: cannot be loaded as a module")
     module = importlib.util.module_from_spec(spec)
+    source = file.read_bytes()
     try:
-        spec.loader.exec_module(module)
+        exec(compile(source, file, "exec"), module.__dict__)
     except Exception as exc:
         raise ToolConfigError(f"{file}: failed to load: {exc}") from exc
-    return module
+    return module, source
 
 
 def _package_module(module_path: list[str]) -> ModuleType | None:
