@@ -1,4 +1,4 @@
-"""Example-workspace HRIS pack: one test per acceptance criterion of issue #9."""
+"""Example-workspace HRIS pack: one test per acceptance criterion of issues #9 and #86."""
 
 from pathlib import Path
 
@@ -50,6 +50,21 @@ async def test_submit_leave_decreases_balance_and_replays_idempotently(
     assert first["days"] == 3
     assert replay == first
     assert after["annual"] == before["annual"] - 3
+
+
+async def test_submit_leave_keys_idempotency_on_employee_and_request_id(
+    store: InMemoryRunStore, ctx: CallContext
+) -> None:
+    async with await build_registry(hris_workspace(), store, EXAMPLE) as registry:
+        alice = await registry.invoke("hris.submit_leave", request("alice", "annual", "req-1"), ctx)
+        bob = await registry.invoke("hris.submit_leave", request("bob", "annual", "req-1"), ctx)
+        balances = {
+            employee: await registry.invoke("hris.get_balance", {"employee": employee}, ctx)
+            for employee in ("alice", "bob")
+        }
+    assert alice["employee"] == "alice" and bob["employee"] == "bob"
+    assert alice["remaining"] == 22 and bob["remaining"] == 17
+    assert (balances["alice"]["annual"], balances["bob"]["annual"]) == (22, 17)
 
 
 async def test_pack_is_registered_and_callable(store: InMemoryRunStore, ctx: CallContext) -> None:
