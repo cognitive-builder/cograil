@@ -15,6 +15,7 @@ from cograil.domain import (
     Connection,
     Entity,
     KnowledgeSource,
+    McpServer,
     Principal,
     Protocol,
     Run,
@@ -113,3 +114,27 @@ def test_run_mirrors_principal_and_trigger() -> None:
     assert (RUN.principal_id, RUN.trigger_kind) == ("alice@example.com", "chat")
     with pytest.raises(ValidationError):
         Run.model_validate({**RUN.model_dump(), "principal_id": "mallory@example.com"})
+
+
+ENDPOINT = {"method": "GET", "path": "/people"}
+STDIO = {"transport": "stdio", "command": "calendar-mcp"}
+
+
+@pytest.mark.parametrize(
+    ("model", "data"),
+    [
+        (Tool, {"name": "a.b", "kind": "rest", "scope": "read", "connection": "hris"}),
+        (Tool, {"name": "a.b", "kind": "rest", "scope": "read", "rest": ENDPOINT}),
+        (Tool, {"name": "a.b", "kind": "python", "scope": "read", "rest": ENDPOINT}),
+        (Tool, {"name": "cal", "kind": "mcp", "scope": "read"}),
+        (Tool, {"name": "cal", "kind": "python", "scope": "read", "mcp": STDIO}),
+        (McpServer, {"transport": "stdio"}),
+        (McpServer, {"transport": "http"}),
+        (Connection, {"name": "hris", "auth": "oauth_client_credentials"}),
+    ],
+    ids=["rest-no-block", "rest-no-connection", "rest-block-on-python", "mcp-no-block",
+         "mcp-block-on-python", "stdio-no-command", "http-no-url", "oauth-no-token-url"],
+)  # fmt: skip
+def test_tool_kind_configuration_is_validated(model: type[Entity], data: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        model.model_validate(data)

@@ -19,12 +19,63 @@ class Entity(BaseModel):
 
 
 class Connection(Entity):
-    """How a Tool authenticates. Secrets are referenced by env var name, never stored."""
+    """How a Tool authenticates. Secrets are referenced by env var name, never stored.
+
+    For oauth_client_credentials, secret_env names `client_id` and `client_secret`.
+    """
 
     name: str
     auth: Literal["none", "api_key", "oauth_client_credentials", "oidc_on_behalf_of"]
     base_url: str | None = None
     secret_env: dict[str, str] = Field(default_factory=dict)
+    token_url: str | None = None
+    scopes: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_oauth(self) -> Connection:
+        if self.auth == "oauth_client_credentials":
+            missing = {"client_id", "client_secret"} - self.secret_env.keys()
+            if self.token_url is None or missing:
+                raise ValueError(
+                    "oauth_client_credentials needs token_url and secret_env "
+                    "entries for client_id and client_secret"
+                )
+        return self
+
+
+class RestPagination(Entity):
+    """Follow pages by a field in the JSON body: a next URL, or a cursor sent as a query param."""
+
+    items: str
+    next: str
+    cursor_param: str | None = None
+    max_pages: int = Field(default=10, ge=1)
+
+
+class RestEndpoint(Entity):
+    """A REST call. {placeholders} in path come from args; other args go to query or body."""
+
+    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"] = "GET"
+    path: str
+    pagination: RestPagination | None = None
+    max_attempts: int = Field(default=3, ge=1, le=10)
+
+
+class McpServer(Entity):
+    """An MCP server whose tools are registered as `<Tool.name>.<server tool name>`."""
+
+    transport: Literal["stdio", "http"]
+    command: str | None = None
+    args: list[str] = Field(default_factory=list)
+    url: str | None = None
+
+    @model_validator(mode="after")
+    def _check_transport(self) -> McpServer:
+        if self.transport == "stdio" and not self.command:
+            raise ValueError("an stdio MCP server needs a command")
+        if self.transport == "http" and not self.url:
+            raise ValueError("an http MCP server needs a url")
+        return self
 
 
 class Tool(Entity):
@@ -35,6 +86,18 @@ class Tool(Entity):
     args_schema: dict[str, Any] = Field(default_factory=dict)
     connection: str | None = None
     confirm_before_write: bool = True
+    rest: RestEndpoint | None = None
+    mcp: McpServer | None = None
+
+    @model_validator(mode="after")
+    def _check_kind_config(self) -> Tool:
+        if (self.kind == "rest") != (self.rest is not None):
+            raise ValueError("a rest block is required for kind rest and allowed only there")
+        if (self.kind == "mcp") != (self.mcp is not None):
+            raise ValueError("an mcp block is required for kind mcp and allowed only there")
+        if self.kind == "rest" and self.connection is None:
+            raise ValueError("a rest tool needs a connection for its base_url")
+        return self
 
 
 class Step(Entity):
