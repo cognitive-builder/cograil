@@ -189,9 +189,7 @@ def add_compression(
     return {**context, LEDGER_KEY: ledger}
 
 
-def add_cache_usage(
-    context: dict[str, Any], step: int, read: int, write: int
-) -> dict[str, Any]:
+def add_cache_usage(context: dict[str, Any], step: int, read: int, write: int) -> dict[str, Any]:
     """`context` with one call's cache read and write tokens added to the Step's ledger row."""
     ledger = {**context.get(LEDGER_KEY, {})}
     row = {**ledger.get(str(step), {})}
