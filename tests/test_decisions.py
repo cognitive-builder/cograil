@@ -9,9 +9,9 @@ import yaml
 from typer.testing import CliRunner
 
 from cograil.cli import app
-from cograil.decisions import DecisionTable
+from cograil.decisions import DecisionOutcome, DecisionTable
 from cograil.domain import Decision, Tool, Workspace
-from cograil.errors import DecisionError, ToolConfigError
+from cograil.errors import DecisionError, ToolArgumentError, ToolConfigError
 from cograil.registry import CallContext, build_registry
 from cograil.store import InMemoryRunStore
 from cograil.workspace import check_workspace, load_workspace
@@ -221,3 +221,23 @@ def test_decide_command(inputs: list[str], code: int, output: str) -> None:
     result = runner.invoke(app, ["decide", "approval_routing", "--workspace", str(EXAMPLE), *flags])
     assert result.exit_code == code
     assert output in result.output
+
+
+# Issue #121: an outcome the table never produced still reports a typed error, and the
+# args_schema check runs before the table's own input check.
+
+
+def test_first_policy_outcome_without_matches_is_a_decision_error() -> None:
+    outcome = DecisionOutcome("tier", 2, "first", ())
+    with pytest.raises(DecisionError, match="tier v2: no rule matched"):
+        outcome.as_result()
+
+
+async def test_args_schema_is_checked_before_the_table_inputs(
+    store: InMemoryRunStore, ctx: CallContext
+) -> None:
+    args = {"duration_days": 12, "leave_type": "annual"}  # requester_role is missing from both
+    async with await build_registry(load_workspace(EXAMPLE), store, EXAMPLE) as registry:
+        with pytest.raises(ToolArgumentError, match="requester_role"):
+            await registry.invoke(ROUTING, args, ctx)
+    assert "missing inputs" not in str((await store.list_tool_calls("r1"))[0].error)

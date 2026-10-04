@@ -62,6 +62,8 @@ class DecisionOutcome:
         """The Tool result: one rule and its outputs under `first`, every match under `collect`."""
         head: dict[str, Any] = {"table": self.table, "version": self.version}
         if self.hit_policy == "first":
+            if not self.matches:
+                raise DecisionError(f"{self.table} v{self.version}: no rule matched")
             rule, outputs = self.matches[0]
             return {**head, "rule": rule, "outputs": outputs}
         return {**head, "matches": [{"rule": r, "outputs": o} for r, o in self.matches]}
