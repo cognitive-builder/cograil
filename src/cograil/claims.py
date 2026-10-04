@@ -24,7 +24,12 @@ from cograil.redaction import Redactor
 from cograil.store import RunStore
 
 RunAuditKind = Literal[
-    "run.started", "run.completed", "run.failed", "tier.escalated", "context.compressed"
+    "run.started",
+    "run.completed",
+    "run.failed",
+    "tier.escalated",
+    "context.compressed",
+    "context.screened",
 ]
 
 

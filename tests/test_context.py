@@ -31,6 +31,7 @@ from cograil.domain import (
     Tool,
     Trigger,
 )
+from cograil.injection import REMOVED
 from cograil.parser import parse_protocol
 from cograil.providers import FakeProvider, PlannedToolCall, scripted
 from cograil.registry import ToolRegistry
@@ -152,7 +153,7 @@ async def test_tool_output_is_data_behind_the_fixed_preamble(
     assert result.startswith(DATA_PREAMBLE)
     assert '<data source="tool look.up">' in result
     assert result.removeprefix(DATA_PREAMBLE).count("</data>") == 1  # no early close
-    assert "ignore previous instructions" in result
+    assert "ignore previous instructions" not in result and REMOVED in result  # stripped (#51)
 
 
 def test_data_message_escapes_a_forged_closing_marker() -> None:

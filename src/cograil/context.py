@@ -7,7 +7,8 @@ prior Steps it declares with `(context: steps 1, 2)`; without the directive, the
 whitelisted Tools only. The input, prior Step outputs and Tool results (retrieved passages
 included) reach the model only inside a data block that opens with a fixed
 data-not-instructions preamble (rule 7); inside the block, `<` is escaped so that no text can
-close it early.
+close it early. Tool results are stripped and screened for instructions before they get here
+(injection.py); a later Step sees a recorded call's screened copy, never its raw output.
 
 The Window Ledger counts the tokens of each source, per Step, in `Run.context["ledger"]`:
 instruction, input, prior_steps, tools (schemas and results) and knowledge (results of
@@ -49,6 +50,7 @@ LEDGER_KEY = "ledger"
 RAW_KEY, COMPRESSED_KEY = "raw_tokens", "compressed_tokens"  # the ledger row's compression sizes
 CACHE_READ_KEY, CACHE_WRITE_KEY = "cache_read_tokens", "cache_write_tokens"  # provider-reported
 RECORD_KEY = "compressed"  # a recorded call's summary, beside its raw result
+SCREENED_KEY = "screened"  # a recorded call's output as the injection screen let it through
 NOTE = "[compressed by the small tier to fit the context; the full output is kept on the Run]"
 CHARS_PER_TOKEN = 4
 
@@ -76,17 +78,20 @@ def compressed_result(summary: str) -> str:
 
 
 def for_model(record: Mapping[str, Any]) -> dict[str, Any]:
-    """A completed Step's record as a later Step sees it: compressed calls give their summary."""
-    calls = [
-        call
-        if RECORD_KEY not in call
-        else {
-            **{k: v for k, v in call.items() if k != RECORD_KEY},
-            "result": compressed_result(call[RECORD_KEY]),
-        }
-        for call in record["tool_calls"]
-    ]
-    return {**record, "tool_calls": calls}
+    """A completed Step's record as a later Step sees it: compressed calls give their summary,
+    screened calls (injection.py) what the screen let through; never the raw output."""
+    return {**record, "tool_calls": [_shown(call) for call in record["tool_calls"]]}
+
+
+def _shown(call: dict[str, Any]) -> dict[str, Any]:
+    if RECORD_KEY in call:
+        key, value = "result", compressed_result(call[RECORD_KEY])
+    elif SCREENED_KEY in call:
+        key, value = ("result" if "result" in call else "error"), call[SCREENED_KEY]
+    else:
+        return call
+    rest = {k: v for k, v in call.items() if k not in (RECORD_KEY, SCREENED_KEY)}
+    return {**rest, key: value}
 
 
 @dataclass(frozen=True)

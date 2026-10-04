@@ -5,7 +5,8 @@ groups searched as come from the CallContext, the Run's principal, never from th
 so the model cannot widen what it sees. The result is `{"results": [...]}`, most similar first;
 each result names its `source`, `source_uri` and `chunk_id` and quotes the Chunk's text
 verbatim as `passage`, so an answer can cite where it came from. Like any Tool output, the
-results reach the model as data, never as instructions.
+results reach the model as data, never as instructions, after the injection defence
+(injection.py) has stripped and screened them; the recorded result keeps the passage verbatim.
 """
 
 from __future__ import annotations
