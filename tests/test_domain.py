@@ -136,6 +136,15 @@ def test_run_missing_mirror_key_names_the_field(
     assert all(e["type"] == "missing" for e in errors)
 
 
+@pytest.mark.parametrize(
+    "key", ["principal", "trigger"], ids=["principal-string", "trigger-string"]
+)
+def test_run_non_dict_principal_or_trigger_is_a_validation_error(key: str) -> None:
+    with pytest.raises(ValidationError) as exc:
+        Run.model_validate({**RUN.model_dump(), key: "alice"})
+    assert (key,) in [e["loc"] for e in exc.value.errors()]
+
+
 def test_trigger_kind_is_defined_once() -> None:
     assert Trigger.model_fields["kind"].annotation is Run.model_fields["trigger_kind"].annotation
 

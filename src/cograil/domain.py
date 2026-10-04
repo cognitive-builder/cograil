@@ -429,14 +429,14 @@ class Run(Entity):
             return data
         data = dict(data)
         principal, trigger = data.get("principal"), data.get("trigger")
-        if principal is not None:
-            pid = principal.id if isinstance(principal, Principal) else principal.get("id")
-            if pid is not None:
-                data.setdefault("principal_id", pid)
-        if trigger is not None:
-            kind = trigger.kind if isinstance(trigger, Trigger) else trigger.get("kind")
-            if kind is not None:
-                data.setdefault("trigger_kind", kind)
+        if isinstance(principal, Principal):
+            data.setdefault("principal_id", principal.id)
+        elif isinstance(principal, dict) and principal.get("id") is not None:
+            data.setdefault("principal_id", principal["id"])
+        if isinstance(trigger, Trigger):
+            data.setdefault("trigger_kind", trigger.kind)
+        elif isinstance(trigger, dict) and trigger.get("kind") is not None:
+            data.setdefault("trigger_kind", trigger["kind"])
         return data
 
     @model_validator(mode="after")
