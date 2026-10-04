@@ -261,9 +261,10 @@ class Gates:
         self, run: Run, kind: GateAuditKind, detail: dict[str, Any], principal: str | None = None
     ) -> None:
         """`principal` is who acted, when that is not the Run's own principal."""
+        acting = run.principal_id if principal is None else principal
         await self._store.append_audit_event(
-            AuditEvent(run_id=run.id, at=self._clock(), principal_id=principal or run.principal_id,
-                       kind=kind, detail=detail)
+            AuditEvent(run_id=run.id, at=self._clock(), principal_id=acting, kind=kind,
+                       detail=detail)
         )  # fmt: skip
 
 
