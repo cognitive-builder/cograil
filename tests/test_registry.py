@@ -46,6 +46,8 @@ def workspace(*tools: Tool) -> Workspace:
 def root(tmp_path: Path) -> Path:
     (tmp_path / "tools").mkdir()
     (tmp_path / "tools" / "hris.py").write_text(HRIS)
+    (tmp_path / "outside.py").write_text("def fn():\n    return 1\n")
+    (tmp_path / "tools" / "escape.py").symlink_to(tmp_path / "outside.py")
     return tmp_path
 
 
@@ -68,7 +70,10 @@ async def test_python_falls_back_to_cograil_tools(
     assert await registry.invoke("echo.say", {"text": "hi"}, ctx) == "echo hi"
 
 
-@pytest.mark.parametrize("name", ["nodots", "os.path..join", "hris.missing", "nowhere.fn"])
+@pytest.mark.parametrize(
+    "name",
+    ["nodots", "os.path..join", "hris.missing", "nowhere.fn", "hris.__builtins__", "escape.fn"],
+)
 async def test_python_unresolvable_name_raises(
     name: str, root: Path, store: InMemoryRunStore
 ) -> None:

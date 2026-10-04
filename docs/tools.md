@@ -11,7 +11,7 @@ The Tool name is `module.function`. Every part must be a valid Python identifier
 1. The workspace file `tools/<module>.py`.
 2. The package module `cograil.tools.<module>`.
 
-Tools that share a module share one loaded copy of it, so module-level state is shared. A sync function runs in a worker thread. An async function is awaited directly.
+Workspace tool files are trusted code: they run when the registry is built, so review them like any other code. Names with a part starting with `_` are rejected. Tools that share a module share one loaded copy of it, so module-level state is shared. A sync function runs in a worker thread. An async function is awaited directly.
 
 ```yaml
 # tools.yaml
@@ -70,7 +70,7 @@ connections:
 
 ### How a Call Is Built
 
-- Placeholders such as `{employee}` are filled from the arguments and URL-encoded. Other arguments go to the query string for GET and DELETE, and to the JSON body for the other methods.
+- Placeholders such as `{employee}` are filled from the arguments and URL-encoded. A placeholder value that is empty, `.` or `..` raises `ToolArgumentError`, so an argument can never move the call to another endpoint. Other arguments go to the query string for GET and DELETE, and to the JSON body for the other methods.
 - The access token is cached until 30 seconds before it expires. On a 401 response it is fetched again and the call is retried once.
 
 ### Pagination
@@ -110,6 +110,6 @@ tools:
     mcp: {transport: http, url: "https://mcp.example.com/mcp"}
 ```
 
-A `stdio` server needs `command`. An `http` server needs `url` and uses streamable HTTP. This kind needs the `mcp` extra: `pip install cograil[mcp]`.
+A `stdio` server needs `command`, which the registry starts as a local process, so treat it as trusted configuration. An `http` server needs `url` and uses streamable HTTP. This kind needs the `mcp` extra: `pip install cograil[mcp]`.
 
 The server's output is returned as data, never as instructions. Because Protocol `@` references can only name Tools whose names are word characters and dots, a protocol can reference an MCP Tool only when both the entry name and the server's tool name use those characters.

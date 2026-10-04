@@ -1,8 +1,9 @@
 """kind=python: the Tool name is a dotted path to a function.
 
 `hris.get_balance` resolves to `get_balance` in the workspace's `tools/hris.py`, and
-otherwise to `cograil.tools.hris.get_balance`. Every part of the name must be a Python
-identifier, so a name can never reach outside those two places.
+otherwise to `cograil.tools.hris.get_balance`. Every part of the name must be a public Python
+identifier, so a name can never reach outside those two places or into module internals.
+Workspace tool files run as trusted code when the registry is built.
 """
 
 from __future__ import annotations
@@ -31,8 +32,10 @@ class PythonResolver:
 
     def resolve(self, tool: Tool) -> Invoke:
         parts = tool.name.split(".")
-        if len(parts) < 2 or not all(part.isidentifier() for part in parts):
-            raise ToolConfigError(f"{tool.name}: a python Tool name must be module.function")
+        if len(parts) < 2 or not all(_public(part) for part in parts):
+            raise ToolConfigError(
+                f"{tool.name}: a python Tool name must be module.function, without _private parts"
+            )
         module_path, attr = parts[:-1], parts[-1]
         module = self._workspace_module(module_path) or _package_module(module_path)
         if module is None:
@@ -49,6 +52,10 @@ class PythonResolver:
         if key not in self._modules:
             self._modules[key] = _load_file(self._root / "tools", module_path)
         return self._modules[key]
+
+
+def _public(part: str) -> bool:
+    return part.isidentifier() and not part.startswith("_")
 
 
 def _load_file(tools_dir: Path, module_path: list[str]) -> ModuleType | None:

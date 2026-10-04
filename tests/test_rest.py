@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from cograil.domain import Connection, RestEndpoint, RestPagination, Tool
-from cograil.errors import ToolExecutionError
+from cograil.errors import ToolArgumentError, ToolExecutionError
 from cograil.tool_kinds.rest import OAuthClientCredentials, RestTool
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -151,3 +151,12 @@ async def test_each_attempt_is_logged_as_structured_json_without_secrets(
         "run_id": None,
     }  # fmt: skip
     assert "secret" not in caplog.text and "Bearer" not in caplog.text
+
+
+@pytest.mark.parametrize("employee", ["..", ".", ""])
+async def test_path_arguments_cannot_move_the_call_to_another_endpoint(employee: str) -> None:
+    server = Server(lambda r: httpx.Response(200, json={}))
+    call, _ = server.tool(rest_tool(method="DELETE", path="/people/{employee}/leave"))
+    with pytest.raises(ToolArgumentError):
+        await call({"employee": employee})
+    assert server.requests == []

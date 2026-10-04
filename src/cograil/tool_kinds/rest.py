@@ -28,6 +28,7 @@ Clock = Callable[[], float]
 _IDEMPOTENT = frozenset({"GET", "PUT", "DELETE"})
 _NOT_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 _TOKEN_MARGIN_S = 30.0
+_DOT_SEGMENTS = frozenset({"", ".", ".."})
 
 
 class OAuthClientCredentials:
@@ -60,12 +61,13 @@ class OAuthClientCredentials:
             form["scope"] = " ".join(conn.scopes)
         response = await self._http.post(conn.token_url, data=form)
         log_event("tool.rest.token", connection=conn.name, status=response.status_code)
-        token = _json(response).get("access_token") if not response.is_error else None
+        payload = {} if response.is_error else _json(response)
+        token = payload.get("access_token")
         if not isinstance(token, str):
             raise ToolExecutionError(
                 f"connection {conn.name}: token request failed with HTTP {response.status_code}"
             )
-        expires_in = float(_json(response).get("expires_in", 3600))
+        expires_in = float(payload.get("expires_in", 3600))
         self._token = token
         self._expires_at = self._clock() + max(0.0, expires_in - _TOKEN_MARGIN_S)
 
@@ -201,7 +203,11 @@ def _fill_path(tool: str, path: str, args: dict[str, Any]) -> tuple[str, dict[st
     missing = names - args.keys()
     if missing:
         raise ToolArgumentError(f"{tool}: missing path arguments {sorted(missing)}")
-    filled = path.format_map({name: quote(str(args[name]), safe="") for name in names})
+    values = {name: quote(str(args[name]), safe="") for name in names}
+    unsafe = sorted(name for name, value in values.items() if value in _DOT_SEGMENTS)
+    if unsafe:  # "." or ".." would move the call to another endpoint of the same origin
+        raise ToolArgumentError(f"{tool}: path arguments {unsafe} must not be empty, . or ..")
+    filled = path.format_map(values)
     return filled, {key: value for key, value in args.items() if key not in names}
 
 
