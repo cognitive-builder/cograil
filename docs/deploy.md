@@ -6,7 +6,7 @@ Think of Cloud Run as a shop that opens only when a customer walks in. The first
 
 ## The Image
 
-The `Dockerfile` has two stages. The first installs Cograil and its dependencies into a virtualenv. The second copies only that virtualenv, the Workspace, and the Alembic migrations onto a clean `python:3.12-slim`. It runs as an unprivileged user (`cograil`) and listens on `$PORT` (Cloud Run sets it; the fallback is 8080).
+The `Dockerfile` has two stages. The first installs Cograil and its dependencies into a virtualenv. The second copies only that virtualenv, the Workspace, and the Alembic migrations onto a clean `python:3.12-slim`. It runs as an unprivileged user (`cograil`) and listens on `$PORT` (Cloud Run sets it; the fallback is 8080). It trusts proxy headers from any address (`--forwarded-allow-ips='*'`), which is safe only behind Cloud Run. Do not publish the container port directly.
 
 | Build argument | Default | Meaning |
 | --- | --- | --- |
@@ -63,7 +63,15 @@ docker run --rm -e DATABASE_URL="postgresql+asyncpg://..." cograil alembic upgra
 3. Create a service account for deploys with `roles/run.admin`, `roles/artifactregistry.writer` and `roles/iam.serviceAccountUser` (on the runtime service account). Give the Cloud Run runtime service account `roles/secretmanager.secretAccessor` on the four secrets.
 4. Create a Workload Identity pool and an OIDC provider for GitHub, restrict it to this repository with an attribute condition (`assertion.repository == 'cognitive-builder/cograil'`), and let the deploy service account be impersonated by that pool's identities. There are no JSON keys at any point: GitHub proves who it is with a short-lived token and Google swaps it for a short-lived credential.
 5. Add four repository secrets: `GCP_PROJECT`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER` (the provider's full resource name) and `GCP_SERVICE_ACCOUNT` (the deploy account's email).
-6. After the first deploy, set the plain variables on the service: `COGRAIL_AUTH=oidc`, the `COGRAIL_OIDC_*` settings, and `COGRAIL_OIDC_REDIRECT_URL` set to the service URL plus `/auth/callback`.
+6. Create the service once, before the first tag, with a placeholder image and the plain variables. Cograil refuses to start without `COGRAIL_AUTH`, so the first real revision needs them already in place:
+
+   ```bash
+   gcloud run deploy cograil --region REGION \
+     --image us-docker.pkg.dev/cloudrun/container/hello \
+     --set-env-vars COGRAIL_AUTH=oidc,COGRAIL_OIDC_METADATA_URL=...,COGRAIL_OIDC_CLIENT_ID=...,COGRAIL_OIDC_ALLOWED_DOMAINS=...,COGRAIL_OIDC_REDIRECT_URL=https://SERVICE_URL/auth/callback
+   ```
+
+   The service URL is only known after the first deploy, so deploy once, read the URL, then run `gcloud run services update cograil --update-env-vars COGRAIL_OIDC_REDIRECT_URL=...`.
 
 The workflow deploys with `--allow-unauthenticated`. Browsers have to reach the sign-in page, and the app refuses every other request without a session. Never set `COGRAIL_AUTH=dev` on a deployed service.
 

@@ -73,9 +73,10 @@ jobs:
             --allow-unauthenticated
       - name: Measure the cold start
         # A new revision has no warm instance, so its first request is a cold start.
+        shell: bash
         env:
           URL: ${{ steps.deploy.outputs.url }}
         run: |
-          curl -sS -o /dev/null --retry 3 \
+          curl -fsS -o /dev/null --retry 3 \
             -w "Cold start: first /health in %{time_total}s (HTTP %{http_code})\n" \
             "$URL/health" | tee -a "$GITHUB_STEP_SUMMARY"
