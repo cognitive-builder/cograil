@@ -1,7 +1,10 @@
-"""CLI tests, one per acceptance criterion of issue #13, on an in-memory RunStore."""
+"""CLI tests, one per acceptance criterion of issue #13 (and #113, approval tokens), on an
+in-memory RunStore."""
 
 import asyncio
+import base64
 import re
+import secrets
 import shutil
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
@@ -114,6 +117,19 @@ def test_approve_refuses_anyone_but_the_approver(
         e for e in asyncio.run(shared_store.list_audit_events(run.id)) if e.kind == "gate.refused"
     ]
     assert len(refused) == (1 if decider.strip() else 0)  # a blank --as never reaches the runner
+
+
+def test_approve_takes_a_token_whose_random_bytes_once_made_a_leading_dash(
+    shared_store: InMemoryRunStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw = b"\xf8" + bytes(15)
+    assert base64.urlsafe_b64encode(raw).startswith(b"-")  # what token_urlsafe(16) gave
+    monkeypatch.setattr(secrets, "token_bytes", lambda n: raw[:n])
+    _, output = start(tmp_path)
+    rest = ["--fake-script", script(tmp_path, REST_SCRIPT, "rest.yaml")]
+    result = runner.invoke(app, ["approve", token_in(output), "--as", MANAGER, *rest])
+    assert result.exit_code == 0, result.output
+    assert token_in(output) == raw.hex()
 
 
 def test_decline_escalates_with_its_own_exit_code(

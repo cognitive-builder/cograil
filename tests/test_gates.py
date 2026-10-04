@@ -1,10 +1,12 @@
 """Gate tests for issue #11: pause, resume, escalate, failure thresholds and GateRequired.
 
 The approval timeout comes from the Harness (issue #44). Who may decide an Approval, and
-the decider in the audit trail, is issue #94. Gate edge cases are issue #102.
+the decider in the audit trail, is issue #94. Gate edge cases are issue #102. Approval
+tokens that work as a CLI argument are issue #113.
 """
 
 import asyncio
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -28,7 +30,7 @@ from cograil.errors import (
     RunNotPaused,
     ToolExecutionError,
 )
-from cograil.gates import require_approval
+from cograil.gates import new_approval_token, require_approval
 from cograil.parser import parse_protocol
 from cograil.providers import FakeProvider, Plan, PlannedToolCall, scripted
 from cograil.registry import CallContext, ToolRegistry
@@ -473,3 +475,9 @@ async def test_a_token_the_run_is_not_paused_on_cannot_resume_it(
     with pytest.raises(RunNotPaused):
         await runner.resume("a1", protocol, decider="bob")
     assert (await store.get_approval("a1")).decision == "pending"
+
+
+def test_approval_tokens_are_128_bit_hex_and_never_start_with_a_dash() -> None:
+    tokens = {new_approval_token() for _ in range(2000)}
+    assert len(tokens) == 2000
+    assert all(re.fullmatch(r"[0-9a-f]{32}", token) for token in tokens)  # 32 hex = 128 bits

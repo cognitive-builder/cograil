@@ -67,6 +67,12 @@ def needs_approval(tool: Tool) -> bool:
     return tool.scope == "write" and tool.confirm_before_write
 
 
+def new_approval_token() -> str:
+    """128 random bits as 32 lowercase hex characters: a token never starts with `-`, so
+    `cograil approve <token>` cannot mistake it for an option."""
+    return secrets.token_bytes(16).hex()
+
+
 async def require_approval(
     store: RunStore,
     ctx: CallContext,
@@ -144,7 +150,7 @@ class Gates:
             detail = {"step": progress.step, "tool": tool.name, "approver": approver}
             return await self.escalate(run, "approver_is_principal", detail)
         approval = Approval(
-            token=secrets.token_urlsafe(16),
+            token=new_approval_token(),
             run_id=run.id,
             step=progress.step,
             tool=tool.name,
