@@ -9,6 +9,13 @@ Cograil is an open-source runtime that turns a Markdown runbook into an AI colle
 - If the issue is ambiguous, ask one question in a PR comment or an issue comment and stop. Do not guess at product behaviour.
 - If you discover a second problem, open a new issue with the `type:bug` or `type:chore` label and a lane label (`lane:1`, `lane:2` or `lane:3`), and leave it. Never widen scope inside a PR.
 
+## Autopilot
+
+- The autopilot (ADR 0015) starts some sessions itself, one task at a time.
+- Such a session follows `/implement-issue` (`.claude/commands/implement-issue.md`) exactly, like any other session.
+- Never remove the `needs:human` label yourself. That is for a person.
+- Pull requests on `claude/*` branches merge automatically once required checks pass, so open them only when the work is done.
+
 ## Product rules that decide design arguments
 
 1. Process rails under the model. The LLM reasons inside a `Step`; it never invents steps, tools, or gates.

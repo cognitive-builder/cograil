@@ -1,0 +1,27 @@
+name: Auto-merge
+
+# Autopilot (ADR 0015): turn on GitHub auto-merge for pull requests from claude/* branches
+# in this repo. GitHub then squash-merges by itself once required checks pass and
+# conversations are resolved; this needs branch protection with required checks on main.
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable:
+    if: |
+      startsWith(github.head_ref, 'claude/') &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enable auto-merge (squash)
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}

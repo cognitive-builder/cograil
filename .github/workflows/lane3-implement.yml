@@ -1,0 +1,43 @@
+name: Lane 3 implement
+
+# Autopilot (ADR 0015): the dispatcher starts lane:3 tasks here with
+#   gh workflow run lane3-implement.yml -f issue=N
+# Routed at Z.AI's Anthropic-compatible endpoint (GLM) via the env block, like claude.yml.
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number to implement
+        required: true
+        type: number
+
+concurrency:
+  group: lane3-implement
+
+jobs:
+  implement:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Run Claude Code
+        uses: anthropics/claude-code-action@v1
+        env:
+          ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ZAI_API_KEY }}
+          ANTHROPIC_DEFAULT_OPUS_MODEL: glm-5.3
+          ANTHROPIC_DEFAULT_SONNET_MODEL: glm-5.3
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: glm-5.1
+          API_TIMEOUT_MS: "3000000"
+        with:
+          anthropic_api_key: ${{ secrets.ZAI_API_KEY }}
+          prompt: "Follow .claude/commands/implement-issue.md for GitHub issue #${{ inputs.issue }}."
+          claude_args: "--max-turns 40"

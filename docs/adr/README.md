@@ -18,3 +18,4 @@ One file per decision, numbered, never edited after acceptance except to change 
 | 0012 | The Harness Is Versioned Configuration | Harness Engineering | Proposed |
 | 0013 | Runtime Cost Discipline | Small Language Models, Harness Engineering | Proposed |
 | 0014 | Proportionate Testing in Build Sessions | Harness Engineering | Proposed |
+| 0015 | Autopilot | Harness Engineering | Proposed |
