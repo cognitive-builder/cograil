@@ -26,5 +26,6 @@ def send(to: str, message: str) -> dict[str, Any]:
 
 
 def _message_id(to: str, message: str) -> str:
-    digest = hashlib.sha256(f"{to}\n{message}".encode()).hexdigest()
+    # the length prefix keeps a recipient containing a newline from colliding with a body
+    digest = hashlib.sha256(f"{len(to)}:{to}{message}".encode()).hexdigest()
     return f"msg-{digest[:12]}"
