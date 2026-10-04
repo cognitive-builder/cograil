@@ -53,7 +53,7 @@ async def test_submit_leave_decreases_balance_and_replays_idempotently(
 
 
 async def test_pack_is_registered_and_callable(store: InMemoryRunStore, ctx: CallContext) -> None:
-    assert HRIS_NAMES <= {t.name for t in load_workspace(EXAMPLE).tools}
+    assert {t.name for t in load_workspace(EXAMPLE).tools} >= HRIS_NAMES
     async with await build_registry(hris_workspace(), store, EXAMPLE) as registry:
         manager = await registry.invoke("hris.get_manager", {"employee": "alice"}, ctx)
     assert manager == {"employee": "alice", "manager": "bob"}
@@ -85,9 +85,9 @@ async def test_submit_leave_refuses_more_than_the_remaining_balance(
 ) -> None:
     async with await build_registry(hris_workspace(), store, EXAMPLE) as registry:
         args = request("bob", "sick", "req-2") | {"end": "2026-11-20"}
-        with pytest.raises(ToolExecutionError, match="sick.*19 days requested, 10 remaining"):
+        with pytest.raises(ToolExecutionError, match=r"sick.*19 days requested, 10 remaining"):
             await registry.invoke("hris.submit_leave", args, ctx)
-        assert await registry.invoke("hris.get_balance", {"employee": "bob"}, ctx)["sick"] == 10
+        assert (await registry.invoke("hris.get_balance", {"employee": "bob"}, ctx))["sick"] == 10
 
 
 async def test_untracked_leave_type_submits_without_touching_balances(
