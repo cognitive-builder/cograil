@@ -104,6 +104,18 @@ Every gate, approval, tool call and completion is an `AuditEvent` with the princ
 `audit_events` table is append-only: the store offers `append_audit_event` and nothing that
 edits, and a database trigger rejects UPDATE, DELETE and TRUNCATE.
 
+## Intent classification
+
+`orchestrator.py` decides which Colleague and Protocol a free-text message is for, before any
+Run exists. `classify_intent` offers the model one read tool, `route`, whose `choice` is an
+enum of the workspace's `colleague/protocol` pairs plus `none`; the model cannot name anything
+else. A choice outside the list, a missing or out-of-range confidence, or no `route` call at
+all routes to `none`. `none` returns a refusal (`Routing.refusal`) listing what the workspace
+can do. The classification model is the harness's `classification_tier` (`claude-haiku-4-5` by
+default); build the Provider on `classification_model(workspace)`. Each classification is
+logged as `orchestrator.classified` with the confidence, so evals can replay it. Audience
+checks are not part of it yet (issue #20).
+
 ## Not built yet
 
 - The web and Slack channels, and the API in front of them (issues #17, #18, #27). The CLI is the only
