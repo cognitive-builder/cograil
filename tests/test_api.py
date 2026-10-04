@@ -18,7 +18,7 @@ from cograil.api.app import create_app
 from cograil.api.auth_settings import auth_settings
 from cograil.api.wiring import app_from_env, open_registry
 from cograil.audience import resolve_principal
-from cograil.domain import Colleague, Principal, Protocol, RunStatus
+from cograil.domain import Colleague, Principal, Protocol, Run, RunStatus
 from cograil.errors import AuthNotConfigured, StoreNotConfigured
 from cograil.orchestrator import ROUTE_TOOL
 from cograil.providers import FakeProvider, PlannedToolCall, scripted
@@ -187,6 +187,25 @@ def test_chat_ends_with_an_error_event_when_the_work_fails(env: Env) -> None:
     events = env.chat()  # the classifier has no plan to give
     assert [name for name, _ in events] == ["error"]
     assert events[0][1]["type"] == "ProviderError"
+
+
+class TakenOverAtTheStartStore(InMemoryRunStore):
+    """A racing execution claims the Run before the chat's own execution can (#104), so the
+    Run is never this request's to run."""
+
+    async def claim_run(self, run: Run, read: Run) -> None:
+        await super().claim_run(run.model_copy(update={"claim": "racing-execution"}), read)
+        await super().claim_run(run, read)
+
+
+def test_chat_tells_the_caller_the_run_was_taken_over(tmp_path: Path) -> None:
+    env = Env(tmp_path, store=TakenOverAtTheStartStore())
+    env.route_to("helper/record_item")
+    events = env.chat()
+    run_id = dict(events)["run"]["run_id"]
+    assert [name for name, _ in events] == ["routed", "run", "progress", "error"]
+    # a caller error: the message is the run's, not "see the Run's audit log"
+    assert events[-1][1] == {"type": "RunClaimLost", "message": run_id}
 
 
 def test_chat_starts_nothing_outside_the_principals_audience(env: Env) -> None:
@@ -367,6 +386,24 @@ def test_approval_post_twice_is_a_conflict(env: Env) -> None:
     assert env.post(f"/approvals/{token}", {"decision": "approved"}).status_code == 200
     env.run_scripts.append(env.script(REST_SCRIPT))
     assert env.post(f"/approvals/{token}", {"decision": "approved"}).status_code == 409
+
+
+class TakenOverAfterTheDecisionStore(InMemoryRunStore):
+    """A racing execution claims the decided Run before the resume's claim lands (#104): the
+    Run the decision set running is no longer this request's to go on with."""
+
+    async def claim_run(self, run: Run, read: Run) -> None:
+        if read.status is RunStatus.running:  # the read a resume claims from
+            await super().claim_run(run.model_copy(update={"claim": "racing-execution"}), read)
+        await super().claim_run(run, read)
+
+
+def test_approval_post_is_a_conflict_when_the_run_was_taken_over(tmp_path: Path) -> None:
+    env = Env(tmp_path, store=TakenOverAfterTheDecisionStore())
+    done = env.paused_run()
+    run_id, token = done["run"]["id"], done["awaiting"][0]["token"]
+    assert env.post(f"/approvals/{token}", {"decision": "approved"}).status_code == 409
+    assert stored(env, run_id).status is RunStatus.running  # the racing execution's to finish
 
 
 def test_approval_post_for_an_unknown_token_is_404(env: Env) -> None:

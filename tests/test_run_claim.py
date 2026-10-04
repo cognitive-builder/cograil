@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from cograil.domain import Colleague, Principal, Run, RunStatus, Step, Tool, Trigger
-from cograil.errors import GateRequired, RunClaimLost
+from cograil.errors import GateRequired, ProviderError, RunClaimLost
 from cograil.parser import parse_protocol
 from cograil.providers import FakeProvider, Plan, PlannedToolCall, scripted
 from cograil.providers.base import Message
@@ -44,6 +44,19 @@ class InterleavingStore(InMemoryRunStore):
         run = await super().get_run(run_id)
         await asyncio.sleep(0)
         return run
+
+
+class TakeoverAtFailStore(InMemoryRunStore):
+    """Another execution takes the Run over at the save that would fail it, between the
+    failing execution's read of the Run and its save (#147)."""
+
+    async def update_run(self, run: Run) -> None:
+        if run.status is RunStatus.failed:
+            stored = await self.get_run(run.id)
+            await super().claim_run(
+                stored.model_copy(update={"claim": "winner", "status": RunStatus.running}), stored
+            )
+        await super().update_run(run)
 
 
 class HeldProvider(FakeProvider):
@@ -142,3 +155,26 @@ async def test_a_run_racing_a_resume_lets_exactly_one_proceed(
     events = await kinds(store, run_id)
     assert events.count("run.completed") == 1
     assert "run.failed" not in events
+
+
+async def test_a_failure_is_the_callers_to_see_when_the_run_is_taken_over_as_it_fails() -> None:
+    """Issue #147: a Run taken over between the failing read and the save is the winner's to
+    fail, so the caller sees the real error, not RunClaimLost, and no run.failed is written."""
+    store = TakeoverAtFailStore()  # memory only: the race is the runner's to answer
+    run = Run(id=f"run-{uuid.uuid4().hex}", workspace="example-smb", colleague="harper",
+              protocol="demo", protocol_version=1, principal=Principal(id="alice@example.com"),
+              trigger=Trigger(kind="chat"), created_at=T0, updated_at=T0)  # fmt: skip
+    await store.create_run(run)
+    registry = ToolRegistry(store)
+    for tool in TOOLS:
+
+        async def invoke(args: dict[str, Any], name: str = tool.name) -> dict[str, Any]:
+            return {"ok": True}
+
+        registry.register(tool, invoke)
+
+    with pytest.raises(ProviderError):  # the empty script runs out at the first plan
+        await Runner(FakeProvider([]), registry, store, HARPER).run(run.id, PROTOCOL)
+    stored = await store.get_run(run.id)
+    assert (stored.status, stored.claim) == (RunStatus.running, "winner")
+    assert "run.failed" not in await kinds(store, run.id)
