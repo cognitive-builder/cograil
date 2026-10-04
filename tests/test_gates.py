@@ -29,6 +29,7 @@ from cograil.errors import (
     ApprovalAlreadyDecided,
     ApprovalNotAllowed,
     GateRequired,
+    HarnessChanged,
     RunEnded,
     RunNotPaused,
     ToolExecutionError,
@@ -176,29 +177,110 @@ async def test_gated_write_pauses_the_run_awaiting_approval_and_persists_state(
     assert "run.failed" not in await kinds(store)
 
 
-@pytest.mark.parametrize("decision", ["approved", "declined"])
-async def test_resume_refuses_a_run_whose_tool_pack_changed(
+# What the Run started with, changed before it is decided (issues #110, #97).
+CHANGED = pytest.mark.parametrize(
+    ("pack", "harness", "error"),
+    [
+        ("pack-2", HARNESS, ToolPackChanged),
+        ("pack-1", HARNESS.model_copy(update={"version": "2.0.0"}), HarnessChanged),
+    ],
+    ids=["tool-pack", "harness"],
+)
+
+
+async def changed_runner(
+    make: Any,
+    protocol: Protocol,
+    store: InMemoryRunStore,
+    tools: Tools,
+    clock: Clock,
+    registry: ToolRegistry,
+    pack: str,
+    harness: Harness,
+) -> tuple[str, Runner]:
+    """The token of a Run paused under pack-1 and HARNESS, and a Runner with `pack` and
+    `harness` instead."""
+    registry.tool_pack_version = "pack-1"
+    token = await pause(make, protocol, store)
+    changed = build_registry(store, tools)
+    changed.tool_pack_version = pack
+    provider = FakeProvider(AFTER_GATE)
+    return token, Runner(provider, changed, store, HARPER, harness=harness, clock=clock)
+
+
+@CHANGED
+async def test_an_approval_is_refused_when_the_run_started_under_other_versions(
     store: InMemoryRunStore,
     make: Any,
     protocol: Protocol,
     tools: Tools,
     registry: ToolRegistry,
     clock: Clock,
-    decision: Literal["approved", "declined"],
+    pack: str,
+    harness: Harness,
+    error: type[Exception],
 ) -> None:
-    registry.tool_pack_version = "pack-1"
-    token = await pause(make, protocol, store)
-    assert (await store.get_run("r1")).tool_pack_version == "pack-1"
+    token, runner = await changed_runner(
+        make, protocol, store, tools, clock, registry, pack, harness
+    )
     before = await store.list_audit_events("r1")
-    changed = build_registry(store, tools)
-    changed.tool_pack_version = "pack-2"
-    runner = Runner(FakeProvider(AFTER_GATE), changed, store, HARPER, harness=HARNESS, clock=clock)
-    with pytest.raises(ToolPackChanged, match="pack-1"):
-        await runner.resume(token, protocol, decider=CONTACT, decision=decision)
+    with pytest.raises(error, match="restart it"):
+        await runner.resume(token, protocol, decider=CONTACT)
     assert (await store.get_run("r1")).status is RunStatus.awaiting_approval
     assert (await store.get_approval(token)).decision == "pending"
     assert tools.invoked == ["hris.get_balance"]
-    assert await store.list_audit_events("r1") == before
+    (refused,) = (await store.list_audit_events("r1"))[len(before) :]
+    assert (refused.kind, refused.principal_id) == ("gate.refused", CONTACT)
+    assert refused.detail["reason"] == "run_version_changed"
+    (changed,) = refused.detail["changes"]
+    assert changed == ("tool_pack_version" if error is ToolPackChanged else "harness_version")
+
+
+@CHANGED
+async def test_a_decline_escalates_when_the_run_started_under_other_versions(
+    store: InMemoryRunStore,
+    make: Any,
+    protocol: Protocol,
+    tools: Tools,
+    registry: ToolRegistry,
+    clock: Clock,
+    pack: str,
+    harness: Harness,
+    error: type[Exception],
+) -> None:
+    """A decline runs no Tool code, so a person can always decline (issue #97)."""
+    token, runner = await changed_runner(
+        make, protocol, store, tools, clock, registry, pack, harness
+    )
+    run = await runner.resume(token, protocol, decider=CONTACT, decision="declined")
+    assert run.status is RunStatus.escalated
+    assert (await store.get_approval(token)).decision == "declined"
+    assert tools.invoked == ["hris.get_balance"]
+    last = (await store.list_audit_events("r1"))[-1]
+    assert (last.kind, last.detail["reason"]) == ("run.escalated", "approval_declined")
+
+
+@CHANGED
+async def test_a_decider_who_is_not_the_approver_is_refused_first_on_changed_versions(
+    store: InMemoryRunStore,
+    make: Any,
+    protocol: Protocol,
+    tools: Tools,
+    registry: ToolRegistry,
+    clock: Clock,
+    pack: str,
+    harness: Harness,
+    error: type[Exception],
+) -> None:
+    """Issue #182: the attempt is audited with the principal who made it."""
+    token, runner = await changed_runner(
+        make, protocol, store, tools, clock, registry, pack, harness
+    )
+    with pytest.raises(ApprovalNotAllowed):
+        await runner.resume(token, protocol, decider="bob@example.com")
+    refused = (await store.list_audit_events("r1"))[-1]
+    assert (refused.kind, refused.principal_id) == ("gate.refused", "bob@example.com")
+    assert refused.detail["reason"] == "not_approver"
 
 
 async def test_resume_continues_exactly_at_the_paused_step(

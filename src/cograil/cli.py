@@ -41,8 +41,8 @@ from cograil.errors import (
     RunClaimLost,
     RunNotFound,
     RunNotPaused,
+    RunVersionChanged,
     ToolNotFound,
-    ToolPackChanged,
     WorkspaceError,
 )
 from cograil.graph_cli import graph
@@ -269,9 +269,10 @@ def approve(
 
     Only the Approval's approver may decide it, never the Run's own principal; anyone else is
     refused and the attempt is audited. Declining, or an Approval past its expiry, escalates the
-    Run. A Run whose tools.yaml or python tool modules changed since it started is refused,
-    either way. With --fake-script, the plans are those for the rest of the Run. A local and
-    demo tool: --as is not authenticated, and DATABASE_URL is required.
+    Run. Approving a Run whose harness.yaml, tools.yaml or python tool modules changed since it
+    started is refused; it can still be declined. With --fake-script, the plans are those for
+    the rest of the Run. A local and demo tool: --as is not authenticated, and DATABASE_URL is
+    required.
 
     \b
     Exit codes: 0 completed; 1 error (unknown token, refused decision, Run not paused, missing
@@ -319,7 +320,7 @@ async def _decide(deciding: Awaitable[Run]) -> Run:
         RunNotPaused,
         ApprovalAlreadyDecided,
         RunClaimLost,
-        ToolPackChanged,
+        RunVersionChanged,
     ) as exc:
         fail(f"refused: {exc}")
     except CograilError as exc:
