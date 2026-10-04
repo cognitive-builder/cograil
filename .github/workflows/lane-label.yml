@@ -1,0 +1,31 @@
+name: Lane label
+
+# Turns the Lane and Testing answers in an issue form into labels, so every task
+# carries lane:1, lane:2 or lane:3 (CLAUDE.md, Lanes and Helpers). Re-runs when the
+# issue is edited, so changing the answer moves the label.
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  label:
+    if: contains(github.event.issue.body, '### Lane')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply labels from the form
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BODY: ${{ github.event.issue.body }}
+          NUMBER: ${{ github.event.issue.number }}
+          CURRENT_LABELS: ${{ toJSON(github.event.issue.labels.*.name) }}
+        run: |
+          { read -r add; read -r remove; } < <(printf '%s' "$BODY" | python3 scripts/lane_label.py)
+          if [ -n "$add" ]; then gh issue edit "$NUMBER" -R "$GITHUB_REPOSITORY" --add-label "$add"; fi
+          if [ -n "$remove" ]; then gh issue edit "$NUMBER" -R "$GITHUB_REPOSITORY" --remove-label "$remove"; fi
+          echo "added: ${add:-none}; removed: ${remove:-none}"

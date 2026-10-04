@@ -16,4 +16,6 @@ Three layers, the same shape as Cograil's own rails under the model:
 
 ## Consequences
 
-Sessions spend their credit on building, not re-running. A broken guard lets commands through rather than blocking work, and its own tests run in CI. Changes to the guard or its limits arrive only through reviewed pull requests, and settings changes apply to new sessions only.
+Sessions spend their credit on building, not re-running. Every test run in a chained command counts, loops and repeat modes are refused, and an unreadable tally blocks instead of resetting. A crash in the guard lets commands through rather than blocking work, and its own tests run in CI. Changes to the guard or its limits arrive only through reviewed pull requests, and settings changes apply to new sessions only.
+
+The guard reads command text, so it is a fence against accidental overuse, not a security boundary. It cannot see a test configuration edited to select other tests, a deleted tally file, or test options set in an earlier command. Those would be deliberate workarounds, which `CLAUDE.md` forbids and which the reviewer helper and CodeRabbit are positioned to notice. Cloud environments for this repo are not given a model API key, so real-model tests have nothing to call even if the guard were bypassed; keep it that way.

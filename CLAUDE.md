@@ -1,13 +1,13 @@
 # CLAUDE.md
 
-Cograil is an open-source runtime that turns a Markdown runbook into an AI colleague that follows it step by step, with a tool whitelist per step, a confirmation gate on every write, audience checks, and a full audit trail. Read `docs/Product Plan.md` once; this file is the daily contract.
+Cograil is an open-source runtime that turns a Markdown runbook into an AI colleague that follows it step by step, with a tool whitelist per step, a confirmation gate on every write, audience checks, and a full audit trail. This file is the daily contract. `docs/Product Plan.md` is background for people; sessions read only the sections an issue links to.
 
 ## How work arrives
 
 - Work arrives as a GitHub issue. One issue per session. The issue number is in the branch name: `claude/issue-<N>-<slug>`.
 - Read the issue, its acceptance criteria, the linked Epic, and any ADR it names before writing code.
 - If the issue is ambiguous, ask one question in a PR comment or an issue comment and stop. Do not guess at product behaviour.
-- If you discover a second problem, open a new issue with the `type:bug` or `type:chore` label and leave it. Never widen scope inside a PR.
+- If you discover a second problem, open a new issue with the `type:bug` or `type:chore` label and a lane label (`lane:1`, `lane:2` or `lane:3`), and leave it. Never widen scope inside a PR.
 
 ## Product rules that decide design arguments
 
@@ -100,12 +100,12 @@ Test in proportion to the change. GitHub runs the full suite, the integration te
 | Docs or config only | nothing | `scripts/check.sh quick` | never |
 | Small fix | that module's tests | `scripts/check.sh quick` | never |
 | Feature | tests for the touched modules | `scripts/check.sh full` | only if labelled `needs:e2e`, once |
-| Safety core (runner, gates, registry, access filtering) | touched modules plus safety tests | `scripts/check.sh full` | only to fix a failure GitHub reported |
+| Safety core (runner, gates, registry, access filtering) | touched modules plus safety tests | `scripts/check.sh full` | only if labelled `needs:e2e`, once; otherwise only to fix a failure GitHub reported |
 | Tests against real models | never | never | GitHub, on releases |
 
 Writing tests: one test per acceptance criterion; the safety tests (`GateRequired`, `ToolNotAllowed`, access pre-filter) whenever those areas change; no tests of what a library already guarantees; parametrize instead of copying; no new end-to-end tests unless the issue is labelled `needs:e2e`.
 
-Running tests: always through `scripts/check.sh`, preferably via the `checker` helper. A guard (`.claude/hooks/test_budget.py`) blocks runs beyond this session's budget in `.claude/test-budget.json`: 20 targeted, 5 repeats of one command, 2 full, 1 end-to-end, 0 real-model. When it blocks, push and let GitHub run the rest, or stop and report in the pull request. If the same failure survives three attempts, stop and describe it under "Open questions".
+Running tests: always through `scripts/check.sh`, preferably via the `checker` helper. A guard (`.claude/hooks/test_budget.py`) blocks runs beyond this session's budget in `.claude/test-budget.json`: 20 targeted, 5 repeats of one command, 2 full, 1 end-to-end, 0 real-model. Run one test command per call: the guard counts every run in a chained command and refuses loops and repeat modes. When it blocks, push and let GitHub run the rest, or stop and report in the pull request. If the same failure survives three attempts, stop and describe it under "Open questions".
 
 ## Coding standards
 
@@ -141,7 +141,7 @@ Running tests: always through `scripts/check.sh`, preferably via the `checker` h
 - Do not add a dependency without naming it and its licence in the PR body.
 - Do not commit generated files, credentials, `.env` files or client workspaces.
 - Do not push to `main`. Do not force-push.
-- Do not edit `.claude/settings.json`, `.claude/hooks/`, `.claude/test-budget.json` or `.claude/agents/` unless the issue asks for it.
+- Do not edit `.claude/settings.json`, `.claude/hooks/`, `.claude/test-budget.json` or `.claude/agents/` unless the issue asks for it, and never edit or delete the test budget's tally files.
 - Do not call real external systems from tests.
 - Do not implement a Teams adapter, multi-tenancy, a no-code editor or a Temporal backend before v0.5 unless an issue in that milestone asks for it.
 

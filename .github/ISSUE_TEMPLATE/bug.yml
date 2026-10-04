@@ -20,6 +20,17 @@ body:
     attributes:
       label: Minimal reproduction
   - type: dropdown
+    id: lane
+    attributes:
+      label: Lane
+      description: Decides the model, the effort and where the work runs (CLAUDE.md, Lanes and Helpers). The matching label is added automatically.
+      options:
+        - "Lane 2: Sonnet 5.5, high (standard feature)"
+        - "Lane 1: Opus 5.5, Ultracode (runner, gates, registry, access, evals, security)"
+        - "Lane 3: GLM via @claude on GitHub (docs and small chores)"
+    validations:
+      required: true
+  - type: dropdown
     id: area
     attributes:
       label: Area

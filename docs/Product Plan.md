@@ -380,9 +380,9 @@ sequenceDiagram
 
 ### Lanes, Helpers and Test Budget (Change 03)
 
-Every task carries a lane. Lane 1 (10 tasks: runner, gates, registry, access filtering, evals, security) runs on Opus 5.5 with Ultracode. Lane 2 (27 tasks) runs on Sonnet 5.5 at high effort, the repo default. Lane 3 (11 tasks: docs and small chores) runs through `@claude` on GitHub with GLM, using none of the credit. Inside sessions, role helpers in `.claude/agents/` do the cheap work: scout and checker on Haiku, reviewer and writer on Sonnet, architect on Opus for rare design questions. Testing follows the Testing Budget in `CLAUDE.md`, enforced by `.claude/hooks/test_budget.py` (ADR 0014).
+Every task carries a lane. Lane 1 (12 tasks: runner, gates, registry, access filtering, evals, security) runs on Opus 5.5 with Ultracode. Lane 2 (25 tasks) runs on Sonnet 5.5 at high effort, the repo default. Lane 3 (11 tasks: docs and small chores) runs through `@claude` on GitHub with GLM, using none of the credit. Inside sessions, role helpers in `.claude/agents/` do the cheap work: scout and checker on Haiku, reviewer and writer on Sonnet, architect on Opus for rare design questions. Testing follows the Testing Budget in `CLAUDE.md`, enforced by `.claude/hooks/test_budget.py` (ADR 0014). Lane labels come from the issue forms automatically (`.github/workflows/lane-label.yml`).
 
-Credit targets, to be replaced by measured numbers after the first three sessions: Lane 1 about $11 per task, Lane 2 about $3.75, Lane 3 $0, with $40 held in reserve. Every session's cost goes in the pinned Credit Ledger issue.
+Credit targets, to be replaced by measured numbers after the first three sessions: Lane 1 about $11 per task, Lane 2 about $3.75, Lane 3 $0, with $25 held in reserve. Every session's cost goes in the pinned Credit Ledger issue.
 
 ### Session hygiene
 
