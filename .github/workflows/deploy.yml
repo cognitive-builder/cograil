@@ -55,6 +55,7 @@ jobs:
           image: ${{ env.IMAGE }}
           env_vars: |
             COGRAIL_ENV=production
+            FORWARDED_ALLOW_IPS=*
           # name=secret:version. The values live in Secret Manager, not in GitHub.
           secrets: |
             DATABASE_URL=cograil-database-url:latest

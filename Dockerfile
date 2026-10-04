@@ -28,4 +28,6 @@ WORKDIR /app
 USER cograil
 # DATABASE_URL, COGRAIL_AUTH and the secrets come from the Cloud Run environment, never the image.
 # Cloud Run sets PORT; 8080 is the fallback for local runs.
-CMD ["sh", "-c", "exec uvicorn --factory cograil.api.wiring:app_from_env --host 0.0.0.0 --port ${PORT:-8080} --proxy-headers --forwarded-allow-ips='*'"]
+# Forwarded headers (X-Forwarded-For) are trusted only from $FORWARDED_ALLOW_IPS; uvicorn's default is
+# 127.0.0.1, so a directly published port cannot spoof them. The Cloud Run deploy sets it to '*' (#142).
+CMD ["sh", "-c", "exec uvicorn --factory cograil.api.wiring:app_from_env --host 0.0.0.0 --port ${PORT:-8080} --proxy-headers"]
