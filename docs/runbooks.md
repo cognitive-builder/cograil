@@ -79,7 +79,8 @@ tool call the model plans in a turn is checked before any of them runs:
   AuditEvent records the attempt. The decider is recorded
   as `decided_by` on the `gate.resumed` or `run.escalated` AuditEvent. The
   `cograil approve <token>` command that calls it comes with the CLI issue (#13). An Approval is
-  decided once, so of two racing resumes only one goes on.
+  decided once, so of two racing resumes only one goes on. The decision and the run's new status
+  are saved together in one store transaction, so a crash cannot leave one without the other.
 - A declined Approval, or one past its `expires_at`, escalates the run instead. The timeout comes
   from `harness.yaml` (`approvals.timeout_hours`, 72 by default). The status becomes `escalated`,
   and a `run.escalated` AuditEvent names the Colleague's `escalation_contact`.
@@ -87,6 +88,8 @@ tool call the model plans in a turn is checked before any of them runs:
   `decided_by` is empty.
 - `GateRequired` is still raised when a racing call spent the Approval first (the run fails
   closed), and when `run` is called on a run that is awaiting approval.
+- `RunEnded` is raised when `run` is called on a run that has escalated, failed or completed. Such
+  a run never starts again, and the call changes nothing.
 
 A failed tool call (`ToolExecutionError`) of a tool with a failure threshold goes back to the model
 as data until the threshold is reached. Then the run stops and escalates, with a `run.escalated`
