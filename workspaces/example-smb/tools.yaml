@@ -4,6 +4,11 @@ tools:
     scope: read
     description: Leave balances by type for a principal.
     args_schema: {type: object, properties: {employee: {type: string}}, required: [employee]}
+  - name: hris.get_manager
+    kind: python
+    scope: read
+    description: Approving manager for an employee.
+    args_schema: {type: object, properties: {employee: {type: string}}, required: [employee]}
   - name: hris.submit_leave
     kind: python
     scope: write
