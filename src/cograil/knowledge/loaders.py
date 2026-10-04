@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import zlib
 from pathlib import Path
 
 from pypdf import PdfReader
@@ -11,6 +12,16 @@ from cograil.errors import KnowledgeSourceError
 
 MARKDOWN_SUFFIXES = frozenset({".md", ".markdown"})
 SUFFIXES = MARKDOWN_SUFFIXES | {".pdf"}
+# pypdf raises more than PyPdfError on damaged files.
+_UNREADABLE = (
+    OSError,
+    UnicodeDecodeError,
+    PyPdfError,
+    ValueError,
+    KeyError,
+    zlib.error,
+    RecursionError,
+)
 
 
 def find_documents(folder: Path) -> list[Path]:
@@ -32,6 +43,6 @@ def read_document(path: Path) -> str:
             text = "\n\n".join(page.extract_text() for page in reader.pages)
         else:
             text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError, PyPdfError) as exc:
+    except _UNREADABLE as exc:
         raise KnowledgeSourceError(f"cannot read {path}: {exc}") from exc
     return text.replace("\x00", "")

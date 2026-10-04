@@ -7,7 +7,7 @@ writes nothing.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -63,6 +63,14 @@ def _plan(existing: Mapping[str, Chunk], wanted: Sequence[Chunk]) -> _Plan:
     return _Plan(write, remove, counts)
 
 
+_BATCH = 1000  # asyncpg takes at most 32767 parameters per statement
+
+
+def _batches[T](items: Sequence[T]) -> Iterator[Sequence[T]]:
+    for start in range(0, len(items), _BATCH):
+        yield items[start : start + _BATCH]
+
+
 def _upsert(write: Sequence[Chunk]) -> Insert:
     statement = insert(chunks_table).values([c.model_dump() for c in write])
     changes = {name: statement.excluded[name] for name in Chunk.model_fields if name != "id"}
@@ -108,10 +116,10 @@ class PostgresKnowledgeStore:
         async with self._engine.begin() as conn:
             rows = (await conn.execute(select(table).where(table.c.source == source))).mappings()
             plan = _plan({r["id"]: Chunk.model_validate(dict(r)) for r in rows}, chunks)
-            if plan.write:
-                await conn.execute(_upsert(plan.write))
-            if plan.remove:
-                await conn.execute(delete(table).where(table.c.id.in_(plan.remove)))
+            for batch in _batches(plan.write):
+                await conn.execute(_upsert(batch))
+            for ids in _batches(plan.remove):
+                await conn.execute(delete(table).where(table.c.id.in_(ids)))
         return plan.counts
 
     async def list_chunks(self, source: str) -> list[Chunk]:

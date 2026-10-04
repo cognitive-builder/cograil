@@ -127,6 +127,23 @@ def test_a_symlink_out_of_the_folder_is_refused(workspace: Path) -> None:
         build_chunks(workspace, source())
 
 
+def test_an_acl_symlink_out_of_the_folder_is_refused(workspace: Path) -> None:
+    outside = workspace.parent / "outside.acl.yaml"
+    outside.write_text("acl_groups: [everyone]\n")
+    (workspace / "kb" / "intro.md.acl.yaml").symlink_to(outside)
+    with pytest.raises(KnowledgeSourceError, match="outside"):
+        build_chunks(workspace, source())
+
+
+@pytest.mark.parametrize(
+    "content", [b"not a pdf", b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 9 0 R >>\nendobj\n"]
+)
+def test_a_damaged_pdf_is_a_knowledge_source_error(workspace: Path, content: bytes) -> None:
+    (workspace / "kb" / "broken.pdf").write_bytes(content)
+    with pytest.raises(KnowledgeSourceError, match=r"broken\.pdf"):
+        build_chunks(workspace, source())
+
+
 def test_an_unreadable_pdf_names_the_file(workspace: Path) -> None:
     (workspace / "kb" / "broken.pdf").write_bytes(b"not a pdf")
     with pytest.raises(KnowledgeSourceError, match=r"broken\.pdf"):
