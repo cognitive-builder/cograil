@@ -305,10 +305,12 @@ class RunStatus(StrEnum):
 
 class Principal(Entity):
     """`id` and `aliases` are normalised (cograil.identity), so spellings cannot split one
-    principal in two."""
+    principal in two. `oid` is the immutable Entra object id, kept exactly as Entra sends it
+    (lower-case); an Entra sign-in needs it to match too (cograil.api.auth)."""
 
     id: PrincipalId
     aliases: list[PrincipalId] = Field(default_factory=list)
+    oid: str | None = None
     groups: list[str] = Field(default_factory=list)
     kind: Literal["user", "system"] = "user"
 

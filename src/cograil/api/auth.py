@@ -13,6 +13,8 @@ Principal with `Depends(current_principal)`, which answers 401 when nobody is si
   callback returns the browser to after sign-in, so a link like `/?approval=<token>` survives
   it; any other `next` falls back to `/`. A sign-in is refused unless the id claim holds an email in
   one of COGRAIL_OIDC_ALLOWED_DOMAINS, verified by the provider when the claim is `email`.
+  An Entra sign-in (the id claim is `preferred_username`, or the token carries `oid`) is refused
+  unless the token's `oid` equals the `oid` of the principals.yaml entry the id names.
 - both: `GET /auth/me` returns the signed-in Principal.
 
 The Principal's groups are its workspace groups plus those of every Audience whose `claims`
@@ -42,6 +44,7 @@ SESSION_MAX_AGE = 8 * 60 * 60
 SESSION_KEY = "principal"
 NEXT_KEY = "next"  # where /auth/login was asked to bring the browser back to
 SCOPES = "openid email profile"
+ENTRA_OID = "oid"  # the Entra object id claim; Entra sends it with the profile scope
 
 type PrincipalResolver = Callable[[Request], Principal]
 
@@ -105,7 +108,18 @@ def principal_from_claims(
     principal = resolve_principal(workspace, principal_id, claims=values)
     if principal.kind != "user":
         raise LoginDenied(f"{principal.id} is a {principal.kind} principal; people only")
+    if settings.id_claim == "preferred_username" or ENTRA_OID in claims:
+        _require_entra_oid(principal, claims)
     return principal
+
+
+def _require_entra_oid(principal: Principal, claims: Mapping[str, Any]) -> None:
+    """An Entra UPN can be changed or handed to someone else, so the immutable `oid` must name
+    the same principals.yaml entry. Matching is exact: Entra sends object ids lower-case."""
+    if principal.oid is None:
+        raise LoginDenied(f"{principal.id} has no oid in principals.yaml; Entra needs one")
+    if claims.get(ENTRA_OID) != principal.oid:
+        raise LoginDenied(f"the oid claim does not match {principal.id}")
 
 
 def _claim_values(value: object) -> list[str]:

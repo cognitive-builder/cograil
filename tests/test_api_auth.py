@@ -2,6 +2,8 @@
 and group claims mapped through Audiences. The identity provider is a fake on an httpx
 transport, so authlib runs the real flow (discovery, code exchange, JWKS, ID token checks)."""
 
+import json
+import logging
 import time
 from typing import Any
 from urllib.parse import parse_qs, parse_qsl, urlsplit
@@ -37,6 +39,8 @@ OIDC_ENV = {
     "COGRAIL_SESSION_SECRET": SECRET,
 }
 ENTRA_ENV = {**OIDC_ENV, "COGRAIL_OIDC_ID_CLAIM": "preferred_username"}
+ALICE_OID = "8f0c2d4e-1a2b-4c3d-9e8f-00000000a11c"
+CAROL_OID = "8f0c2d4e-1a2b-4c3d-9e8f-000000000ca1"
 WORKSPACE = Workspace(
     name="w",
     colleagues=[],
@@ -47,11 +51,14 @@ WORKSPACE = Workspace(
         Audience(name="managers", groups=["managers"], claims=["managers@example.com"]),
     ],
     principals=[Principal(id="alice@example.com", aliases=["asmith@corp.example.com"],
-                          groups=["all-employees"]),
+                          oid=ALICE_OID, groups=["all-employees"]),
+                Principal(id="carol@example.com", oid=CAROL_OID),
+                Principal(id="dave@example.com"),
                 Principal(id="scheduler@example.com", kind="system")],
 )  # fmt: skip
 GOOGLE = {"email": "Bob@Example.com", "email_verified": True}
-ENTRA = {"preferred_username": "ASmith@corp.example.com", "groups": ["5b2c-finance-guid", "x"]}
+ENTRA = {"preferred_username": "ASmith@corp.example.com", "oid": ALICE_OID,
+         "groups": ["5b2c-finance-guid", "x"]}  # fmt: skip
 
 
 class FakeIdp:
@@ -233,3 +240,40 @@ def test_sign_in_is_refused_and_leaves_no_session(
     refused = sign_in(web, idp, claims, **query)
     assert refused.status_code == 403
     assert web.get("/auth/me").status_code == 401
+
+
+@pytest.mark.parametrize(
+    ("env", "claims", "reason"),
+    [
+        (ENTRA_ENV, {**ENTRA, "oid": CAROL_OID}, "oid claim does not match alice@example.com"),
+        (ENTRA_ENV, {**ENTRA, "preferred_username": "carol@example.com"},
+         "oid claim does not match carol@example.com"),
+        (ENTRA_ENV, {"preferred_username": "alice@example.com"},
+         "oid claim does not match alice@example.com"),
+        (ENTRA_ENV, {**ENTRA, "oid": ALICE_OID.upper()},
+         "oid claim does not match alice@example.com"),
+        (ENTRA_ENV, {"preferred_username": "dave@example.com", "oid": ALICE_OID},
+         "dave@example.com has no oid"),
+        (ENTRA_ENV, {"preferred_username": "eve@example.com", "oid": ALICE_OID},
+         "eve@example.com has no oid"),
+        (OIDC_ENV, {"email": "carol@example.com", "email_verified": True, "oid": ALICE_OID},
+         "oid claim does not match carol@example.com"),
+    ],
+    ids=["mismatched-oid", "mismatched-upn", "missing-oid-claim", "oid-case",
+         "principal-without-oid", "unknown-principal", "oid-under-email-claim"],
+)  # fmt: skip
+def test_entra_sign_in_needs_the_oid_and_upn_of_one_principal(
+    idp: FakeIdp,
+    caplog: pytest.LogCaptureFixture,
+    env: dict[str, str],
+    claims: dict[str, Any],
+    reason: str,
+) -> None:
+    """Issue #134: a changed or reassigned UPN alone cannot sign in as an existing principal."""
+    web = client(env, idp)
+    with caplog.at_level(logging.WARNING, logger="cograil"):
+        refused = sign_in(web, idp, claims)
+    assert refused.status_code == 403
+    assert web.get("/auth/me").status_code == 401
+    denied = [e for r in caplog.records if (e := json.loads(r.message))["event"] == "auth.denied"]
+    assert len(denied) == 1 and reason in denied[0]["reason"]

@@ -33,7 +33,7 @@ With `COGRAIL_AUTH=oidc`, Cograil uses the authorization code flow (through auth
 | `GET /auth/login` | Redirects the browser to the provider. A `next` query parameter (a same-site path, such as `/?approval=<token>`) is where `/auth/callback` returns the browser after sign-in. |
 | `GET /auth/callback` | Exchanges the code and checks the ID token: signature (through the provider's JWKS), issuer, audience, nonce and expiry. |
 | `POST /auth/logout` | Clears the session. |
-| `GET /auth/me` | Returns the Principal: `id`, `aliases`, `groups` and `kind`. It works in both modes. |
+| `GET /auth/me` | Returns the Principal: `id`, `aliases`, `oid`, `groups` and `kind`. It works in both modes. |
 
 After sign-in, the browser is redirected to the `next` path its `/auth/login` link carried — `/` when there was none, and `/` too when the path points anywhere but this service, so sign-in cannot be turned into an open redirect.
 
@@ -73,6 +73,7 @@ Cograil answers 403 and stores nothing when:
 - the id claim is `email` and `email_verified` is not true;
 - the email's domain is not in `COGRAIL_OIDC_ALLOWED_DOMAINS`;
 - the email names a Principal of `kind: system` in `principals.yaml` (only people sign in);
+- it is an Entra sign-in and the token's `oid` is not the `oid` of the Principal the email names (see [Setting Up Entra ID](#setting-up-entra-id));
 - the provider returns an error, or a `state`, `nonce`, issuer, audience or signature check fails.
 
 Each refusal logs `auth.denied`. Each sign-in logs `auth.signed_in`.
@@ -93,7 +94,7 @@ principals:
 
 `cograil validate` rejects a Workspace when:
 
-- an id or alias names two Principals;
+- an id, alias or `oid` names two Principals;
 - a Colleague's `escalation_contact` is an alias. Use the canonical id.
 
 `cograil approve --as <alias>` decides as the canonical Principal.
@@ -157,8 +158,27 @@ COGRAIL_SESSION_SECRET=<a generated secret>
 
 - The metadata URL names your tenant, so other tenants cannot sign in.
 - Entra's `email` claim is optional and not verified. With the default `email` claim, sign-in is refused. That is why `COGRAIL_OIDC_ID_CLAIM` is `preferred_username`.
-- `preferred_username` is the user's sign-in name (UPN). An administrator can change it, and Microsoft does not recommend it for authorisation. Cograil uses it because Principals, approvers and escalation contacts are emails. When a UPN changes, add the new one to the Principal's `aliases` (or change its `id`), and never give an old UPN to another person.
+- `preferred_username` is the user's sign-in name (UPN). An administrator can change it or give it to someone else, so Cograil does not trust it alone. It also checks the user's object id, the `oid` claim, which never changes.
 - Put the group object ids in the `claims` of your Audiences.
+
+### The Object Id
+
+An Entra sign-in is accepted only when the UPN and the `oid` both match the same entry in `principals.yaml`. Give every person who signs in with Entra an `oid`:
+
+```yaml
+# principals.yaml
+principals:
+  - id: alice@example.com
+    aliases: [asmith@corp.example.com]
+    oid: 8f0c2d4e-1a2b-4c3d-9e8f-00000000a11c   # Object ID in the Entra admin centre
+    groups: [all-employees]
+```
+
+- Copy the Object ID from the user's page in the Entra admin centre. Write it in lower case, as Entra sends it. Matching is exact and case-sensitive.
+- A person with no `oid` in `principals.yaml`, or with no entry at all, cannot sign in with Entra.
+- When the UPN and the `oid` name different entries, or the token has no `oid`, sign-in is refused and `auth.denied` is logged.
+- Cograil treats a sign-in as Entra when `COGRAIL_OIDC_ID_CLAIM` is `preferred_username` or the ID token carries an `oid` claim.
+- When a UPN changes, add the new one to the Principal's `aliases` (or change its `id`). The `oid` stays the same. A reassigned UPN cannot sign in as the old Principal, because the new person's `oid` differs.
 
 ### Group Overage
 

@@ -95,8 +95,10 @@ def test_undecodable_file_is_a_workspace_error(tmp_path: Path) -> None:
          "boss@example.com", "x@example.com names both a@example.com and x@example.com"),
         ("[{id: a@example.com, aliases: [hr@example.com]}]",
          "HR@example.com", "escalation_contact hr@example.com is an alias; use a@example.com"),
+        ("[{id: a@example.com, oid: 1f2e}, {id: b@example.com, oid: 1f2e}]",
+         "boss@example.com", "1f2e names both a@example.com and b@example.com"),
     ],
-    ids=["shared-name", "alias-contact"],
+    ids=["shared-name", "alias-contact", "shared-oid"],
 )  # fmt: skip
 def test_principal_names_must_be_unambiguous(
     tmp_path: Path, principals: str, contact: str, problem: str
