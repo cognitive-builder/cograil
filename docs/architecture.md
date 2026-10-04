@@ -128,8 +128,8 @@ of kind `system`) is allowed exactly when the Protocol allows scheduled executio
 
 - The web and Slack channels, and the API in front of them (issues #17, #18, #27). The CLI is the only
   entry point, and `--as` is not authenticated.
-- The `knowledge` and `directory` Tool kinds, and with them retrieval's ACL pre-filter.
-  `build_registry` builds `python`, `rest`, `mcp` and `decision`.
+- The `directory` Tool kind. `build_registry` builds `python`, `rest`, `mcp` and `decision`. The
+  `knowledge` kind registers from `knowledge/tool.py` with its ACL pre-filter (issue #23).
 - OpenTelemetry spans. `observability.py` writes structured JSON log lines today.
 - Approver routing: decision tables exist now, and `approval_routing` returns an approver
   tier. The approver of a gate is still the Colleague's escalation contact until a directory

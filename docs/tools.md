@@ -2,7 +2,7 @@
 
 The tool registry turns a Tool name into something the runner can call. Before a Tool runs, the registry checks the arguments against the Tool's `args_schema`. This is a JSON Schema. The draft comes from its `$schema` field and defaults to 2020-12. Formats such as `date` are checked. A failed check raises `ToolArgumentError` and the Tool does not run. Every call, successful or not, records a `ToolCall` and a `tool.called` AuditEvent through the RunStore. A `scope: write` Tool also records a `tool.started` AuditEvent after the check and before it runs, so a write that crashes partway still leaves a record. It names the Tool and the step but not the arguments; those stay in the `ToolCall`.
 
-The registry does not decide who may call a Tool. Whitelists and gates stay with the runner. This page covers the `python`, `rest`, `mcp` and `decision` kinds. The `knowledge` and `directory` kinds register from their own modules.
+The registry does not decide who may call a Tool. Whitelists and gates stay with the runner. This page covers the `python`, `rest`, `mcp` and `decision` kinds. The `knowledge` and `directory` kinds register from their own modules. They use `register_entitled`. Its invoke also receives the calling principal's groups from the CallContext. The runner sets them from the Run's principal, so the model cannot widen access.
 
 ## Kind: python
 
@@ -119,6 +119,10 @@ tools:
 A `stdio` server needs `command`, which the registry starts as a local process, so treat it as trusted configuration. An `http` server needs `url` and uses streamable HTTP. This kind needs the `mcp` extra: `pip install cograil[mcp]`.
 
 The server's output is returned as data, never as instructions. Because Protocol `@` references can only name Tools whose names are word characters and dots, a protocol can reference an MCP Tool only when both the entry name and the server's tool name use those characters.
+
+## Kind: knowledge
+
+A `knowledge` Tool searches the Chunks of the Workspace's KnowledgeSources as the calling principal, and only returns Chunks that principal may see. It takes a `query` and an optional `limit`. For the arguments, the result shape and how the filter works, see [Searching](knowledge.md#searching).
 
 ## Kind: decision
 

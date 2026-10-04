@@ -1,8 +1,10 @@
-"""KnowledgeStore: where the Chunks of each KnowledgeSource are kept.
+"""KnowledgeStore: where the Chunks of each KnowledgeSource are kept and searched.
 
 `sync_chunks` makes a source hold exactly the Chunks given: it adds new ones, rewrites changed
 ones, removes the rest and leaves equal ones alone, so a second sync of unchanged files
-writes nothing.
+writes nothing. Each Chunk written is embedded by the store's Embedder; a Postgres Chunk
+stored before it had an embedding counts as changed. `search` returns the Chunks a set of
+groups may see, most similar first (search.py).
 """
 
 from __future__ import annotations
@@ -16,6 +18,10 @@ from sqlalchemy.dialects.postgresql import Insert, insert
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from cograil.domain import Chunk
+from cograil.errors import KnowledgeSourceError
+from cograil.knowledge.embedding import Embedder, HashingEmbedder
+from cograil.knowledge.search import ScoredChunk, entitled, rank, search_statement
+from cograil.store_tables import EMBEDDING_DIMENSIONS
 from cograil.store_tables import chunks as chunks_table
 
 
@@ -41,6 +47,13 @@ class KnowledgeStore(Protocol):
         """The Chunks of `source`, ordered by id."""
         ...
 
+    async def search(
+        self, query: str, groups: Sequence[str], sources: Sequence[str], limit: int
+    ) -> list[ScoredChunk]:
+        """At most `limit` Chunks of `sources` that name one of `groups`, most similar to
+        `query` first. Only Chunks the groups may see are ranked at all."""
+        ...
+
 
 @dataclass(frozen=True)
 class _Plan:
@@ -49,8 +62,10 @@ class _Plan:
     counts: SyncCounts
 
 
-def _plan(existing: Mapping[str, Chunk], wanted: Sequence[Chunk]) -> _Plan:
-    write = [c for c in wanted if existing.get(c.id) != c]
+def _plan(
+    existing: Mapping[str, Chunk], wanted: Sequence[Chunk], stale: frozenset[str] = frozenset()
+) -> _Plan:
+    write = [c for c in wanted if c.id in stale or existing.get(c.id) != c]
     wanted_ids = {c.id for c in wanted}
     remove = sorted(set(existing) - wanted_ids)
     added = sum(1 for c in write if c.id not in existing)
@@ -71,52 +86,85 @@ def _batches[T](items: Sequence[T]) -> Iterator[Sequence[T]]:
         yield items[start : start + _BATCH]
 
 
-def _upsert(write: Sequence[Chunk]) -> Insert:
-    statement = insert(chunks_table).values([c.model_dump() for c in write])
-    changes = {name: statement.excluded[name] for name in Chunk.model_fields if name != "id"}
+def _upsert(write: Sequence[tuple[Chunk, list[float]]]) -> Insert:
+    rows = [c.model_dump() | {"embedding": v} for c, v in write]
+    statement = insert(chunks_table).values(rows)
+    names = [*Chunk.model_fields, "embedding"]
+    changes = {name: statement.excluded[name] for name in names if name != "id"}
     return statement.on_conflict_do_update(index_elements=["id"], set_=changes)
+
+
+def _nothing_to_search(groups: Sequence[str], sources: Sequence[str], limit: int) -> bool:
+    return not groups or not sources or limit < 1
 
 
 class InMemoryKnowledgeStore:
     """Dict-backed KnowledgeStore for unit tests and local runs without a database."""
 
-    def __init__(self) -> None:
-        self._chunks: dict[str, dict[str, Chunk]] = {}
+    def __init__(self, embedder: Embedder | None = None) -> None:
+        self._embedder = embedder or HashingEmbedder()
+        self._chunks: dict[str, dict[str, tuple[Chunk, list[float]]]] = {}
 
     async def sync_chunks(self, source: str, chunks: Sequence[Chunk]) -> SyncCounts:
         held = self._chunks.setdefault(source, {})
-        plan = _plan(held, chunks)
-        for chunk in plan.write:
-            held[chunk.id] = chunk.model_copy(deep=True)
+        plan = _plan({i: c for i, (c, _) in held.items()}, chunks)
+        vectors = await self._embedder.embed([c.text for c in plan.write])
+        for chunk, vector in zip(plan.write, vectors, strict=True):
+            held[chunk.id] = (chunk.model_copy(deep=True), vector)
         for chunk_id in plan.remove:
             del held[chunk_id]
         return plan.counts
 
     async def list_chunks(self, source: str) -> list[Chunk]:
         held = self._chunks.get(source, {})
-        return [held[i].model_copy(deep=True) for i in sorted(held)]
+        return [held[i][0].model_copy(deep=True) for i in sorted(held)]
+
+    async def search(
+        self, query: str, groups: Sequence[str], sources: Sequence[str], limit: int
+    ) -> list[ScoredChunk]:
+        if _nothing_to_search(groups, sources, limit):
+            return []
+        allowed = [
+            (chunk, vector)
+            for source in dict.fromkeys(sources)
+            for chunk, vector in self._chunks.get(source, {}).values()
+            if entitled(chunk, groups)
+        ]
+        [vector] = await self._embedder.embed([query])
+        return rank(allowed, vector, limit)
 
 
 class PostgresKnowledgeStore:
     """KnowledgeStore on Postgres through SQLAlchemy async Core. Schema comes from Alembic."""
 
-    def __init__(self, engine: AsyncEngine) -> None:
+    def __init__(self, engine: AsyncEngine, embedder: Embedder | None = None) -> None:
         self._engine = engine
+        self._embedder = embedder or HashingEmbedder()
+        if self._embedder.dimensions != EMBEDDING_DIMENSIONS:
+            raise KnowledgeSourceError(
+                f"the embedder gives {self._embedder.dimensions} dimensions; "
+                f"chunks.embedding holds {EMBEDDING_DIMENSIONS}"
+            )
 
     @classmethod
-    def from_url(cls, url: str) -> PostgresKnowledgeStore:
+    def from_url(cls, url: str, embedder: Embedder | None = None) -> PostgresKnowledgeStore:
         """`url` is a SQLAlchemy URL such as postgresql+asyncpg://user:pw@host/db."""
-        return cls(create_async_engine(url))
+        return cls(create_async_engine(url), embedder)
 
     async def dispose(self) -> None:
         await self._engine.dispose()
 
     async def sync_chunks(self, source: str, chunks: Sequence[Chunk]) -> SyncCounts:
         table = chunks_table
+        columns = [table.c[name] for name in Chunk.model_fields]
+        query = select(*columns, table.c.embedding.is_(None).label("stale"))
         async with self._engine.begin() as conn:
-            rows = (await conn.execute(select(table).where(table.c.source == source))).mappings()
-            plan = _plan({r["id"]: Chunk.model_validate(dict(r)) for r in rows}, chunks)
-            for batch in _batches(plan.write):
+            rows = (await conn.execute(query.where(table.c.source == source))).mappings().all()
+            existing = {r["id"]: Chunk.model_validate({n: r[n] for n in Chunk.model_fields})
+                        for r in rows}  # fmt: skip
+            plan = _plan(existing, chunks, frozenset(r["id"] for r in rows if r["stale"]))
+            vectors = await self._embedder.embed([c.text for c in plan.write])
+            for batch in _batches(list(zip(plan.write, vectors, strict=True))):
                 await conn.execute(_upsert(batch))
             for ids in _batches(plan.remove):
                 await conn.execute(delete(table).where(table.c.id.in_(ids)))
@@ -124,15 +172,34 @@ class PostgresKnowledgeStore:
 
     async def list_chunks(self, source: str) -> list[Chunk]:
         table = chunks_table
-        query = select(table).where(table.c.source == source).order_by(table.c.id)
+        columns = [table.c[name] for name in Chunk.model_fields]
+        query = select(*columns).where(table.c.source == source).order_by(table.c.id)
         async with self._engine.connect() as conn:
             rows = (await conn.execute(query)).mappings().all()
         return [Chunk.model_validate(dict(r)) for r in rows]
+
+    async def search(
+        self, query: str, groups: Sequence[str], sources: Sequence[str], limit: int
+    ) -> list[ScoredChunk]:
+        if _nothing_to_search(groups, sources, limit):
+            return []
+        [vector] = await self._embedder.embed([query])
+        if not any(vector):
+            return []  # a query without words is similar to nothing
+        statement = search_statement(vector, groups, sources, limit)
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(statement)).mappings().all()
+        return [
+            ScoredChunk(Chunk.model_validate({n: r[n] for n in Chunk.model_fields}),
+                        1.0 - r["distance"])
+            for r in rows
+        ]  # fmt: skip
 
 
 __all__ = [
     "InMemoryKnowledgeStore",
     "KnowledgeStore",
     "PostgresKnowledgeStore",
+    "ScoredChunk",
     "SyncCounts",
 ]

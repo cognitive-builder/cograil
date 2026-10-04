@@ -226,7 +226,8 @@ class Runner:
         return node
 
     async def _run_step(self, step: Step, run: Run, protocol: Protocol) -> Run:
-        ctx = CallContext(run_id=run.id, step=step.number, principal_id=run.principal_id)
+        groups = tuple(run.principal.groups)
+        ctx = CallContext(run.id, step.number, run.principal_id, groups)
         tools = self._context.tools_for(step, self._registry.get)
         progress = paused_progress(run, step.number)
         if progress is None:

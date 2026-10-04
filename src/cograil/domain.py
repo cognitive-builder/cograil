@@ -157,11 +157,12 @@ class Audience(Entity):
 
 class KnowledgeSource(Entity):
     """A folder of Markdown and PDF files. `chunk_size` and `chunk_overlap` count characters;
-    `acl_groups` is the default for files with no sidecar or folder ACL file."""
+    `acl_groups` is the default for files with no sidecar or folder ACL file, and the most any
+    ACL file can allow: an ACL file only narrows it."""
 
     name: str
     path: str
-    acl_groups: list[str]
+    acl_groups: list[str] = Field(min_length=1)
     chunk_size: int = Field(default=800, gt=0)
     chunk_overlap: int = Field(default=120, ge=0)
 
@@ -179,7 +180,7 @@ class Chunk(Entity):
     source: str
     source_uri: str
     text: str
-    acl_groups: list[str]
+    acl_groups: list[str] = Field(min_length=1)
 
 
 class DecisionField(Entity):
