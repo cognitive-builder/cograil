@@ -13,6 +13,7 @@ from cograil.domain import (
     Principal,
     Run,
     RunStatus,
+    Tiers,
     Trigger,
 )
 from cograil.parser import parse_protocol
@@ -27,11 +28,12 @@ CONTACT = "ops@example.com"
 HARPER = Colleague(name="harper", role="HR", escalation_contact=CONTACT, protocols=["demo"])
 PROTOCOL = parse_protocol('Protocol: demo\n1. Step "One": Do it.\n')
 PRICING = {"fake-model": Price(input_per_mtok=1.0, output_per_mtok=1.0)}
+TIERS = Tiers(small="fake-model", standard="fake-model", strong="fake-model")
 
 
 def harness(monthly_usd: float | None = 1.0, alert_at: float = 0.5) -> Harness:
     budget = BudgetSettings(monthly_usd=monthly_usd, alert_at=alert_at)
-    return Harness(budget=budget, pricing=PRICING)
+    return Harness(budget=budget, tiers=TIERS, pricing=PRICING)
 
 
 def a_run(run_id: str, *, workspace: str = "w", cost: float = 0.0, at: datetime = NOW) -> Run:
@@ -119,5 +121,7 @@ async def test_a_workspace_without_a_cap_is_never_refused_or_alerted() -> None:
          datetime(2027, 1, 1, tzinfo=UTC)),
     ],
 )  # fmt: skip
-def test_the_month_is_the_calendar_month_in_utc(now: datetime, start: datetime, end: datetime) -> None:
+def test_the_month_is_the_calendar_month_in_utc(
+    now: datetime, start: datetime, end: datetime
+) -> None:
     assert month_window(now) == (start, end)

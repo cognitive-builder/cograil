@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from datetime import datetime
 
-from cograil.domain import Approval, AuditEvent, Run, ToolCall
+from cograil.domain import Approval, AuditEvent, MonthUsage, Run, ToolCall
 from cograil.store import ApprovalDecision, RunStore
 
 _DETAIL_KEYS = ("step", "tool", "reason", "token", "approver", "decided_by", "error")
@@ -43,6 +43,9 @@ class ProgressStore:
 
     async def list_runs(self, limit: int = 20, *, principal_id: str | None = None) -> list[Run]:
         return await self._inner.list_runs(limit, principal_id=principal_id)
+
+    async def month_usage(self, workspace: str, since: datetime, until: datetime) -> MonthUsage:
+        return await self._inner.month_usage(workspace, since, until)
 
     async def update_run(self, run: Run) -> None:
         await self._inner.update_run(run)

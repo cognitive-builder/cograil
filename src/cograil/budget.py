@@ -64,13 +64,22 @@ class Budget:
         if usage.alerts or usage.spend_usd < threshold:
             return
         contact = self._colleague.escalation_contact
-        detail = {"workspace": run.workspace, "month": f"{since:%Y-%m}", "contact": contact,
-                  "spend_usd": usage.spend_usd, "monthly_usd": cap,
-                  "alert_at": self._settings.alert_at}  # fmt: skip
-        await self._store.append_audit_event(
-            AuditEvent(run_id=run.id, at=self._clock(), principal_id=run.principal_id,
-                       kind="budget.alerted", detail=detail)  # fmt: skip
+        detail = {
+            "workspace": run.workspace,
+            "month": f"{since:%Y-%m}",
+            "contact": contact,
+            "spend_usd": usage.spend_usd,
+            "monthly_usd": cap,
+            "alert_at": self._settings.alert_at,
+        }
+        event = AuditEvent(
+            run_id=run.id,
+            at=self._clock(),
+            principal_id=run.principal_id,
+            kind="budget.alerted",
+            detail=detail,
         )
+        await self._store.append_audit_event(event)
         log_event("budget.alerted", logging.WARNING, run_id=run.id, workspace=run.workspace,
                   contact=contact, spend_usd=usage.spend_usd)  # fmt: skip
 
