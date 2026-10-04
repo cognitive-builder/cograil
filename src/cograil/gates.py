@@ -22,8 +22,8 @@ Colleague's escalation_contact, as does a Tool reaching its FailureThreshold
 expires after harness.yaml's approvals.timeout_hours.
 
 Interim rules until their issues land: the approver is the Colleague's escalation_contact
-(approver routing from decision tables needs the decision table evaluator and a directory
-lookup from tier to principal), and escalating records the Run's status and a
+(approver routing from decision tables still needs a directory lookup from tier to
+principal), and escalating records the Run's status and a
 `run.escalated` AuditEvent naming the contact; delivering it is the channels' job.
 """
 

@@ -163,6 +163,7 @@ and layout do not. The `run.started` AuditEvent records it too.
 cograil validate workspaces/example-smb
 cograil run workspaces/example-smb --protocol leave_request --as alice@example.com
 cograil approve <token> --as hr-ops@example.com
+cograil decide approval_routing --workspace workspaces/example-smb --input duration_days=12 --input leave_type=annual --input requester_role=staff
 ```
 
 `validate` reports every problem in the workspace, one `invalid:` line each, not just the first.
@@ -177,6 +178,10 @@ outlive the process, so both commands need `DATABASE_URL`. `run` uses Anthropic
 (`ANTHROPIC_API_KEY`). `--fake-script FILE` uses the FakeProvider with the plans in a YAML file,
 for demos and tests: a list of `{text, done, tool_calls: [{tool, args}]}`. With `approve`, the
 script holds the plans for the rest of the run.
+
+`decide` evaluates one decision table by hand, to test it. It starts no run, calls no model and
+writes no AuditEvent. Give each input as `--input name=value`; the value is read as the input's
+declared type. It needs no `DATABASE_URL`. See "Kind: decision" in the tools page.
 
 `--as` is taken at face value. This is a local and demo tool, and nothing in it authenticates the
 principal. The approver check still applies, since `approve` goes through the runner: anyone but

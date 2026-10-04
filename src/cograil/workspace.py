@@ -1,8 +1,10 @@
 """Load a workspace folder into a Workspace (ADR 0004).
 
 Layout: tools.yaml, colleagues/*.yaml and protocols/*.md are required;
-connections.yaml, audiences.yaml, knowledge.yaml and principals.yaml are optional and default
-to empty; harness.yaml is optional and defaults to the Harness defaults (ADR 0012).
+connections.yaml, audiences.yaml, knowledge.yaml, principals.yaml and decisions/*.yaml are
+optional and default to empty; harness.yaml is optional and defaults to the Harness defaults
+(ADR 0012). Each decision table must be named after its file and pass the checks of
+decisions.py, and each `decision` Tool must name a table that loaded (ADR 0009).
 Every failure is a WorkspaceError whose message names the offending file. `check_workspace`
 keeps going after a failure and reports every problem it can find; `load_workspace` raises one
 WorkspaceError carrying all of them, one per line.
@@ -18,10 +20,12 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ValidationError
 
+from cograil.decisions import DecisionTable, table_name
 from cograil.domain import (
     Audience,
     Colleague,
     Connection,
+    Decision,
     Harness,
     KnowledgeSource,
     Principal,
@@ -29,7 +33,7 @@ from cograil.domain import (
     Tool,
     Workspace,
 )
-from cograil.errors import ProtocolParseError, WorkspaceError
+from cograil.errors import DecisionError, ProtocolParseError, WorkspaceError
 from cograil.parser import parse_protocol
 
 
@@ -82,10 +86,38 @@ def check_workspace(path: Path | str) -> WorkspaceReport:
         connections=_load_list(problems, root / "connections.yaml", "connections", Connection),
         audiences=_load_list(problems, root / "audiences.yaml", "audiences", Audience),
         knowledge=_load_list(problems, root / "knowledge.yaml", "knowledge", KnowledgeSource),
+        decisions=_load_decisions(problems, root / "decisions"),
         principals=_load_list(problems, root / "principals.yaml", "principals", Principal),
         harness=problems.attempt(_load_harness, root / "harness.yaml") or Harness(),
     )
+    problems.found.extend(_unknown_tables(workspace, root / "tools.yaml"))
     return WorkspaceReport(workspace, problems.found)
+
+
+def _load_decisions(problems: _Problems, folder: Path) -> list[Decision]:
+    files = sorted(folder.glob("*.yaml")) if folder.is_dir() else []
+    loaded = (problems.attempt(_decision, file) for file in files)
+    return [decision for decision in loaded if decision is not None]
+
+
+def _decision(file: Path) -> Decision:
+    decision = _build(Decision, _read_yaml(file), file)
+    if decision.name != file.stem:
+        raise WorkspaceError(f"{file}: the table is named {decision.name!r}, not {file.stem!r}")
+    try:
+        DecisionTable(decision)
+    except DecisionError as exc:
+        raise WorkspaceError(f"{file}: {exc}") from exc
+    return decision
+
+
+def _unknown_tables(workspace: Workspace, file: Path) -> list[str]:
+    tables = {decision.name for decision in workspace.decisions}
+    return [
+        f"{file}: {tool.name} needs decisions/{table_name(tool)}.yaml"
+        for tool in workspace.tools
+        if tool.kind == "decision" and table_name(tool) not in tables
+    ]
 
 
 def _load_harness(file: Path) -> Harness:

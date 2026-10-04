@@ -172,11 +172,11 @@ def test_run_refuses_a_workspace_whose_tools_are_not_built_yet(
 ) -> None:
     result = runner.invoke(
         app,
-        ["run", str(EXAMPLE), "--protocol", "leave_request", "--as", ALICE,
+        ["run", str(EXAMPLE), "--protocol", "policy_question", "--as", ALICE,
          "--fake-script", script(tmp_path, "[]")],
     )  # fmt: skip
     assert result.exit_code == cograil.cli.EXIT_ERROR
-    assert "step 3: tool decide.approval_routing (kind decision) is not available" in result.output
+    assert "step 1: tool knowledge.search (kind knowledge) is not available" in result.output
     assert asyncio.run(shared_store.list_runs()) == []
 
 
