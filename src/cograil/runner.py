@@ -59,6 +59,7 @@ from cograil.domain import (
     Run,
     RunStatus,
     Step,
+    Tier,
     Tool,
 )
 from cograil.errors import (
@@ -76,7 +77,15 @@ from cograil.gates import (
     require_approval,
     utc_now,
 )
-from cograil.harness import call_cost, check_bounds, harness_version
+from cograil.harness import (
+    call_cost,
+    check_bounds,
+    escalation_tier,
+    harness_version,
+    step_effort,
+    step_tier,
+    tier_model,
+)
 from cograil.observability import log_event
 from cograil.providers.base import Message, Plan, PlannedToolCall, Provider
 from cograil.registry import UNVERSIONED, CallContext, ToolRegistry
@@ -150,6 +159,7 @@ class Runner:
         self._provider = provider
         self._registry = registry
         self._store = store
+        self._colleague = colleague
         self._claims = RunClaims(store, clock, registry.redactor)
         self._harness = harness or Harness()
         self._context = ContextBuilder(self._harness)
@@ -245,12 +255,13 @@ class Runner:
             progress = StepProgress(step=step.number, messages=opening.messages)
             context = add_to_ledger(run.context, step.number, opening.tokens, restart=True)
             run = run.model_copy(update={"context": context})
+        tier = step_tier(self._colleague, protocol, step)
         context = {name: value for name, value in run.context.items() if name != "paused"}
         run = run.model_copy(update={"context": context})
         while True:
             if not progress.planned:
                 try:
-                    run, plan = await self._turn(run, step, progress, tools)
+                    run, plan = await self._turn(run, step, tier, progress, tools)
                 except LoopBudgetExceeded as exc:
                     return await self._gates.bounded(run, step.number, exc)
                 if not plan.tool_calls:
@@ -291,20 +302,40 @@ class Runner:
         return run.model_copy(update={"context": context})
 
     async def _turn(
-        self, run: Run, step: Step, progress: StepProgress, tools: list[Tool]
+        self, run: Run, step: Step, tier: Tier, progress: StepProgress, tools: list[Tool]
     ) -> tuple[Run, Plan]:
-        """One provider call inside the Step's bounds; raises LoopBudgetExceeded past them."""
+        """One provider call inside the Step's bounds; raises LoopBudgetExceeded past them.
+
+        A small-tier step_complete below the harness's min_confidence is discarded, before
+        anything in it runs, and asked again one tier up (ADR 0010); `tier.escalated` records it.
+        """
         check_bounds(self._harness, step, turns=progress.turn, tokens=progress.tokens,
                      cost_usd=run.cost_usd)  # fmt: skip
-        plan = await self._provider.plan(step, progress.messages, tools)
+        run, plan = await self._ask(run, step, tier, progress, tools)
+        confidence = plan.step_complete.confidence if plan.step_complete else None
+        higher = escalation_tier(self._harness, tier, confidence)
+        if higher is not None:
+            detail = {"step": step.number, "from_tier": tier, "to_tier": higher,
+                      "confidence": confidence, "reason": "low confidence"}  # fmt: skip
+            await self._claims.audit(run, "tier.escalated", detail)
+            check_bounds(self._harness, step, turns=progress.turn, tokens=progress.tokens,
+                         cost_usd=run.cost_usd)  # fmt: skip
+            run, plan = await self._ask(run, step, higher, progress, tools)
         progress.turn += 1
-        usage = plan.usage
-        progress.tokens += usage.input_tokens + usage.output_tokens
-        cost = call_cost(self._harness, plan.model, usage.input_tokens, usage.output_tokens)
-        run = run.model_copy(update={"cost_usd": run.cost_usd + cost})
         if plan.text:
             progress.messages.append(Message(role="assistant", content=plan.text))
         return run, plan
+
+    async def _ask(
+        self, run: Run, step: Step, tier: Tier, progress: StepProgress, tools: list[Tool]
+    ) -> tuple[Run, Plan]:
+        """One provider call on `tier`'s model; its tokens count against the Step, cost the Run."""
+        model, effort = tier_model(self._harness, tier), step_effort(self._harness, step)
+        plan = await self._provider.plan(step, progress.messages, tools, model=model, effort=effort)
+        usage = plan.usage
+        progress.tokens += usage.input_tokens + usage.output_tokens
+        cost = call_cost(self._harness, plan.model, usage.input_tokens, usage.output_tokens)
+        return run.model_copy(update={"cost_usd": run.cost_usd + cost}), plan
 
     async def _act(
         self, run: Run, step: Step, ctx: CallContext, progress: StepProgress, protocol: Protocol

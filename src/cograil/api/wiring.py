@@ -23,7 +23,7 @@ from cograil.errors import StoreNotConfigured
 from cograil.knowledge.store import PostgresKnowledgeStore
 from cograil.knowledge.tool import add_knowledge
 from cograil.orchestrator import classification_model
-from cograil.providers import AnthropicProvider
+from cograil.providers import make_provider
 from cograil.redaction import Redactor, small_tier_redactor
 from cograil.registry import ToolRegistry, build_registry
 from cograil.store import PostgresRunStore, RunStore
@@ -62,8 +62,10 @@ def app_from_env() -> FastAPI:
         path,
         store,
         auth=auth_settings(os.environ),
-        classifier=AnthropicProvider(classification_model(workspace)),
-        provider_for=AnthropicProvider.for_protocol,
+        classifier=make_provider(workspace.harness, classification_model(workspace)),
+        provider_for=lambda _protocol, _colleague: make_provider(
+            workspace.harness, workspace.harness.models.standard
+        ),
         open_registry=open_with_redaction,
         close=store.dispose,
         redactor=redactor,

@@ -6,6 +6,12 @@ content with defaults filled in, such as `1.0.0+3f2a9c1b7d4e`. An edited value c
 and so does a changed code default that an omitted key falls back to; comments and layout do
 not, since they cannot change behaviour. The runner stamps it on every Run.
 
+Tiers (ADR 0010, 0013): a Step asks for a tier, never a model. Its tier is its own
+`(model: ...)`, else its Protocol's, else its Colleague's default_tier; `tier_model` maps it to
+the model of the harness's provider. Its effort is its own `(effort: ...)`, else
+defaults.effort. Classification, extraction, redaction and compression are small-tier work
+(`task_tier`). A small-tier result below defaults.min_confidence escalates one tier.
+
 A Step's inner loop is checked against the bounds before every provider call: its turns
 (the Step's `(turns: N)`, else loop.max_turns), the tokens spent in the Step against
 token_budget_per_step, and the Run's cost against usd_budget_per_run. So a Step spends at
@@ -17,10 +23,12 @@ from __future__ import annotations
 import hashlib
 import json
 
-from cograil.domain import Harness, Step
+from cograil.domain import Colleague, Effort, Harness, Protocol, Step, Tier
 from cograil.errors import LoopBudgetExceeded
 
 HASH_LENGTH = 12
+SMALL_TASKS = frozenset({"classification", "extraction", "redaction", "compression"})
+_NEXT_TIER: dict[Tier, Tier] = {"small": "standard", "standard": "strong"}
 
 
 def harness_version(harness: Harness) -> str:
@@ -28,6 +36,40 @@ def harness_version(harness: Harness) -> str:
     content = json.dumps(harness.model_dump(mode="json"), sort_keys=True)
     digest = hashlib.sha256(content.encode()).hexdigest()[:HASH_LENGTH]
     return f"{harness.version}+{digest}"
+
+
+def tier_model(harness: Harness, tier: Tier) -> str:
+    """The concrete model of `tier` for the harness's provider."""
+    return harness.models.model_for(tier)
+
+
+def task_tier(harness: Harness, task: str) -> Tier:
+    """The tier of a kind of work: small for SMALL_TASKS, else the judgment tier."""
+    return (
+        harness.defaults.classification_tier
+        if task in SMALL_TASKS
+        else harness.defaults.judgment_tier
+    )
+
+
+def step_tier(colleague: Colleague, protocol: Protocol, step: Step) -> Tier:
+    """The Step's tier: its own, else its Protocol's, else its Colleague's default."""
+    return step.model_tier or protocol.model_tier or colleague.default_tier
+
+
+def step_effort(harness: Harness, step: Step) -> Effort | None:
+    """The Step's `(effort: ...)`, else defaults.effort; None leaves it to the provider."""
+    return step.effort or harness.defaults.effort
+
+
+def escalation_tier(harness: Harness, tier: Tier, confidence: float | None) -> Tier | None:
+    """The next tier up when a small-tier result is below defaults.min_confidence, else None.
+
+    A result without a confidence cannot be judged, so it stands.
+    """
+    if tier != "small" or confidence is None or confidence >= harness.defaults.min_confidence:
+        return None
+    return _NEXT_TIER[tier]
 
 
 def max_turns(harness: Harness, step: Step) -> int:

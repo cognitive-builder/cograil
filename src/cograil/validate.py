@@ -11,7 +11,7 @@ from pathlib import Path
 
 from cograil.domain import Workspace
 from cograil.errors import ProviderError
-from cograil.providers.anthropic import wire_names
+from cograil.providers.wire import wire_names
 from cograil.workspace import check_workspace
 
 

@@ -30,6 +30,7 @@ dependencies = [
 slack = ["slack-bolt>=1.21"]
 oidc = ["authlib>=1.8", "itsdangerous>=2.2"]
 mcp = ["fastmcp>=2.0"]
+ollama = ["ollama>=0.4"]
 
 [project.scripts]
 cograil = "cograil.cli:app"

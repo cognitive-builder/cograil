@@ -142,6 +142,8 @@ def _errors(protocol: Protocol, step: Step, node: str) -> list[GraphEdge]:
 def _step_label(step: Step, step_tools: list[Tool]) -> str:
     lines = [f"{step.number}. {step.name}"]
     bounds: list[str] = [step.model_tier] if step.model_tier else []
+    if step.effort:
+        bounds.append(f"{step.effort} effort")
     if step.max_turns is not None:
         bounds.append(f"max {step.max_turns} turns")
     if bounds:

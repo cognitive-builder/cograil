@@ -50,7 +50,7 @@ from cograil.knowledge.cli import knowledge_app
 from cograil.knowledge.store import PostgresKnowledgeStore
 from cograil.knowledge.tool import add_knowledge
 from cograil.progress import ProgressStore
-from cograil.providers import AnthropicProvider, FakeProvider, Provider
+from cograil.providers import FakeProvider, Provider, make_provider, provider_ready
 from cograil.providers.fake import load_script
 from cograil.redaction import redactor
 from cograil.registry import ToolRegistry, build_registry
@@ -125,15 +125,19 @@ def _pick(workspace: Workspace, name: str) -> tuple[Protocol, Colleague]:
     return protocol, colleague
 
 
-def _provider(protocol: Protocol, colleague: Colleague, script: Path | None) -> Provider:
+def _provider(workspace: Workspace, script: Path | None) -> Provider:
     if script is not None:
         try:
             return FakeProvider(load_script(script))
         except CograilError as exc:
             fail(str(exc))
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    harness = workspace.harness
+    if not provider_ready(harness):
         fail("ANTHROPIC_API_KEY is not set (or use --fake-script)")
-    return AnthropicProvider.for_protocol(protocol, colleague)
+    try:
+        return make_provider(harness, harness.models.standard)
+    except CograilError as exc:
+        fail(str(exc))
 
 
 async def _registry(workspace: Workspace, store: RunStore, root: Path, live: bool) -> ToolRegistry:
@@ -218,7 +222,7 @@ async def _run(path: Path, protocol_name: str, principal_id: str, script: Path |
         check_audience(workspace, colleague, protocol, principal)
     except AudienceDenied as exc:
         fail(f"denied: {exc}")
-    provider = _provider(protocol, colleague, script)
+    provider = _provider(workspace, script)
     async with open_store() as base:
         store = ProgressStore(base, typer.echo)
         async with await _registry(workspace, store, path, script is None) as registry:
@@ -301,7 +305,7 @@ async def _approve(
         if protocol.version != paused.protocol_version:
             fail(f"protocol {protocol.name} is now version {protocol.version}; the Run has "
                  f"version {paused.protocol_version}")  # fmt: skip
-        provider = FakeProvider([]) if decline else _provider(protocol, colleague, script)
+        provider = FakeProvider([]) if decline else _provider(workspace, script)
         async with await _registry(workspace, store, where, script is None) as registry:
             runner = Runner(provider, registry, store, colleague, harness=workspace.harness)
             decision: Literal["approved", "declined"] = "declined" if decline else "approved"
