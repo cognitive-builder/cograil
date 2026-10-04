@@ -13,7 +13,7 @@ import pytest
 from test_api import Env
 
 from cograil.api import services, sse
-from cograil.channels.web import PAGE
+from cograil.channels.web import CHAT_PAGE as PAGE
 
 
 @pytest.fixture

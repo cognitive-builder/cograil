@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Cograil runs</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #1b1f24; --muted: #5d6671; --line: #d9dde3;
+  --accent: #1f5fd1; --accent-ink: #ffffff; --ok: #1a7f45; --bad: #b3261e;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171b; --panel: #1d2127; --ink: #e8eaed; --muted: #9aa3ad; --line: #343a42;
+    --accent: #6ea0ff; --accent-ink: #0d1116; --ok: #5ec98a; --bad: #ff8a80;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  display: flex; flex-direction: column; height: 100dvh; background: var(--bg); color: var(--ink);
+  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+header {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top));
+  background: var(--panel); border-bottom: 1px solid var(--line);
+}
+header h1 { margin: 0; font-size: 1.1rem; }
+#top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+#top a { color: var(--accent); text-decoration: none; font-size: .9rem; }
+#who { color: var(--muted); font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#who a { color: var(--accent); }
+button {
+  font: inherit; min-height: 44px; padding: 0 16px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+}
+button:disabled { opacity: .55; cursor: default; }
+main { flex: 1; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+.note { color: var(--muted); font-size: .85rem; }
+.err { color: var(--bad); }
+details.run {
+  width: 100%; max-width: min(920px, 100%); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+}
+details.run > summary { cursor: pointer; min-height: 44px; padding: 10px 12px; display: block; }
+details.run > summary::-webkit-details-marker { display: none; }
+.summary-row { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.status, .decision {
+  font-size: .8rem; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted);
+}
+.status.ok, .decision.approved { color: var(--ok); border-color: var(--ok); }
+.status.bad, .decision.declined, .decision.expired { color: var(--bad); border-color: var(--bad); }
+.protocol { font-weight: 600; overflow-wrap: anywhere; }
+.principal, .when { color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }
+.cost { font-variant-numeric: tabular-nums; margin-left: auto; }
+.body { border-top: 1px solid var(--line); padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 14px; }
+.body h2 {
+  margin: 0; font-size: .78rem; color: var(--muted); font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em;
+}
+.body section { display: flex; flex-direction: column; gap: 6px; }
+.timing { margin: 0; color: var(--muted); font-size: .85rem; }
+.step { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; padding: 2px 0; }
+.step .num { color: var(--muted); font-variant-numeric: tabular-nums; }
+.step .state { color: var(--muted); font-size: .8rem; }
+.step.done .num, .step.done .state { color: var(--ok); }
+.step.current .name { color: var(--accent); }
+.step pre.output { background: var(--bg); border-radius: 8px; padding: 6px 8px; flex: 1 0 100%; }
+details.tool { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+details.tool summary { padding: 8px 10px; cursor: pointer; min-height: 40px; font-size: .9rem; }
+details.tool pre { margin: 0; padding: 8px 10px; border-top: 1px solid var(--line); }
+pre { overflow-x: auto; font: .8rem/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.gate { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 2px 0; }
+.gate .tool-name { font-weight: 600; overflow-wrap: anywhere; }
+.gate .who { color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Cograil runs</h1>
+  <div id="top">
+    <a href="/">Chat</a>
+    <button id="refresh" type="button">Refresh</button>
+    <span id="who">checking sign-in…</span>
+  </div>
+</header>
+<main id="runs"></main>
+<script>
+"use strict";
+// Read-only: this page only ever GETs. Everything from the server is data, put on the page with
+// textContent alone, never as HTML.
+const list = document.getElementById("runs");
+const who = document.getElementById("who");
+// Class names come from these tables, never from the server's values.
+const RUN_STATE = { completed: "ok", failed: "bad", escalated: "bad" };
+const STEP_STATE = { done: "done", current: "current" };
+const GATE_STATE = { approved: "approved", declined: "declined", expired: "expired" };
+
+function el(tag, cls, text, parent) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text) node.textContent = text;
+  (parent || list).appendChild(node);
+  return node;
+}
+function words(status) { return String(status).replace(/_/g, " "); }
+function pretty(value) { return typeof value === "string" ? value : JSON.stringify(value, null, 2); }
+function money(cost) { return `$${Number(cost).toFixed(4)}`; }
+function stamp(value) { return value ? new Date(value).toLocaleString() : "—"; }
+function howLong(from, to) {
+  if (!from || !to) return "—";
+  let ms = Date.parse(to) - Date.parse(from);
+  if (Number.isNaN(ms) || ms < 0) ms = 0;
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+function signInNeeded() {
+  who.textContent = "";
+  const link = el("a", "", "Sign in", who);
+  // Ask to be brought back to this page, the same address, after sign-in.
+  link.href = "/auth/login?next=" + encodeURIComponent(location.pathname + location.search);
+}
+async function api(path) {
+  const response = await fetch(path);
+  if (response.status === 401) signInNeeded();
+  return response;
+}
+
+// ---- the list: one row per Run, from GET /runs ----
+function row(run) {
+  const box = el("details", "run");
+  const head = el("summary", "", undefined, box);
+  const line = el("div", "summary-row", undefined, head);
+  el("span", `status ${RUN_STATE[run.status] ?? ""}`, words(run.status), line);
+  el("span", "protocol", `${run.colleague} · ${run.protocol}`, line);
+  el("span", "principal", run.principal_id, line);
+  el("span", "cost", money(run.cost_usd), line);
+  el("span", "when", stamp(run.created_at), line);
+  const body = el("div", "body", "Loading…", box);
+  box.addEventListener("toggle", () => { if (box.open) fill(run.id, body); }, { once: true });
+}
+
+// ---- the drill-down: GET /runs/{id} ----
+async function fill(id, body) {
+  let detail;
+  try {
+    const response = await api(`/runs/${encodeURIComponent(id)}`);
+    body.textContent = "";
+    if (response.status === 404) { el("p", "err", "This Run is not yours to open.", body); return; }
+    if (!response.ok) { el("p", "err", `${response.status} ${response.statusText}`, body); return; }
+    detail = await response.json();
+  } catch (error) {
+    body.textContent = "";
+    el("p", "err", `Connection lost: ${error.message}`, body);
+    return;
+  }
+  body.textContent = "";
+  el("p", "timing", `Started ${stamp(detail.created_at)} · last change ${stamp(detail.updated_at)} · ${howLong(detail.created_at, detail.updated_at)} so far.`, body);
+  showSteps(detail, body);
+  showCalls(detail, body);
+  showGates(detail, body);
+}
+
+function showSteps(detail, body) {
+  const box = el("section", "", undefined, body);
+  el("h2", "", "Steps", box);
+  if (detail.protocol_changed) {
+    el("p", "note", "The Workspace has moved on: the Protocol is gone or at another version, so this Run's Steps cannot be shown.", box);
+    return;
+  }
+  if (!detail.steps.length) { el("p", "note", "No Steps to show.", box); return; }
+  for (const step of detail.steps) {
+    const line = el("div", `step ${STEP_STATE[step.state] ?? ""}`, undefined, box);
+    el("span", "num", `${step.number}.`, line);
+    el("span", "name", step.name, line);
+    el("span", "state", words(step.state), line);
+    if (step.output) el("pre", "output", step.output, line);
+  }
+}
+
+function showCalls(detail, body) {
+  const box = el("section", "", undefined, body);
+  el("h2", "", "Tool calls", box);
+  if (!detail.calls.length) { el("p", "note", "None yet.", box); return; }
+  for (const call of detail.calls) {
+    const one = el("details", "tool", undefined, box);
+    el("summary", "", `${call.tool} · step ${call.step} · ${howLong(call.started_at, call.ended_at)}`, one);
+    el("p", "timing", `${stamp(call.started_at)} → ${stamp(call.ended_at)}`, one);
+    el("pre", "", pretty({ args: call.args, result: call.result, error: call.error }), one);
+  }
+}
+
+function showGates(detail, body) {
+  const box = el("section", "", undefined, body);
+  el("h2", "", "Gates", box);
+  if (!detail.gates.length) { el("p", "note", "None.", box); return; }
+  for (const gate of detail.gates) {
+    const line = el("div", "gate", undefined, box);
+    el("span", "tool-name", `${gate.tool} · step ${gate.step}`, line);
+    el("span", `decision ${GATE_STATE[gate.decision] ?? ""}`, words(gate.decision), line);
+    el("span", "who", gate.approver, line);
+    const timing = gate.decided_at ? `decided ${stamp(gate.decided_at)}`
+      : gate.expires_at ? `expires ${stamp(gate.expires_at)}` : "";
+    el("span", "when", timing, line);
+  }
+}
+
+async function load() {
+  list.textContent = "";
+  const note = el("p", "note", "Loading…");
+  try {
+    const response = await api("/runs");
+    if (!response.ok) {
+      note.className = "note err";
+      note.textContent = response.status === 401 ? "Sign in to see your Runs." : `${response.status} ${response.statusText}`;
+      return;
+    }
+    const runs = await response.json();
+    note.remove();
+    if (!runs.length) { el("p", "note", "No Runs yet. Ask your Colleague something in the chat."); return; }
+    el("p", "note", `${runs.length} Run${runs.length === 1 ? "" : "s"}, newest first.`);
+    for (const run of runs) row(run);
+  } catch (error) {
+    note.className = "note err";
+    note.textContent = `Connection lost: ${error.message}`;
+  }
+}
+
+document.getElementById("refresh").addEventListener("click", load);
+
+(async function start() {
+  try {
+    const response = await api("/auth/me");
+    if (response.ok) who.textContent = (await response.json()).id;
+  } catch { who.textContent = "offline"; }
+  await load();
+})();
+</script>
+</body>
+</html>

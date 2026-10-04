@@ -1,9 +1,10 @@
 """The web service: FastAPI app over a workspace, a RunStore and the sign-in of cograil.api.auth.
 
 Routes: POST /chat (SSE), GET /runs, GET /runs/{id}, GET and POST /approvals/{token}, GET /audit,
-GET /health, the sign-in routes of cograil.api.auth, the web chat page at GET / and the OpenAPI
-docs at /docs. Everything but /health, the web chat page, the sign-in routes and the signed
-email links of GET and POST /approvals/link/{token} needs a signed-in Principal.
+GET /health, the sign-in routes of cograil.api.auth, the web pages at GET / (the chat) and
+GET /history (the run history), and the OpenAPI docs at /docs. Everything but /health, the web
+pages, the sign-in routes and the signed email links of GET and POST /approvals/link/{token}
+needs a signed-in Principal.
 """
 
 from __future__ import annotations

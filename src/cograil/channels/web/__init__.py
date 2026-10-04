@@ -1,9 +1,11 @@
-"""The web chat: one static HTML page, served at GET / (ADR 0006).
+"""The web pages (ADR 0006): each one a static HTML file, inline CSS and JavaScript, no
+framework and no build step, served by FastAPI.
 
-The page has inline CSS and JavaScript, no framework and no build step. It talks to the API of
-cograil.api: POST /chat (server-sent events), GET /runs/{id}, GET and POST /approvals/{token},
-GET /auth/me. The page itself needs no sign-in; the page finds out who is signed in by asking
-/auth/me, and offers /auth/login — carrying its own address as `next`, so an approval link
+The chat at GET / talks to the API of cograil.api: POST /chat (server-sent events),
+GET /runs/{id}, GET and POST /approvals/{token}, GET /auth/me. The run history at GET /history
+is read-only: it GETs /runs for the list and /runs/{id} for a Run's Steps, tool calls, gates
+and timings. Neither page needs a sign-in to load; each asks /auth/me who is signed in and
+offers /auth/login — carrying its own address as `next`, so an approval link or an open Run
 survives sign-in — when the answer is 401.
 """
 
@@ -14,9 +16,10 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 
-PAGE = Path(__file__).with_name("chat.html").read_text(encoding="utf-8")
+CHAT_PAGE = Path(__file__).with_name("chat.html").read_text(encoding="utf-8")
+HISTORY_PAGE = Path(__file__).with_name("history.html").read_text(encoding="utf-8")
 
-# The page may only talk to its own origin and may not be framed.
+# The pages may only talk to their own origin and may not be framed.
 HEADERS = {
     "Cache-Control": "no-cache",
     "Content-Security-Policy": (
@@ -32,4 +35,10 @@ router = APIRouter(tags=["web"])
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def chat_page() -> HTMLResponse:
     """The web chat. Open `/?approval=<token>` to land on an approval card."""
-    return HTMLResponse(PAGE, headers=HEADERS)
+    return HTMLResponse(CHAT_PAGE, headers=HEADERS)
+
+
+@router.get("/history", response_class=HTMLResponse, include_in_schema=False)
+async def history_page() -> HTMLResponse:
+    """The run history: every Run of the signed-in Principal, read-only."""
+    return HTMLResponse(HISTORY_PAGE, headers=HEADERS)
