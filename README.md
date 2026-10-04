@@ -44,6 +44,10 @@ uv run cograil run workspaces/example-smb --protocol leave_request --as alice@ex
 - Each step declares what it sees, how many turns it may take, and which model tier runs it; the harness that enforces this is versioned and stamped on every run.
 - Decisions that matter are tables, not prompts: the model supplies inputs, the table decides, the audit log records the rule.
 
+## How the backlog gets built
+
+Work is GitHub issues. An autopilot on the maintainer's Mac starts one task at a time: Claude cloud sessions for lanes 1 and 2, and a GitHub Actions run on GLM for lane 3. Each session follows the same implement-issue command, GitHub merges green pull requests on its own, and a person steps in only for tasks labelled `needs:human`. See `docs/adr/0015-autopilot.md`.
+
 ## Limits (today)
 
 No Teams adapter yet, no multi-tenant mode, no visual editor, no Temporal backend before v0.5. Knowledge corpora are expected to be small. See the Product Plan for what is coming and in what order.

@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Control the autopilot (ADR 0015) from the owner's Mac.
+#   autopilot on | off           set the AUTOPILOT repo variable (on also clears a pause)
+#   autopilot status             state, next task, caps used today, estimated spend
+#   autopilot balance <amount>   post "balance $<amount>" on the Credit Ledger
+#   autopilot run [--dry-run]    one pass now; --dry-run changes nothing
+#   autopilot install            enable repo auto-merge, create labels, launchd agent every 30 min
+#   autopilot uninstall          remove the launchd agent
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="${AUTOPILOT_REPO:-cognitive-builder/cograil}"
+label="io.cognitive-builder.cograil.autopilot"
+plist="$HOME/Library/LaunchAgents/$label.plist"
+
+dispatch() { python3 "$here/dispatch.py" "$@"; }
+usage() { sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+
+install_agent() {
+  gh api -X PATCH "repos/$repo" -F allow_auto_merge=true >/dev/null
+  gh label create needs:human -R "$repo" --force --color B60205 \
+    --description "A person must act; the autopilot pauses and never removes it"
+  gh label create status:in-progress -R "$repo" --force --color FBCA04 \
+    --description "Started by the autopilot"
+  mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.cograil"
+  # launchd starts with a bare PATH; keep the one that finds gh, claude and python3 now.
+  cat >"$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$label</string>
+  <key>ProgramArguments</key>
+  <array><string>$here/autopilot</string><string>run</string></array>
+  <key>StartInterval</key><integer>1800</integer>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>$PATH</string></dict>
+  <key>StandardOutPath</key><string>$HOME/.cograil/launchd.log</string>
+  <key>StandardErrorPath</key><string>$HOME/.cograil/launchd.log</string>
+</dict>
+</plist>
+EOF
+  launchctl bootout "gui/$(id -u)" "$plist" 2>/dev/null || true
+  launchctl bootstrap "gui/$(id -u)" "$plist"
+  echo "installed $plist (every 30 minutes while you are logged in)"
+}
+
+uninstall_agent() {
+  launchctl bootout "gui/$(id -u)" "$plist" 2>/dev/null || true
+  rm -f "$plist"
+  echo "removed $plist"
+}
+
+case "${1:-}" in
+  on) gh variable set AUTOPILOT --body on -R "$repo"; dispatch --resume; echo "autopilot on" ;;
+  off) gh variable set AUTOPILOT --body off -R "$repo"; echo "autopilot off" ;;
+  status) dispatch --status ;;
+  balance)
+    [[ "${2:-}" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "usage: autopilot balance <amount>"; exit 2; }
+    dispatch --balance "$2" ;;
+  run)
+    case "${2:-}" in
+      "") dispatch ;;
+      --dry-run) dispatch --dry-run ;;
+      *) usage ;;
+    esac ;;
+  install) install_agent ;;
+  uninstall) uninstall_agent ;;
+  *) usage ;;
+esac
