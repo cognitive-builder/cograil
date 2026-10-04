@@ -48,7 +48,7 @@ After sign-in, the browser is redirected to `/`.
 | `COGRAIL_SESSION_SECRET` | Required. At least 32 characters. Rotating it signs everyone out. |
 | `COGRAIL_OIDC_ID_CLAIM` | The claim that names the Principal. The default is `email`. It must hold an email address. |
 | `COGRAIL_OIDC_GROUPS_CLAIM` | The claim that lists groups. The default is `groups`. |
-| `COGRAIL_OIDC_REDIRECT_URL` | The full public callback URL, for example `https://cograil.example.com/auth/callback`. Set it when a proxy (Cloud Run, a load balancer) hides the public scheme or host. Otherwise Cograil works the URL out from the request. |
+| `COGRAIL_OIDC_REDIRECT_URL` | The full public callback URL, for example `https://cograil.example.com/auth/callback`. Set it when a proxy (Cloud Run, a load balancer) hides the public scheme or host. Otherwise Cograil works the URL out from the request; set it in production. |
 
 Make a session secret like this:
 
@@ -63,6 +63,7 @@ The session cookie is `cograil_session`. It is signed with `COGRAIL_SESSION_SECR
 - Groups are fixed at sign-in. They do not change until the session ends.
 - A tampered cookie is ignored, and the request gets a 401.
 - The cookie is signed, not encrypted. The browser can read the id and groups inside it. Nothing secret goes in it.
+- Signing out clears the browser's copy only. A copied cookie stays valid until it expires, and a group removed at the provider or in the Workspace still counts until then. To end every session at once, rotate `COGRAIL_SESSION_SECRET`.
 
 ## When Sign-In Is Refused
 
@@ -156,6 +157,7 @@ COGRAIL_SESSION_SECRET=<a generated secret>
 
 - The metadata URL names your tenant, so other tenants cannot sign in.
 - Entra's `email` claim is optional and not verified. With the default `email` claim, sign-in is refused. That is why `COGRAIL_OIDC_ID_CLAIM` is `preferred_username`.
+- `preferred_username` is the user's sign-in name (UPN). An administrator can change it, and Microsoft does not recommend it for authorisation. Cograil uses it because Principals, approvers and escalation contacts are emails. When a UPN changes, add the new one to the Principal's `aliases` (or change its `id`), and never give an old UPN to another person.
 - Put the group object ids in the `claims` of your Audiences.
 
 ### Group Overage

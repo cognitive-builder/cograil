@@ -46,7 +46,7 @@ from cograil.errors import (
     LoopBudgetExceeded,
     RunNotPaused,
 )
-from cograil.identity import same_principal
+from cograil.identity import normalise_principal_id, same_principal
 from cograil.observability import log_event
 from cograil.providers.base import Message, PlannedToolCall, StepComplete
 from cograil.registry import CallContext
@@ -186,6 +186,7 @@ class Gates:
         `decider` is the Approval's approver and not the Run's own principal.
         """
         approval, run = await self._paused_on(token)
+        decider = normalise_principal_id(decider)  # one spelling in the audit trail
         is_approver = same_principal(decider, approval.approver)
         if not is_approver or same_principal(decider, run.principal_id):
             detail = {**_about(approval), "approver": approval.approver, "decided_by": decider,

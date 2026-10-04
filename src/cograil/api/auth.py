@@ -62,6 +62,8 @@ def install_auth(
     provider calls (tests only)."""
     if isinstance(settings, DevAuth):
         principal = resolve_principal(workspace, settings.principal, groups=settings.groups)
+        if principal.kind != "user":
+            raise AuthNotConfigured(f"COGRAIL_DEV_PRINCIPAL {principal.id} is not a user")
         app.state.cograil_principal = lambda _request: principal
         log_event("auth.dev_mode", logging.WARNING, principal_id=principal.id)
     else:

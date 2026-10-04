@@ -109,6 +109,12 @@ def test_dev_mode_signs_everyone_in_as_the_configured_principal() -> None:
     )  # fmt: skip
 
 
+def test_dev_mode_refuses_a_system_principal() -> None:
+    env = {"COGRAIL_AUTH": "dev", "COGRAIL_DEV_PRINCIPAL": "scheduler@example.com"}
+    with pytest.raises(AuthNotConfigured, match="is not a user"):
+        client(env)
+
+
 @pytest.mark.parametrize(
     ("env", "named"),
     [

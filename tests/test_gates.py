@@ -219,9 +219,10 @@ async def test_only_the_approver_may_decide_an_approval(
     assert (await store.get_approval(token)).decision == "pending"
     assert (provider.calls, tools.invoked) == ([], ["hris.get_balance"])
     refused = (await store.list_audit_events("r1"))[-1]
-    assert (refused.kind, refused.detail["decided_by"]) == ("gate.refused", decider)
+    named = decider.strip().lower()  # issue #19: audited in its normalised spelling
+    assert (refused.kind, refused.detail["decided_by"]) == ("gate.refused", named)
     # Issue #102: the attempted decider is the acting principal, the Run's is in the detail.
-    assert (refused.principal_id, refused.detail["run_principal"]) == (decider, PRINCIPAL)
+    assert (refused.principal_id, refused.detail["run_principal"]) == (named, PRINCIPAL)
 
 
 @pytest.mark.parametrize("contact", [PRINCIPAL, "ALICE@example.com "], ids=["same", "respelled"])
@@ -251,6 +252,8 @@ async def test_the_approver_may_decide_in_any_spelling(
     runner, _ = make(AFTER_GATE)
     run = await runner.resume(token, protocol, decider=" HR-Ops@Example.com")
     assert run.status == RunStatus.completed
+    resumed = next(e for e in await store.list_audit_events("r1") if e.kind == "gate.resumed")
+    assert resumed.detail["decided_by"] == CONTACT
 
 
 async def test_a_plan_that_ends_its_step_at_a_gate_ends_it_after_the_resume(
