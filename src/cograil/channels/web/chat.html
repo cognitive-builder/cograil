@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Cograil</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #1b1f24; --muted: #5d6671; --line: #d9dde3;
+  --accent: #1f5fd1; --accent-ink: #ffffff; --me: #e4edfc; --ok: #1a7f45; --bad: #b3261e;
+  --warn-bg: #fff6df; --warn-line: #e5c565;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171b; --panel: #1d2127; --ink: #e8eaed; --muted: #9aa3ad; --line: #343a42;
+    --accent: #6ea0ff; --accent-ink: #0d1116; --me: #23344f; --ok: #5ec98a; --bad: #ff8a80;
+    --warn-bg: #2d2713; --warn-line: #7a6624;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  display: flex; flex-direction: column; height: 100dvh; background: var(--bg); color: var(--ink);
+  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+header {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top));
+  background: var(--panel); border-bottom: 1px solid var(--line);
+}
+header h1 { margin: 0; font-size: 1.1rem; }
+#who { color: var(--muted); font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#who a { color: var(--accent); }
+#log { flex: 1; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+.me, .bot, .card, .note {
+  max-width: min(720px, 100%); padding: 10px 12px; border-radius: 12px;
+  overflow-wrap: anywhere; white-space: pre-wrap;
+}
+.me { align-self: flex-end; background: var(--me); }
+.bot { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); }
+.note { align-self: flex-start; color: var(--muted); font-size: .85rem; padding: 2px 4px; }
+.err { color: var(--bad); }
+.turn { align-self: stretch; display: flex; flex-direction: column; gap: 6px; }
+.event { color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }
+details.tool { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+details.tool summary { padding: 8px 10px; cursor: pointer; min-height: 40px; font-size: .9rem; }
+details.tool pre { margin: 0; padding: 8px 10px; border-top: 1px solid var(--line); }
+pre { overflow-x: auto; font: .8rem/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.card { align-self: stretch; max-width: 100%; background: var(--warn-bg); border: 1px solid var(--warn-line); }
+.card h2 { margin: 0 0 4px; font-size: 1rem; }
+.card p { margin: 4px 0; }
+.actions { display: flex; gap: 10px; margin-top: 10px; }
+button {
+  font: inherit; min-height: 44px; padding: 0 18px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.actions button { flex: 1; }
+button:disabled { opacity: .55; cursor: default; }
+form {
+  display: flex; gap: 8px; align-items: flex-end; padding: 10px 16px;
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+  background: var(--panel); border-top: 1px solid var(--line);
+}
+textarea {
+  flex: 1; min-height: 44px; max-height: 30dvh; resize: none; padding: 10px 12px;
+  font: inherit; font-size: 16px; /* 16px stops iOS zooming into the field */
+  border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Cograil</h1>
+  <span id="who">checking sign-in…</span>
+</header>
+<main id="log" aria-live="polite"></main>
+<form id="form" autocomplete="off">
+  <textarea id="msg" rows="1" maxlength="8000" placeholder="Ask your Colleague…" aria-label="Message" enterkeyhint="send"></textarea>
+  <button class="primary" id="send" type="submit">Send</button>
+</form>
+<script>
+"use strict";
+// Everything from the server is data: it is only ever put on the page with textContent.
+const log = document.getElementById("log");
+const form = document.getElementById("form");
+const msg = document.getElementById("msg");
+const send = document.getElementById("send");
+let me = null;
+let busy = false;
+
+function el(tag, cls, text, parent) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined) node.textContent = text;
+  (parent || log).appendChild(node);
+  return node;
+}
+function scroll() { log.scrollTop = log.scrollHeight; }
+function pretty(value) { return typeof value === "string" ? value : JSON.stringify(value, null, 2); }
+function words(status) { return String(status).replace(/_/g, " "); }
+
+function signInNeeded() {
+  const who = document.getElementById("who");
+  who.textContent = "";
+  const link = el("a", "", "Sign in", who);
+  link.href = "/auth/login";
+}
+
+async function api(path, options) {
+  const response = await fetch(path, options);
+  if (response.status === 401) signInNeeded();
+  return response;
+}
+async function problem(response) {
+  try { const body = await response.json(); return `${response.status}: ${pretty(body.detail ?? body)}`; }
+  catch { return `${response.status} ${response.statusText}`; }
+}
+
+// ---- progress: one line per AuditEvent or finished Step ----
+function fields(line) {
+  const found = {};
+  for (const [, key, value] of line.matchAll(/(\w+)=(\S+)/g)) found[key] = value;
+  return found;
+}
+function newTurn() { return { box: el("div", "turn"), tools: new Map(), runId: null, ended: false }; }
+
+function toolRow(turn, line, kind) {
+  const f = fields(line);
+  const key = `${f.step}|${f.tool}`;
+  let row = turn.tools.get(key)?.find((r) => r.dataset.state === "running");
+  if (!row || kind === "tool.started") {
+    row = el("details", "tool", undefined, turn.box);
+    el("summary", "", "", row);
+    el("pre", "", "", row);
+    (turn.tools.get(key) ?? turn.tools.set(key, []).get(key)).push(row);
+  }
+  row.dataset.state = kind === "tool.started" ? "running" : "done";
+  row.firstChild.textContent = `${f.tool ?? "tool"} · step ${f.step ?? "?"} · ${kind === "tool.started" ? "running…" : "done"}`;
+  row.lastChild.textContent = line;
+}
+function progress(turn, line) {
+  const kind = line.split(" ", 1)[0];
+  if (kind === "tool.started" || kind === "tool.called") toolRow(turn, line, kind);
+  else el("div", "event", line, turn.box);
+  scroll();
+}
+
+// After a Run stops, the stored calls give each tool row its arguments and result.
+async function fillCalls(turn) {
+  const response = await api(`/runs/${turn.runId}`);
+  if (!response.ok) return null;
+  const detail = await response.json();
+  for (const call of detail.calls) {
+    const row = turn.tools.get(`${call.step}|${call.tool}`)?.shift()
+      ?? (() => { const r = el("details", "tool", undefined, turn.box); el("summary", "", `${call.tool} · step ${call.step}`, r); el("pre", "", "", r); return r; })();
+    row.lastChild.textContent = pretty({ args: call.args, result: call.result, error: call.error });
+  }
+  return detail;
+}
+
+// ---- approval cards ----
+async function approvalCard(token, approver, parent) {
+  const card = el("div", "card", undefined, parent);
+  el("h2", "", "Approval needed", card);
+  const body = el("div", "", "Loading…", card);
+  const response = await api(`/approvals/${encodeURIComponent(token)}`);
+  body.textContent = "";
+  if (response.status === 403) {
+    el("p", "", `Waiting for ${approver ?? "the approver"} to approve. Only they can decide.`, body);
+    return;
+  }
+  if (!response.ok) { el("p", "err", await problem(response), body); return; }
+  const view = await response.json();
+  el("p", "", `${view.requested_by} asks to run ${view.tool} (step ${view.step}${view.step_name ? `: ${view.step_name}` : ""}) in ${view.protocol}.`, body);
+  el("pre", "", pretty(view.args), body);
+  if (view.decision !== "pending") { el("p", "", `Already ${view.decision}.`, body); return; }
+  const actions = el("div", "actions", undefined, body);
+  const approve = el("button", "primary", "Approve", actions);
+  const decline = el("button", "", "Decline", actions);
+  approve.dataset.decision = "approved";
+  decline.dataset.decision = "declined";
+  for (const button of [approve, decline]) {
+    button.type = "button";
+    button.addEventListener("click", () => decide(token, button.dataset.decision, actions, body));
+  }
+}
+async function decide(token, decision, actions, body) {
+  for (const button of actions.querySelectorAll("button")) button.disabled = true;
+  const status = el("p", "", decision === "approved" ? "Approved. The Run is going on…" : "Declining…", body);
+  const response = await api(`/approvals/${encodeURIComponent(token)}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision }),
+  });
+  if (!response.ok) {
+    status.textContent = await problem(response); status.className = "err";
+    return;
+  }
+  const outcome = await response.json();
+  actions.remove();
+  status.textContent = `${decision === "approved" ? "Approved" : "Declined"}. The Run is ${words(outcome.run.status)}.`;
+  for (const next of outcome.awaiting) await approvalCard(next.token, next.approver, log);
+  scroll();
+}
+
+// ---- the chat stream ----
+function onEvent(turn, name, data) {
+  if (name === "routed" && data.protocol) el("div", "event", `Routed to ${data.colleague} · ${data.protocol}`, turn.box);
+  else if (name === "refusal") { el("div", "bot", data.text, turn.box); turn.ended = true; }
+  else if (name === "run") turn.runId = data.run_id;
+  else if (name === "progress") progress(turn, data.line);
+  else if (name === "error") { el("div", "bot err", `${data.type}: ${data.message}`, turn.box); turn.ended = true; }
+  else if (name === "done") { turn.done = data; turn.ended = true; }
+  scroll();
+}
+function frames(text) {
+  let name = "message"; const lines = [];
+  for (const line of text.split("\n")) {
+    if (line.startsWith("event: ")) name = line.slice(7);
+    else if (line.startsWith("data: ")) lines.push(line.slice(6));
+  }
+  return lines.length ? [name, JSON.parse(lines.join("\n"))] : null;
+}
+async function readStream(response, turn) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+    let end;
+    while ((end = buffer.indexOf("\n\n")) >= 0) {
+      const frame = frames(buffer.slice(0, end));
+      buffer = buffer.slice(end + 2);
+      if (frame) onEvent(turn, frame[0], frame[1]);
+    }
+  }
+}
+async function finish(turn) {
+  const detail = await fillCalls(turn);
+  const answer = detail?.steps.filter((s) => s.output).pop()?.output;
+  if (answer) el("div", "bot", answer, turn.box);
+  el("div", "note", `Run ${turn.done.run.id.slice(0, 8)} is ${words(turn.done.run.status)}.`, turn.box);
+  for (const pending of turn.done.awaiting) await approvalCard(pending.token, pending.approver, turn.box);
+}
+
+async function chat(text) {
+  el("div", "me", text);
+  const turn = newTurn();
+  try {
+    const response = await api("/chat", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text }),
+    });
+    if (!response.ok) { el("div", "bot err", await problem(response), turn.box); return; }
+    await readStream(response, turn);
+    if (turn.done && turn.runId) await finish(turn);
+    else if (!turn.ended) el("div", "note err", turn.runId ? `The connection closed before the Run stopped. It keeps going on the server (run ${turn.runId}).` : "The connection closed before the Run started.", turn.box);
+  } catch (error) {
+    el("div", "note err", `Connection lost: ${error.message}`, turn.box);
+  }
+  scroll();
+}
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const text = msg.value.trim();
+  if (!text || busy) return;
+  busy = true; send.disabled = true; msg.value = ""; msg.style.height = "";
+  try { await chat(text); } finally { busy = false; send.disabled = false; msg.focus(); }
+});
+msg.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); form.requestSubmit(); }
+});
+msg.addEventListener("input", () => { msg.style.height = "auto"; msg.style.height = `${msg.scrollHeight}px`; });
+
+(async function start() {
+  const who = document.getElementById("who");
+  try {
+    const response = await api("/auth/me");
+    if (response.ok) { me = await response.json(); who.textContent = me.id; }
+  } catch { who.textContent = "offline"; }
+  const token = new URLSearchParams(location.search).get("approval");
+  if (token && me) { await approvalCard(token, null, log); scroll(); }
+})();
+</script>
+</body>
+</html>

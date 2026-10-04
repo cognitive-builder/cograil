@@ -19,10 +19,11 @@ Settings come only from environment variables.
 
 ## Endpoints
 
-"Signed in" means any Principal with a valid session. Every endpoint needs one, and answers 401 without it, except `/health`, `/auth/*`, `/docs` and `/openapi.json`.
+"Signed in" means any Principal with a valid session. Every endpoint needs one, and answers 401 without it, except `/`, `/health`, `/auth/*`, `/docs` and `/openapi.json`.
 
 | Endpoint | What it does | Who may call it |
 | --- | --- | --- |
+| `GET /` | The web chat page (see below). | Anyone; the page asks `/auth/me` who is signed in. |
 | `GET /health` | Says the service is up. | Anyone. |
 | `/auth/*` | Sign-in routes. | Anyone (see `docs/auth.md`). |
 | `POST /chat` | Routes a message to a Protocol and streams the Run as SSE. | Signed in. |
@@ -59,6 +60,18 @@ data: {"line": "step 1 complete Look up"}
 event: done
 data: {"run": {"id": "3f9c...", "status": "awaiting_approval", ...}, "awaiting": [{"token": "...", "approver": "manager@example.com", "tool": "demo.record", "step": 2}]}
 ```
+
+## The Web Chat
+
+Open the service's root (`/`) in a browser. The chat is one HTML file with its own CSS and JavaScript (ADR 0006): no framework, no build step, no request to any other site. The source is `src/cograil/channels/web/chat.html`.
+
+- **Chat.** You type a message and the page sends it to `POST /chat`. The reply streams in: the Colleague and Protocol it was routed to, then one line per `progress` event.
+- **Tool calls.** Each tool call shows as a collapsed row (`<details>`). Tap it to see the call's arguments and result, which the page reads from `GET /runs/{id}` once the Run stops.
+- **Approval cards.** When a Run stops at a Gate, the page shows a card. If you are the approver, it shows the call and two buttons, Approve and Decline, which `POST /approvals/{token}` with the decision and nothing else. If you are not, it says who the Run waits for. Send the approver a link to `/?approval=<token>` to open the card directly.
+- **Sign-in.** In `oidc` mode the page shows a Sign in link (to `/auth/login`) until you have a session.
+- **Phones.** The layout fits a narrow screen, the buttons are at least 44 pixels tall, and the text field is 16 pixels so iOS does not zoom into it. It follows the light or dark setting of the device.
+
+Limits: a decision answers when the Run next stops, not as a stream, so the card shows "going on…" until then. If the connection drops, the Run still carries on; the page says so and names the Run.
 
 ## Rules
 

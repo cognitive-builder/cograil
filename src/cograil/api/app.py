@@ -1,8 +1,9 @@
 """The web service: FastAPI app over a workspace, a RunStore and the sign-in of cograil.api.auth.
 
 Routes: POST /chat (SSE), GET /runs, GET /runs/{id}, GET and POST /approvals/{token}, GET /audit,
-GET /health, the sign-in routes of cograil.api.auth, and the OpenAPI docs at /docs. Everything
-but /health and the sign-in routes needs a signed-in Principal.
+GET /health, the sign-in routes of cograil.api.auth, the web chat page at GET / and the OpenAPI
+docs at /docs. Everything but /health, the web chat page and the sign-in routes needs a signed-in
+Principal.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from cograil.api import approvals, audit, chat, runs
 from cograil.api.auth import install_auth
 from cograil.api.auth_settings import AuthSettings
 from cograil.api.services import ProviderFactory, RegistryOpener, Services
+from cograil.channels import web
 from cograil.domain import Workspace
 from cograil.providers.base import Provider
 from cograil.store import RunStore
@@ -56,7 +58,7 @@ def create_app(
     app = FastAPI(title="Cograil", version=__version__, lifespan=lifespan)
     app.state.cograil_services = services
     install_auth(app, auth, workspace)
-    for router in (chat.router, runs.router, approvals.router, audit.router):
+    for router in (web.router, chat.router, runs.router, approvals.router, audit.router):
         app.include_router(router)
 
     @app.get("/health", tags=["health"])
