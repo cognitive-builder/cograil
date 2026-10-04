@@ -13,7 +13,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from test_api import DEMO, REST_SCRIPT, RUN_SCRIPT, Env
 
+from cograil.api.app import create_app
+from cograil.api.auth_settings import auth_settings
 from cograil.api.services import Services
+from cograil.api.wiring import open_registry
 from cograil.channels.slack import (
     Incoming,
     SlackChannel,
@@ -23,12 +26,14 @@ from cograil.channels.slack import (
 )
 from cograil.channels.slack.blocks import APPROVE_ACTION, DECLINE_ACTION
 from cograil.channels.slack.bolt import SlackListeners, incoming_from_event, slack_router
+from cograil.channels.slack.identity import escape
 from cograil.domain import RunStatus
 from cograil.errors import SlackNotConfigured, WorkspaceError
 from cograil.workspace import load_workspace
 
 ALICE, MANAGER, OUTSIDER = "U_ALICE", "U_MANAGER", "U_OUTSIDER"
 DM = "D1"
+ALICE_ID = "alice@example.com"
 
 
 class FakePoster:
@@ -320,3 +325,25 @@ def test_slack_requests_need_slack_signature(services: Services) -> None:
         headers={"X-Slack-Signature": "v0=bad", "X-Slack-Request-Timestamp": "1"},
     )  # fmt: skip
     assert forged.status_code == 401
+
+
+@pytest.mark.parametrize("text", ["<!channel> hi", "<@U1> look <https://evil.example|here>"])
+def test_model_output_cannot_ping_or_link(text: str) -> None:
+    assert "<" not in escape(text) and ">" not in escape(text)
+
+
+def test_the_app_serves_slack_only_when_it_is_set_up(
+    env: Env, pack: Path, services: Services
+) -> None:
+    def answer(slack: SlackSettings | None) -> int:
+        app = create_app(
+            services.workspace, pack, services.store,
+            auth=auth_settings({"COGRAIL_AUTH": "dev", "COGRAIL_DEV_PRINCIPAL": ALICE_ID}),
+            classifier=env.classifier, provider_for=env.next_provider,
+            open_registry=open_registry, slack=slack,
+        )  # fmt: skip
+        return TestClient(app).post("/slack/events", json={}).status_code
+
+    settings = SlackSettings.model_validate({"bot_token": "xoxb-1", "signing_secret": "s"})
+    assert answer(None) == 404  # Slack is off
+    assert answer(settings) == 401  # on, and an unsigned request is refused

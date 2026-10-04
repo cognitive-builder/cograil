@@ -48,7 +48,7 @@ UNKNOWN_MEMBER = (
     "({user}) to principals.yaml."
 )
 _WORKING = {RunStatus.received, RunStatus.planned, RunStatus.running}
-type Decision = Literal["approved", "declined"]
+type ButtonDecision = Literal["approved", "declined"]
 
 
 class Poster(Protocol):
@@ -101,7 +101,7 @@ class SlackChannel:
         thread_ts: str,
         message_ts: str,
         token: str,
-        decision: Decision,
+        decision: ButtonDecision,
         poster: Poster,
     ) -> None:
         """Decide the Approval `token` as the Principal `user` maps to."""

@@ -18,7 +18,7 @@ from slack_sdk.web.async_client import AsyncWebClient
 
 from cograil.api.services import Services
 from cograil.channels.slack.blocks import APPROVE_ACTION, DECLINE_ACTION, clip
-from cograil.channels.slack.channel import Decision, Incoming, SlackChannel
+from cograil.channels.slack.channel import ButtonDecision, Incoming, SlackChannel
 from cograil.channels.slack.settings import SlackSettings
 
 EVENTS_PATH = "/slack/events"
@@ -89,7 +89,9 @@ class SlackListeners:
 
     async def decision(self, body: dict[str, Any], client: AsyncWebClient) -> None:
         action = body["actions"][0]
-        decision: Decision = "approved" if action["action_id"] == APPROVE_ACTION else "declined"
+        decision: ButtonDecision = (
+            "approved" if action["action_id"] == APPROVE_ACTION else "declined"
+        )
         message = body.get("message", {})
         channel = body["channel"]["id"]
         await self._channel.on_decision(

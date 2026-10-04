@@ -41,7 +41,8 @@ id and starts nothing.
   Protocol the member may start, as in the web chat, and starts a Run. Everything about that Run
   is posted in the thread of the message: **one thread per Run**.
 - A message in the thread of a Run continues it. If the Run waits at a gate the prompt is posted
-  again; if it is still working, or over, the reply says so. A thread never starts a second Run.
+  again; if it is still working, or over, the reply says so. A thread starts a second Run only if its Run is no longer among the
+  requester's 50 newest.
 - A gate is posted as a prompt with **Approve** and **Decline** buttons. A click is a decision
   by the Principal the clicking member maps to. The Runner refuses anyone but the approver,
   including the Run's own requester, and writes a `gate.refused` AuditEvent; the click is
