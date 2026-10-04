@@ -4,8 +4,8 @@ alice, bob and carol each hold a balance per tracked leave type. submit_leave
 counts inclusive calendar days, draws the balance down, and is idempotent on
 request_id: a replay returns the first result without deducting again. Leave
 types that are not tracked, such as unpaid, submit without touching a balance.
-The tables below are module state: one process (one Run) shares one copy, and a
-fresh process starts from them again.
+The tables below are module state: a Run's registry loads this file fresh, so
+every Run starts from the seed tables and the tools of one Run share one copy.
 """
 
 from __future__ import annotations

@@ -86,7 +86,7 @@ async def test_submit_leave_refuses_more_than_the_remaining_balance(
     store: InMemoryRunStore, ctx: CallContext
 ) -> None:
     async with await build_registry(hris_workspace(), store, EXAMPLE) as registry:
-        args = request("bob", "sick", "req-2") | {"start": "2026-11-02", "end": "2026-11-20"}
+        args = request("bob", "sick", "req-2") | {"end": "2026-11-20"}
         with pytest.raises(ToolExecutionError, match="sick.*19 days requested, 10 remaining"):
             await registry.invoke("hris.submit_leave", args, ctx)
         assert await registry.invoke("hris.get_balance", {"employee": "bob"}, ctx)["sick"] == 10
