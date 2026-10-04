@@ -3,7 +3,7 @@
 The real example workspace, its parsed Protocol, the mock HRIS pack and the runner, with
 FakeProvider in place of the model. Two Tools have no kind built yet, so they stand in:
 decide.approval_routing (decision tables) and notify.send (its own issue). The approved
-Approval stands in for `cograil approve`, which arrives with the gates issue (#11).
+Approval stands in for `cograil approve`, which arrives with the CLI issue (#13).
 """
 
 from pathlib import Path
@@ -68,7 +68,8 @@ async def test_leave_request_runs_to_completion(store: InMemoryRunStore) -> None
         for tool in workspace.tools:
             if tool.name in STAND_INS:
                 registry.register(tool, stand_in)
-        run = await Runner(FakeProvider(SCRIPT), registry, store).run("r1", protocol)
+        harper = workspace.colleagues[0]
+        run = await Runner(FakeProvider(SCRIPT), registry, store, harper).run("r1", protocol)
 
     assert (run.status, run.cursor) == (RunStatus.completed, 4)
     assert sorted(run.context["steps"]) == ["1", "2", "3", "4"]

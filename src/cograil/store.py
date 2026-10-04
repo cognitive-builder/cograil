@@ -20,6 +20,7 @@ from cograil.domain import Approval, AuditEvent, Run, ToolCall
 from cograil.errors import (
     ApprovalAlreadyDecided,
     ApprovalNotFound,
+    ApprovalNotSpendable,
     DuplicateRecord,
     RunNotFound,
 )
@@ -53,6 +54,11 @@ class RunStore(Protocol):
         self, token: str, decision: ApprovalDecision, decided_at: datetime
     ) -> Approval:
         """Decide a pending Approval once; a second decision raises ApprovalAlreadyDecided."""
+        ...
+
+    async def spend_approval(self, token: str, spent_at: datetime) -> Approval:
+        """Spend an approved Approval once, atomically: of two concurrent spends one wins and
+        the other raises ApprovalNotSpendable, as does spending one not approved."""
         ...
 
     async def list_approvals(self, run_id: str) -> list[Approval]:
@@ -121,6 +127,15 @@ class InMemoryRunStore:
         decided = current.model_copy(update={"decision": decision, "decided_at": decided_at})
         self._approvals[token] = decided
         return decided.model_copy(deep=True)
+
+    async def spend_approval(self, token: str, spent_at: datetime) -> Approval:
+        # No await between the check and the write, so concurrent spends cannot interleave.
+        current = await self.get_approval(token)
+        if current.decision != "approved" or current.spent_at is not None:
+            raise ApprovalNotSpendable(token)
+        spent = current.model_copy(update={"spent_at": spent_at})
+        self._approvals[token] = spent
+        return spent.model_copy(deep=True)
 
     async def list_approvals(self, run_id: str) -> list[Approval]:
         found = sorted((a for a in self._approvals.values() if a.run_id == run_id), key=_token)
@@ -272,6 +287,22 @@ class PostgresRunStore:
                 return Approval.model_validate(dict(row))
             await self._get_approval(conn, token)  # raises ApprovalNotFound when absent
         raise ApprovalAlreadyDecided(token)
+
+    async def spend_approval(self, token: str, spent_at: datetime) -> Approval:
+        spendable = (
+            (approvals.c.token == token)
+            & (approvals.c.decision == "approved")
+            & approvals.c.spent_at.is_(None)
+        )
+        statement = (
+            update(approvals).where(spendable).values(spent_at=spent_at).returning(approvals)
+        )
+        async with self._engine.begin() as conn:
+            row = (await conn.execute(statement)).mappings().first()
+            if row is not None:
+                return Approval.model_validate(dict(row))
+            await self._get_approval(conn, token)  # raises ApprovalNotFound when absent
+        raise ApprovalNotSpendable(token)
 
     async def list_approvals(self, run_id: str) -> list[Approval]:
         query = select(approvals).where(approvals.c.run_id == run_id).order_by(approvals.c.token)

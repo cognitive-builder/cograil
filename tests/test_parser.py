@@ -151,3 +151,49 @@ def test_file_with_no_steps_is_an_error() -> None:
 def test_malformed_files_are_errors(text: str) -> None:
     with pytest.raises(ProtocolParseError):
         parse_protocol(text)
+
+
+def _with_error_handling(*bullets: str) -> str:
+    lines = "\n".join(f"- {bullet}" for bullet in bullets)
+    return f'Protocol: demo\n\n1. Step "Look": Use @hris.get_balance.\n\nError handling:\n{lines}\n'
+
+
+@pytest.mark.parametrize(
+    ("bullet", "max_failures"),
+    [
+        ("@hris.get_balance fails: escalate.", 1),
+        ("@hris.get_balance fails: retry once, then escalate to the Human Manager.", 2),
+        ("@hris.get_balance fails: Retry twice then escalate", 3),
+        ("@hris.get_balance fails: retry 4 times, then escalate.", 5),
+    ],
+)
+def test_tool_fails_bullet_becomes_a_failure_threshold(bullet: str, max_failures: int) -> None:
+    protocol = parse_protocol(_with_error_handling(bullet, "Balance too low: explain and stop."))
+    (threshold,) = protocol.failure_thresholds
+    assert (threshold.tool, threshold.max_failures, threshold.rule) == (
+        "hris.get_balance",
+        max_failures,
+        bullet,
+    )
+    assert len(protocol.error_handling) == 2  # every bullet still reaches the model
+
+
+@pytest.mark.parametrize(
+    "bullets",
+    [
+        pytest.param(["@hris.get_balance fails: retry once and give up."], id="no-escalate"),
+        pytest.param(
+            ["@hris.get_balance fails: escalate", "@hris.get_balance fails: escalate"],
+            id="duplicate",
+        ),
+    ],
+)
+def test_tool_fails_bullet_the_parser_cannot_enforce_is_an_error(bullets: list[str]) -> None:
+    with pytest.raises(ProtocolParseError):
+        parse_protocol(_with_error_handling(*bullets))
+
+
+def test_failure_threshold_on_an_unknown_tool_is_reported() -> None:
+    text = _with_error_handling("@hris.get_balans fails: escalate.")
+    with pytest.raises(ProtocolParseError, match=r"@hris.get_balans \(error handling\)"):
+        parse_protocol(text, known_tools={"hris.get_balance"})

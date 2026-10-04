@@ -3,6 +3,10 @@
 The step directive form `(context: steps 1, 2; model: small; turns: 4)` is fixed by ADR 0011.
 Anything the parser does not understand is an error: a Protocol is process rails, so a line
 that is silently dropped is a step or a guardrail that silently does not exist.
+
+An Error handling bullet that starts `@tool fails:` is a FailureThreshold the runner enforces,
+so it must read `escalate` or `retry once|twice|N times, then escalate`; other bullets are
+text for the model.
 """
 
 from __future__ import annotations
@@ -11,7 +15,7 @@ import re
 from collections.abc import Collection
 from typing import Any
 
-from cograil.domain import Protocol, Step
+from cograil.domain import FailureThreshold, Protocol, Step
 from cograil.errors import ProtocolParseError
 
 _STEP = re.compile(r'^(\d+)\.\s+Step\s+"([^"]+)"\s*:\s*(.*)$')
@@ -19,6 +23,10 @@ _DIRECTIVE = re.compile(r"\(\s*((?:context|model|turns)\s*:[^()]*)\)\s*$")
 _CONTEXT = re.compile(r"^steps?\s+(\d+(?:\s*,\s*\d+)*)$")
 _TOOL_REF = re.compile(r"(?<![\w.])@(\w+(?:\.\w+)*)")
 _KEY_VALUE = re.compile(r"^([A-Za-z][A-Za-z ]*?)\s*:\s*(.*)$")
+_FAILS = re.compile(r"^@(\w+(?:\.\w+)*)\s+fails\s*:\s*(.*)$", re.IGNORECASE)
+_ESCALATE = re.compile(
+    r"^(?:retry\s+(?:(once)|(twice)|(\d+)\s+times?)\s*,?\s*then\s+)?escalate\b", re.IGNORECASE
+)
 
 _SECTIONS = {"error handling": "error_handling", "guardrails": "guardrails"}
 _HEADERS = {
@@ -139,9 +147,30 @@ def _build(header: dict[str, str], steps: list[Step], sections: dict[str, list[s
         steps=steps,
         helpers=_csv(header.get("helpers", "")),
         error_handling=sections["error_handling"],
+        failure_thresholds=_thresholds(sections["error_handling"]),
         guardrails=sections["guardrails"],
         **fields,
     )
+
+
+def _thresholds(bullets: list[str]) -> list[FailureThreshold]:
+    found: dict[str, FailureThreshold] = {}
+    for bullet in bullets:
+        fails = _FAILS.match(bullet)
+        if fails is None:
+            continue
+        tool, action = fails.group(1), _ESCALATE.match(fails.group(2))
+        if action is None:
+            raise ProtocolParseError(
+                f"error handling {bullet!r}: a '@tool fails:' bullet must say 'escalate' or "
+                "'retry once|twice|N times, then escalate'"
+            )
+        if tool in found:
+            raise ProtocolParseError(f"error handling: two '@{tool} fails:' bullets")
+        once, twice, times = action.groups()
+        retries = 1 if once else 2 if twice else int(times or 0)
+        found[tool] = FailureThreshold(tool=tool, max_failures=retries + 1, rule=bullet)
+    return list(found.values())
 
 
 def _csv(value: str) -> list[str]:
@@ -163,6 +192,10 @@ def _check_tools(protocol: Protocol, known_tools: Collection[str] | None) -> Non
         for step in protocol.steps
         for tool in step.tools
         if tool not in known_tools
+    ] + [
+        f"@{threshold.tool} (error handling)"
+        for threshold in protocol.failure_thresholds
+        if threshold.tool not in known_tools
     ]
     if unknown:
         raise ProtocolParseError("unknown tool reference(s): " + ", ".join(unknown))
