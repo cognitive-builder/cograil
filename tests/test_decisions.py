@@ -236,7 +236,8 @@ def test_first_policy_outcome_without_matches_is_a_decision_error() -> None:
 async def test_args_schema_is_checked_before_the_table_inputs(
     store: InMemoryRunStore, ctx: CallContext
 ) -> None:
-    args = {"duration_days": 12, "leave_type": "annual"}  # requester_role is missing from both
+    args = {"duration_days": 12, "leave_type": "annual"}  # requester_role: required by both the
+    # schema and the table, absent from the args, so only the order decides which error surfaces
     async with await build_registry(load_workspace(EXAMPLE), store, EXAMPLE) as registry:
         with pytest.raises(ToolArgumentError, match="requester_role"):
             await registry.invoke(ROUTING, args, ctx)
