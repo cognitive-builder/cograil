@@ -10,8 +10,9 @@ A Run execution is one trace, a tree of spans:
 
 - `run <protocol>` is the top span. It covers one `run` or one `resume` of a Run.
 - `step <n> <name>` is a child of the Run span, one for each Step.
-- `chat <model>` is a child of the Step span, one for each model call. A Step's turn, a
-  compression and an injection screen each make one.
+- `chat <model>` is a child of the Step span, one for each model call a Step makes. A Step's turn,
+  a compression and an injection screen each make one. The classification of a chat message, the
+  small-tier redaction and eval runs make model calls outside a Step; they have no span yet.
 
 ## Attributes
 

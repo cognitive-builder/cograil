@@ -148,7 +148,7 @@ edits, and a database trigger rejects UPDATE, DELETE and TRUNCATE. The applicati
 triggers needs the owner. See `docs/deploy.md`.
 
 Beside the audit trail, `observability.py` sends OpenTelemetry spans: one for each Run
-execution, one for each Step and one for each model call, with tokens and cost but never prompts
+execution, one for each Step and one for each model call inside a Step, with tokens and cost but never prompts
 or Tool data. See [Observability](observability.md).
 
 Error text from a Tool can carry personal data or secrets, so it is redacted before it is
