@@ -1,7 +1,7 @@
 """Gate tests for issue #11: pause, resume, escalate, failure thresholds and GateRequired.
 
 The approval timeout comes from the Harness (issue #44). Who may decide an Approval, and
-the decider in the audit trail, is issue #94.
+the decider in the audit trail, is issue #94. Gate edge cases are issue #102.
 """
 
 import asyncio
@@ -214,21 +214,26 @@ async def test_only_the_approver_may_decide_an_approval(
     assert (provider.calls, tools.invoked) == ([], ["hris.get_balance"])
     refused = (await store.list_audit_events("r1"))[-1]
     assert (refused.kind, refused.detail["decided_by"]) == ("gate.refused", decider)
+    # Issue #102: the attempted decider is the acting principal, the Run's is in the detail.
+    assert (refused.principal_id, refused.detail["run_principal"]) == (decider, PRINCIPAL)
 
 
-async def test_a_run_cannot_approve_its_own_gated_write(
+async def test_an_approver_who_is_the_requester_escalates_at_pause_time(
     store: InMemoryRunStore, registry: ToolRegistry, protocol: Protocol, tools: Tools
 ) -> None:
-    """Not even when the Colleague's escalation_contact is the Run's own principal."""
+    """Issue #102: nobody may decide such a gate, so the Run escalates now, not at timeout."""
     own = HARPER.model_copy(update={"escalation_contact": PRINCIPAL})
     runner = Runner(FakeProvider([*TO_GATE, *AFTER_GATE]), registry, store, own, harness=HARNESS)
-    await runner.run("r1", protocol)
-    (approval,) = await store.list_approvals("r1")
-    assert approval.approver == PRINCIPAL
-    with pytest.raises(ApprovalNotAllowed):
-        await runner.resume(approval.token, protocol, decider=PRINCIPAL)
-    assert (await store.get_approval(approval.token)).decision == "pending"
+    run = await runner.run("r1", protocol)
+    assert (run.status, run.cursor) == (RunStatus.escalated, 1)
+    assert (await store.get_run("r1")).status == RunStatus.escalated
+    assert await store.list_approvals("r1") == []
     assert tools.invoked == ["hris.get_balance"]
+    assert "gate.paused" not in await kinds(store)
+    last = (await store.list_audit_events("r1"))[-1]
+    assert (last.kind, last.principal_id) == ("run.escalated", PRINCIPAL)
+    assert last.detail == {"reason": "approver_is_requester", "contact": PRINCIPAL, "step": 2,
+                           "tool": "hris.submit_leave", "approver": PRINCIPAL}  # fmt: skip
 
 
 async def test_a_plan_that_ends_its_step_at_a_gate_ends_it_after_the_resume(
