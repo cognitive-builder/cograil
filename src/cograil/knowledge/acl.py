@@ -11,11 +11,13 @@ hide a document.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import yaml
 
 from cograil.errors import KnowledgeSourceError
+from cograil.observability import log_event
 
 FOLDER_ACL = ".acl.yaml"
 SIDECAR_SUFFIX = ".acl.yaml"
@@ -37,8 +39,10 @@ def groups_for(document: Path, source_root: Path, default: list[str]) -> list[st
 
 
 def _narrow(path: Path, source_root: Path, default: list[str]) -> list[str]:
-    allowed = set(default)
-    groups = [g for g in _read_groups(path, source_root) if g in allowed]
+    named = _read_groups(path, source_root)
+    groups = [g for g in named if g in default]
+    if dropped := [g for g in named if g not in default]:
+        log_event("knowledge.acl_narrowed", logging.WARNING, file=str(path), dropped=dropped)
     if not groups:
         raise KnowledgeSourceError(
             f"{path} names none of the source's acl_groups {default}; an ACL file only narrows"

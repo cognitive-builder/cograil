@@ -13,7 +13,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from sqlalchemy import delete, select
+from sqlalchemy import RowMapping, delete, select
 from sqlalchemy.dialects.postgresql import Insert, insert
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
@@ -94,6 +94,10 @@ def _upsert(write: Sequence[tuple[Chunk, list[float]]]) -> Insert:
     return statement.on_conflict_do_update(index_elements=["id"], set_=changes)
 
 
+def _chunk_of(row: RowMapping) -> Chunk:
+    return Chunk.model_validate({name: row[name] for name in Chunk.model_fields})
+
+
 def _nothing_to_search(groups: Sequence[str], sources: Sequence[str], limit: int) -> bool:
     return not groups or not sources or limit < 1
 
@@ -160,8 +164,7 @@ class PostgresKnowledgeStore:
         query = select(*columns, table.c.embedding.is_(None).label("stale"))
         async with self._engine.begin() as conn:
             rows = (await conn.execute(query.where(table.c.source == source))).mappings().all()
-            existing = {r["id"]: Chunk.model_validate({n: r[n] for n in Chunk.model_fields})
-                        for r in rows}  # fmt: skip
+            existing = {r["id"]: _chunk_of(r) for r in rows}
             plan = _plan(existing, chunks, frozenset(r["id"] for r in rows if r["stale"]))
             vectors = await self._embedder.embed([c.text for c in plan.write])
             for batch in _batches(list(zip(plan.write, vectors, strict=True))):
@@ -176,7 +179,7 @@ class PostgresKnowledgeStore:
         query = select(*columns).where(table.c.source == source).order_by(table.c.id)
         async with self._engine.connect() as conn:
             rows = (await conn.execute(query)).mappings().all()
-        return [Chunk.model_validate(dict(r)) for r in rows]
+        return [_chunk_of(r) for r in rows]
 
     async def search(
         self, query: str, groups: Sequence[str], sources: Sequence[str], limit: int
@@ -189,11 +192,7 @@ class PostgresKnowledgeStore:
         statement = search_statement(vector, groups, sources, limit)
         async with self._engine.connect() as conn:
             rows = (await conn.execute(statement)).mappings().all()
-        return [
-            ScoredChunk(Chunk.model_validate({n: r[n] for n in Chunk.model_fields}),
-                        1.0 - r["distance"])
-            for r in rows
-        ]  # fmt: skip
+        return [ScoredChunk(_chunk_of(r), min(1.0, 1.0 - r["distance"])) for r in rows]
 
 
 __all__ = [

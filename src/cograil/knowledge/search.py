@@ -59,7 +59,7 @@ def rank(
     for chunk, embedding in candidates:
         score = cosine_similarity(embedding, vector)
         if score is not None:
-            scored.append(ScoredChunk(chunk.model_copy(deep=True), score))
+            scored.append(ScoredChunk(chunk.model_copy(deep=True), min(1.0, score)))
     scored.sort(key=lambda found: (-found.score, found.chunk.id))
     return scored[:limit]
 

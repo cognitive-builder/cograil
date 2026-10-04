@@ -157,8 +157,7 @@ class Audience(Entity):
 
 class KnowledgeSource(Entity):
     """A folder of Markdown and PDF files. `chunk_size` and `chunk_overlap` count characters;
-    `acl_groups` is the default for files with no sidecar or folder ACL file, and the most any
-    ACL file can allow: an ACL file only narrows it."""
+    `acl_groups` is the default for files without an ACL file, which can only narrow it."""
 
     name: str
     path: str

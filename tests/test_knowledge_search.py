@@ -2,6 +2,7 @@
 (and Postgres when DATABASE_URL is set): the acl_groups filter comes before ranking, results
 cite their source_uri and passage, and a principal never retrieves a Chunk outside its groups."""
 
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -105,7 +106,7 @@ async def test_the_best_match_outside_the_groups_does_not_use_up_the_limit(
 
 def test_the_sql_filters_inside_a_materialized_cte_and_ranks_outside_it() -> None:
     sql = str(search_statement([1.0], ["staff"], ["docs"], 3).compile(dialect=postgresql.dialect()))
-    inner, outer = sql.split(")\n SELECT")
+    inner, outer = re.split(r"\)\s+SELECT", sql)
     assert inner.startswith("WITH allowed AS MATERIALIZED")
     assert "chunks.acl_groups && " in inner and "<=>" not in inner and "LIMIT" not in inner
     assert "FROM allowed ORDER BY distance" in outer and "chunks" not in outer
