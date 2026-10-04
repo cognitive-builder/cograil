@@ -1,16 +1,18 @@
-"""Cost telemetry: tokens and dollars of every model call, summed per Run and per Protocol.
+"""Cost telemetry: tokens and dollars of a Run's model calls, summed per Run and per Protocol.
 
-Every model call (a Step's turn, a compression, an injection screen) goes through `charge`,
-which adds its dollars to `Run.cost_usd` and its tokens to the Run's tally in
-`Run.context["usage"]`. The tally keeps fresh tokens (prompt not read from or written to saved
-context, and what the model wrote), cache read and cache write tokens, and batch tokens apart,
-as ADR 0013 asks: a cache read and a batch token are billed at a different rate from a fresh one,
-so one sum would hide what a Run cost. A call that went through the provider's batch path counts
-all its tokens as batch tokens.
+A Step's turn, a compression and an injection screen go through `charge`, which adds their dollars
+to `Run.cost_usd` and their tokens to the Run's tally in `Run.context["usage"]`. Two kinds of model
+call are not charged yet, tracked in #221: the routing call (`classify_intent`), which happens
+before the Run is created, and redaction calls, which drop their usage. The tally keeps fresh
+tokens (prompt not read from or written to saved context, and what the model wrote), cache read and
+cache write tokens, and batch tokens apart, as ADR 0013 asks: a cache read and a batch token are
+billed at a different rate from a fresh one, so one sum would hide what a Run cost. A call that
+went through the provider's batch path counts all its tokens as batch tokens.
 
 `cost_by_protocol` is the report behind `cograil runs --cost`. Its headline is the cost per
-resolved run (ADR 0013): the total cost of the Runs that completed, which means without
-escalation, divided by their count.
+resolved run (ADR 0013): the total cost of the Runs that ended `completed`, divided by their count.
+A Run is resolved whenever it ends `completed`, including after a hand-off to a human inside its
+Protocol; a Run that ended `escalated` or `failed` counts in the cost column, not in the headline.
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ USAGE_KEY = "usage"  # Run.context["usage"]: the Run's token tally
 
 
 class RunUsage(BaseModel):
-    """Tokens by category. `fresh_*` is what was neither cached nor sent through the batch path."""
+    """Tokens by category. `input_tokens` and `output_tokens` are neither cached nor batched."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -38,16 +40,6 @@ class RunUsage(BaseModel):
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
     batch_tokens: int = 0
-
-    @property
-    def total_tokens(self) -> int:
-        return (
-            self.input_tokens
-            + self.output_tokens
-            + self.cache_read_tokens
-            + self.cache_write_tokens
-            + self.batch_tokens
-        )
 
     def __add__(self, other: RunUsage) -> RunUsage:
         return RunUsage(
