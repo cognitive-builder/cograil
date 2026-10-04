@@ -15,7 +15,7 @@ from typer.testing import CliRunner
 
 import cograil.cli
 from cograil.cli import app
-from cograil.domain import RunStatus
+from cograil.domain import Run, RunStatus
 from cograil.errors import ProviderError
 from cograil.providers.fake import load_script
 from cograil.store import InMemoryRunStore, RunStore
@@ -117,6 +117,35 @@ def test_approve_refuses_anyone_but_the_approver(
         e for e in asyncio.run(shared_store.list_audit_events(run.id)) if e.kind == "gate.refused"
     ]
     assert len(refused) == (1 if decider.strip() else 0)  # a blank --as never reaches the runner
+
+
+class TakenOverAfterTheDecisionStore(InMemoryRunStore):
+    """A racing execution claims the decided Run before the resume's claim lands (#104): the
+    Run the decision set running is no longer this command's to go on with."""
+
+    async def claim_run(self, run: Run, read: Run) -> None:
+        if read.status is RunStatus.running:  # the read a resume claims from
+            await super().claim_run(run.model_copy(update={"claim": "racing-execution"}), read)
+        await super().claim_run(run, read)
+
+
+def test_approve_exits_with_an_error_when_the_run_was_taken_over(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = TakenOverAfterTheDecisionStore()
+
+    @asynccontextmanager
+    async def open_store() -> AsyncIterator[RunStore]:
+        yield store
+
+    monkeypatch.setattr(cograil.cli, "open_store", open_store)
+    _, output = start(tmp_path)
+    rest = ["--fake-script", script(tmp_path, REST_SCRIPT, "rest.yaml")]
+    result = runner.invoke(app, ["approve", token_in(output), "--as", MANAGER, *rest])
+    assert result.exit_code == cograil.cli.EXIT_ERROR
+    assert "refused" in result.output
+    (run,) = asyncio.run(store.list_runs())
+    assert run.status is RunStatus.running  # the racing execution's to finish
 
 
 def test_approve_takes_a_token_whose_random_bytes_once_made_a_leading_dash(

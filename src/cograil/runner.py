@@ -378,11 +378,20 @@ class Runner:
         return claimed
 
     async def _fail(self, run_id: str, claim: str, exc: Exception) -> None:
-        """Fail the Run closed if this execution holds its claim; otherwise leave it as is."""
+        """Fail the Run closed if this execution holds its claim; otherwise leave it as is.
+
+        A Run taken over between the read and the save is the winner's to fail, so the
+        failure is only logged and `exc`, the real failure, is what the caller still sees.
+        """
         run = await self._store.get_run(run_id)
         if run.claim != claim:
             return
-        run = await self._save(run, status=RunStatus.failed)  # RunClaimLost if taken over now
+        try:
+            run = await self._save(run, status=RunStatus.failed)
+        except RunClaimLost:
+            log_event("run.fail.skipped", logging.WARNING, error=type(exc).__name__,
+                      reason="claim_lost")  # fmt: skip
+            return
         detail = {"error": type(exc).__name__, "message": str(exc), "cursor": run.cursor}
         await self._audit(run, "run.failed", detail)
         log_event("run.failed", logging.WARNING, error=type(exc).__name__, cursor=run.cursor)

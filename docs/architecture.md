@@ -108,7 +108,9 @@ still be run again; its new claim takes the Run over, and an execution whose cla
 over stops at its next save without failing the Run. The claim fences Run saves only: until
 that next save, the execution that was taken over may still make provider and tool calls, as
 a process killed mid-Step would have. A gated write still needs an Approval, and each
-Approval lets one call through.
+Approval lets one call through. The claim does not fence the Approval itself, though:
+until that save, the taken-over execution can still spend an Approval it already holds,
+and `Gates.pause` can still leave a pending Approval behind — exactly the #143 case.
 Approved, the Run continues exactly at the paused Step and runs the plan that was waiting.
 Declined or past its expiry, it escalates to the Colleague's escalation contact. A Protocol
 whose version has changed since the Run started is refused.
