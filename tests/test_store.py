@@ -1,5 +1,6 @@
 """RunStore contract, run against InMemoryRunStore and, when DATABASE_URL is set, Postgres."""
 
+import asyncio
 import os
 import uuid
 from collections.abc import AsyncIterator, Iterator
@@ -18,6 +19,7 @@ from cograil.domain import Approval, AuditEvent, Principal, Run, RunStatus, Tool
 from cograil.errors import (
     ApprovalAlreadyDecided,
     ApprovalNotFound,
+    ApprovalNotSpendable,
     DuplicateRecord,
     RunNotFound,
 )
@@ -163,6 +165,26 @@ async def test_approval_errors(store: RunStore) -> None:
     orphan = approval.model_copy(update={"token": "orphan", "run_id": "missing"})
     with pytest.raises(RunNotFound):
         await store.create_approval(orphan)
+
+
+async def test_approval_is_spent_once_even_by_concurrent_spends(store: RunStore) -> None:
+    run = await stored_run(store)
+    token = f"tok-{uuid.uuid4().hex}"
+    approval = Approval(token=token, run_id=run.id, step=1, tool="hris.book", args={},
+                        approver="bob", expires_at=T0 + timedelta(hours=1))  # fmt: skip
+    await store.create_approval(approval)
+    with pytest.raises(ApprovalNotSpendable):  # still pending
+        await store.spend_approval(token, T0)
+    await store.decide_approval(token, "approved", T0)
+    spends = [store.spend_approval(token, T0 + timedelta(seconds=n)) for n in (1, 2)]
+    results = await asyncio.gather(*spends, return_exceptions=True)
+    spent = [r for r in results if isinstance(r, Approval)]
+    assert len(spent) == 1
+    assert [type(r) for r in results if not isinstance(r, Approval)] == [ApprovalNotSpendable]
+    assert await store.get_approval(token) == spent[0]
+    assert spent[0].expires_at == T0 + timedelta(hours=1)
+    with pytest.raises(ApprovalNotFound):
+        await store.spend_approval("missing", T0)
 
 
 async def test_audit_events_append_and_list_in_order(store: RunStore) -> None:

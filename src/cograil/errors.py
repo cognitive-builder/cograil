@@ -37,6 +37,10 @@ class GateRequired(CograilError):
     """A write tool was invoked without the required approval."""
 
 
+class RunNotPaused(CograilError):
+    """The Run is not paused on that Approval, so the Approval cannot resume or expire it."""
+
+
 class AudienceDenied(CograilError):
     """The principal is outside the Protocol's audience."""
 
@@ -71,3 +75,7 @@ class DuplicateRecord(StoreError):
 
 class ApprovalAlreadyDecided(StoreError):
     """An Approval can be decided once; it is no longer pending."""
+
+
+class ApprovalNotSpendable(StoreError):
+    """An Approval is spent once, and only after it was approved."""

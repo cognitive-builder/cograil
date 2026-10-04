@@ -1,4 +1,7 @@
-"""Runner tests for issue #10: whitelist, gates, context, cursor, bounds, invoke's only caller."""
+"""Runner tests for issue #10: whitelist, gates, context, cursor, bounds, invoke's only caller.
+
+Pausing, resuming and escalating at a gate are in test_gates.py (issue #11).
+"""
 
 import ast
 from pathlib import Path
@@ -9,8 +12,8 @@ from anthropic.types import Message as SdkMessage
 from anthropic.types import ToolUseBlock
 from anthropic.types import Usage as SdkUsage
 
-from cograil.domain import Approval, Protocol, RunStatus, Tool
-from cograil.errors import GateRequired, LoopBudgetExceeded, ProviderError, ToolNotAllowed
+from cograil.domain import Approval, Colleague, Protocol, RunStatus, Tool
+from cograil.errors import LoopBudgetExceeded, ProviderError, ToolNotAllowed
 from cograil.parser import parse_protocol
 from cograil.providers import AnthropicProvider, FakeProvider, Plan, PlannedToolCall, scripted
 from cograil.registry import ToolRegistry
@@ -19,6 +22,9 @@ from cograil.store import InMemoryRunStore
 
 SRC = Path(__file__).parents[1] / "src/cograil"
 SUBMIT = {"employee": "alice", "days": 3}
+HARPER = Colleague(
+    name="harper", role="HR", escalation_contact="hr-ops@example.com", protocols=["demo"]
+)
 PROTOCOL = """
 Protocol: demo
 1. Step "Look up": Use @hris.get_balance for the requester. (turns: 2)
@@ -75,7 +81,7 @@ async def run(
     store: InMemoryRunStore, registry: ToolRegistry, protocol: Protocol, script: list[Plan]
 ) -> FakeProvider:
     provider = FakeProvider(script)
-    await Runner(provider, registry, store).run("r1", protocol)
+    await Runner(provider, registry, store, HARPER).run("r1", protocol)
     return provider
 
 
@@ -133,18 +139,9 @@ async def test_anthropic_wire_name_of_an_unoffered_tool_raises_tool_not_allowed(
     client = StubAnthropic("notify__send")
     provider = AnthropicProvider("claude-sonnet-5-5", client=client)  # type: ignore[arg-type]
     with pytest.raises(ToolNotAllowed):
-        await Runner(provider, registry, store).run("r1", protocol)
+        await Runner(provider, registry, store, HARPER).run("r1", protocol)
     assert invoked == []
     await assert_failed_closed(store, ToolNotAllowed, cursor=0)
-
-
-async def test_gated_write_without_approval_raises_gate_required(
-    store: InMemoryRunStore, registry: ToolRegistry, protocol: Protocol, invoked: list[str]
-) -> None:
-    with pytest.raises(GateRequired):
-        await run(store, registry, protocol, [*LOOK_UP, *SUBMITTED])
-    assert invoked == ["hris.get_balance"]
-    await assert_failed_closed(store, GateRequired, cursor=1)
 
 
 async def test_an_approval_authorises_one_call(
@@ -152,10 +149,10 @@ async def test_an_approval_authorises_one_call(
 ) -> None:
     await approve(store)
     again = scripted("", call("hris.submit_leave", **SUBMIT))
-    with pytest.raises(GateRequired):
-        await run(store, registry, protocol, [*LOOK_UP, again, again])
+    await run(store, registry, protocol, [*LOOK_UP, again, again])
     assert invoked == ["hris.get_balance", "hris.submit_leave"]
-    assert (await store.get_run("r1")).context["approvals_used"] == ["a1"]
+    assert (await store.get_approval("a1")).spent_at is not None
+    assert (await store.get_run("r1")).status == RunStatus.awaiting_approval  # the second call
 
 
 async def test_context_accumulates_step_outputs(
@@ -243,4 +240,4 @@ def test_the_runner_is_the_only_caller_of_registry_invoke() -> None:
                     if isinstance(node, ast.Attribute) and node.attr == "invoke":
                         users.add((path.relative_to(SRC).as_posix(), func.name))
     # registry.py's own use is the Tool's Invoke inside ToolRegistry.invoke.
-    assert users == {("registry.py", "invoke"), ("runner.py", "_act")}
+    assert users == {("registry.py", "invoke"), ("runner.py", "_invoke")}

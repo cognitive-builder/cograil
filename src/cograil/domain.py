@@ -115,6 +115,17 @@ class Step(Entity):
     max_turns: int | None = None
 
 
+class FailureThreshold(Entity):
+    """An Error handling bullet such as `@hris.get_balance fails: retry once, then escalate`.
+
+    The runner escalates the Run once the Tool has failed max_failures times in it.
+    """
+
+    tool: str
+    max_failures: int = Field(ge=1)
+    rule: str
+
+
 class Protocol(Entity):
     name: str
     version: int = 1
@@ -125,6 +136,7 @@ class Protocol(Entity):
     manual_allowed: bool = True
     scheduled_allowed: bool = False
     error_handling: list[str] = Field(default_factory=list)
+    failure_thresholds: list[FailureThreshold] = Field(default_factory=list)
     guardrails: list[str] = Field(default_factory=list)
     model: str | None = None
 
@@ -204,6 +216,8 @@ class ToolCall(Entity):
 
 
 class Approval(Entity):
+    """Authorises one call of a gated Tool; spent_at is set when that call is let through."""
+
     token: str
     run_id: str
     step: int
@@ -212,6 +226,8 @@ class Approval(Entity):
     approver: str
     decision: Literal["pending", "approved", "declined", "expired"] = "pending"
     decided_at: datetime | None = None
+    expires_at: datetime | None = None
+    spent_at: datetime | None = None
 
 
 class AuditEvent(Entity):
@@ -225,6 +241,7 @@ class AuditEvent(Entity):
         "decision.evaluated",
         "gate.paused",
         "gate.resumed",
+        "gate.spent",
         "tier.escalated",
         "loop.bounded",
         "run.escalated",

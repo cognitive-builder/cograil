@@ -2,9 +2,16 @@
 
 Inside a Step the model plans through the injected Provider and is offered only the
 Step's whitelisted Tools. Every call of a plan is checked before any of them runs: a Tool
-the Step does not list raises ToolNotAllowed, and a gated write without an approved
-Approval raises GateRequired (gates.py). Only then does the call go to
-`ToolRegistry.invoke`, which checks neither; this module is its only caller.
+the Step does not list raises ToolNotAllowed, and a gated write needs an approved Approval
+(gates.py). Only then does the call go to `ToolRegistry.invoke`, which checks neither; this
+module is its only caller.
+
+A gated write without an Approval pauses the Run awaiting_approval with the Step's progress
+saved, and nothing from that plan runs; `Runner.resume` with the Approval's token continues
+the Run exactly there, running the saved plan. A declined or expired Approval escalates the
+Run, and so does a Tool reaching its FailureThreshold from the Protocol's Error handling:
+until then a failed call (ToolExecutionError) goes back to the model as data, while a failed
+call of a Tool with no threshold fails the Run. A paused or escalated Run ends the graph.
 
 A Step's output (its final text and its tool results) is added to `Run.context["steps"]`,
 and `Run.cursor` moves to the Step's number only once the Step has completed; both are
@@ -15,7 +22,7 @@ Interim rules until their issues land: a Step completes when the model answers w
 tool calls (the structured step_complete signal is #44); turns are bounded by
 `Step.max_turns` or DEFAULT_MAX_TURNS (harness.yaml is #44); a Step sees the outputs of
 the Steps it declares with `(context: steps ...)`, else of the previous Step only (the
-ContextBuilder is #45); a missing Approval fails the Run instead of pausing it (#11).
+ContextBuilder is #45).
 """
 
 from __future__ import annotations
@@ -24,8 +31,9 @@ import itertools
 import json
 import logging
 import typing
-from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
+from datetime import timedelta
 from typing import Any, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -33,9 +41,26 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic_core import to_jsonable_python
 
 from cograil import observability
-from cograil.domain import AuditEvent, Protocol, Run, RunStatus, Step, Tool
-from cograil.errors import LoopBudgetExceeded, ToolNotAllowed
-from cograil.gates import require_approval
+from cograil.domain import (
+    Approval,
+    AuditEvent,
+    Colleague,
+    Protocol,
+    Run,
+    RunStatus,
+    Step,
+    Tool,
+)
+from cograil.errors import GateRequired, LoopBudgetExceeded, ToolExecutionError, ToolNotAllowed
+from cograil.gates import (
+    DEFAULT_APPROVAL_TIMEOUT,
+    Clock,
+    Gates,
+    StepProgress,
+    paused_progress,
+    require_approval,
+    utc_now,
+)
 from cograil.observability import log_event
 from cograil.providers.base import Message, PlannedToolCall, Provider
 from cograil.registry import CallContext, ToolRegistry
@@ -63,13 +88,16 @@ def node_name(step: Step) -> str:
 
 
 def compile_protocol(protocol: Protocol, node_for: Callable[[Step], StepNode]) -> Graph:
-    """One node per Step, edges in step order; entry is the first Step after Run.cursor."""
+    """One node per Step, edges in step order; entry is the first Step after Run.cursor.
+
+    A Step that leaves the Run anything but running (paused or escalated) ends the graph.
+    """
     graph = StateGraph(RunState)
     names = [node_name(step) for step in protocol.steps]
     for step, name in zip(protocol.steps, names, strict=True):
         graph.add_node(name, node_for(step))
     for here, there in itertools.pairwise(names):
-        graph.add_edge(here, there)
+        graph.add_conditional_edges(here, _onward(there), [there, END])
     graph.add_edge(names[-1], END)
 
     def entry(state: RunState) -> str:
@@ -79,6 +107,13 @@ def compile_protocol(protocol: Protocol, node_for: Callable[[Step], StepNode]) -
 
     graph.add_conditional_edges(START, entry, [*names, END])
     return graph.compile()
+
+
+def _onward(there: str) -> Callable[[RunState], str]:
+    def route(state: RunState) -> str:
+        return there if state["run"].status is RunStatus.running else END
+
+    return route
 
 
 def prior_messages(run: Run, step: Step) -> list[Message]:
@@ -93,19 +128,64 @@ def prior_messages(run: Run, step: Step) -> list[Message]:
 
 
 class Runner:
-    """Executes Runs of a Protocol. The Provider is injected (ADR 0005)."""
+    """Executes Runs of a Colleague's Protocols. The Provider is injected (ADR 0005)."""
 
-    def __init__(self, provider: Provider, registry: ToolRegistry, store: RunStore) -> None:
+    def __init__(
+        self,
+        provider: Provider,
+        registry: ToolRegistry,
+        store: RunStore,
+        colleague: Colleague,
+        *,
+        approval_timeout: timedelta = DEFAULT_APPROVAL_TIMEOUT,
+        clock: Clock = utc_now,
+    ) -> None:
         self._provider = provider
         self._registry = registry
         self._store = store
+        self._clock = clock
+        self._gates = Gates(store, colleague, timeout=approval_timeout, clock=clock)
 
     async def run(self, run_id: str, protocol: Protocol) -> Run:
-        """Run from the Step after Run.cursor to the end; on any error fail closed, re-raise."""
+        """Run from the Step after Run.cursor until the end, a gate or an escalation.
+
+        A Run awaiting approval moves on only through `resume`: this raises GateRequired.
+        """
         run = await self._store.get_run(run_id)
+        if run.status is RunStatus.awaiting_approval:
+            raise GateRequired(f"run {run_id} is awaiting approval; resume it with its token")
+        async with self._failing_closed(run_id):
+            run = await self._save(run, status=RunStatus.running)
+            detail = {"protocol": protocol.name, "version": protocol.version, "cursor": run.cursor}
+            await self._audit(run, "run.started", detail)
+            return await self._execute(run, protocol)
+
+    async def resume(
+        self,
+        token: str,
+        protocol: Protocol,
+        decision: Literal["approved", "declined"] = "approved",
+    ) -> Run:
+        """Decide the Approval a Run is paused on, then go on exactly at the paused Step.
+
+        Declined or expired, the Run escalates instead. Errors in deciding (RunNotPaused,
+        ApprovalAlreadyDecided for a resume that lost a race) leave the Run as it was.
+        """
+        run = await self._gates.resume(token, decision)
+        if run.status is not RunStatus.running:
+            return run
+        async with self._failing_closed(run.id):
+            return await self._execute(run, protocol)
+
+    async def expire(self, token: str) -> Run:
+        """Escalate the Run paused on this Approval if it timed out; for a scheduler."""
+        return await self._gates.expire(token)
+
+    @asynccontextmanager
+    async def _failing_closed(self, run_id: str) -> AsyncIterator[None]:
         token = observability.run_id.set(run_id)
         try:
-            return await self._execute(run, protocol)
+            yield
         except Exception as exc:
             await self._fail(run_id, exc)
             raise
@@ -113,58 +193,109 @@ class Runner:
             observability.run_id.reset(token)
 
     async def _execute(self, run: Run, protocol: Protocol) -> Run:
-        run = await self._save(run, status=RunStatus.running)
-        detail = {"protocol": protocol.name, "version": protocol.version, "cursor": run.cursor}
-        await self._audit(run, "run.started", detail)
-        graph = compile_protocol(protocol, self._node)
+        graph = compile_protocol(protocol, lambda step: self._node(step, protocol))
         final = await graph.ainvoke({"run": run}, {"recursion_limit": len(protocol.steps) + 1})
-        run = await self._save(final["run"], status=RunStatus.completed)
+        run = final["run"]
+        if run.status is not RunStatus.running:  # paused or escalated, already saved
+            return run
+        run = await self._save(run, status=RunStatus.completed)
         await self._audit(run, "run.completed", {"cursor": run.cursor})
         return run
 
-    def _node(self, step: Step) -> StepNode:
+    def _node(self, step: Step, protocol: Protocol) -> StepNode:
         async def node(state: RunState) -> RunState:
-            return {"run": await self._run_step(step, state["run"])}
+            return {"run": await self._run_step(step, state["run"], protocol)}
 
         return node
 
-    async def _run_step(self, step: Step, run: Run) -> Run:
+    async def _run_step(self, step: Step, run: Run, protocol: Protocol) -> Run:
         ctx = CallContext(run_id=run.id, step=step.number, principal_id=run.principal_id)
         tools = [self._registry.get(name) for name in step.tools]
-        messages = prior_messages(run, step)
-        calls: list[dict[str, Any]] = []
+        progress = paused_progress(run, step.number)
+        if progress is None:
+            progress = StepProgress(step=step.number, messages=prior_messages(run, step))
+        run = run.model_copy(update={"context": _without(run.context, "paused")})
         turns = step.max_turns or DEFAULT_MAX_TURNS
-        for _ in range(turns):
-            plan = await self._provider.plan(step, messages, tools)
-            if plan.text:
-                messages.append(Message(role="assistant", content=plan.text))
-            if not plan.tool_calls:
-                return await self._complete(run, step, plan.text, calls)
-            run, done = await self._act(run, step, ctx, plan.tool_calls)
-            calls.extend(done)
-            messages.extend(
+        while True:
+            if not progress.planned:
+                if progress.turn >= turns:
+                    raise LoopBudgetExceeded(
+                        f"step {step.number}: not complete after {turns} turns"
+                    )
+                plan = await self._provider.plan(step, progress.messages, tools)
+                progress.turn += 1
+                if plan.text:
+                    progress.messages.append(Message(role="assistant", content=plan.text))
+                if not plan.tool_calls:
+                    return await self._complete(run, step, plan.text, progress.calls)
+                progress.planned = list(plan.tool_calls)
+            run, done = await self._act(run, step, ctx, progress, protocol)
+            if run.status is not RunStatus.running:
+                return run
+            progress.planned = []
+            progress.calls.extend(done)
+            progress.messages.extend(
                 Message(role="user", content=f"Tool result {DATA}:\n{_dump(call)}") for call in done
             )
-        raise LoopBudgetExceeded(f"step {step.number}: not complete after {turns} turns")
 
     async def _act(
-        self, run: Run, step: Step, ctx: CallContext, planned: Sequence[PlannedToolCall]
+        self, run: Run, step: Step, ctx: CallContext, progress: StepProgress, protocol: Protocol
     ) -> tuple[Run, list[dict[str, Any]]]:
-        """Check every call of a plan, then run them; nothing runs if any check fails."""
-        tools = [self._allowed(step, call) for call in planned]
-        used: list[str] = list(run.context.get("approvals_used", []))
-        spent = len(used)
-        for tool, call in zip(tools, planned, strict=True):
-            approval = await require_approval(self._store, ctx, tool, call.args, used)
+        """Check every call of the plan, then run them; nothing runs if any check fails.
+
+        A gated call without an Approval pauses the Run instead of raising.
+        """
+        tools = [self._allowed(step, call) for call in progress.planned]
+        claimed: list[Approval] = []
+        for tool, call in zip(tools, progress.planned, strict=True):
+            try:
+                approval = await require_approval(
+                    self._store, ctx, tool, call.args, [a.token for a in claimed]
+                )
+            except GateRequired:
+                return await self._gates.pause(run, tool, call.args, progress), []
             if approval is not None:
-                used.append(approval)
-        if len(used) > spent:  # spend the Approvals before the writes they authorise
-            run = await self._save(run, context={**run.context, "approvals_used": used})
-        done = []
+                claimed.append(approval)
+        for approval in claimed:  # spend the Approvals before the writes they authorise
+            await self._gates.spend(run, approval)
+        return await self._invoke(run, ctx, progress.planned, protocol)
+
+    async def _invoke(
+        self, run: Run, ctx: CallContext, planned: list[PlannedToolCall], protocol: Protocol
+    ) -> tuple[Run, list[dict[str, Any]]]:
+        done: list[dict[str, Any]] = []
         for call in planned:
-            result = await self._registry.invoke(call.tool, call.args, ctx)
+            try:
+                result = await self._registry.invoke(call.tool, call.args, ctx)
+            except ToolExecutionError as exc:
+                run = await self._count_failure(run, ctx, call, exc, protocol)
+                if run.status is not RunStatus.running:
+                    return run, done
+                done.append({"tool": call.tool, "args": call.args, "error": str(exc)})
+                continue
             done.append({"tool": call.tool, "args": call.args, "result": result})
         return run, done
+
+    async def _count_failure(
+        self,
+        run: Run,
+        ctx: CallContext,
+        call: PlannedToolCall,
+        exc: ToolExecutionError,
+        protocol: Protocol,
+    ) -> Run:
+        """Count a failed call against the Tool's FailureThreshold; without one, fail the Run."""
+        threshold = next((t for t in protocol.failure_thresholds if t.tool == call.tool), None)
+        if threshold is None:
+            raise exc
+        failures = {**run.context.get("failures", {})}
+        failures[call.tool] = failures.get(call.tool, 0) + 1
+        run = run.model_copy(update={"context": {**run.context, "failures": failures}})
+        if failures[call.tool] < threshold.max_failures:
+            return run
+        detail = {"step": ctx.step, "tool": call.tool, "failures": failures[call.tool],
+                  "rule": threshold.rule, "error": str(exc)}  # fmt: skip
+        return await self._gates.escalate(run, "failure_threshold", detail)
 
     def _allowed(self, step: Step, call: PlannedToolCall) -> Tool:
         if call.tool not in step.tools:
@@ -185,13 +316,13 @@ class Runner:
         log_event("run.failed", logging.WARNING, error=type(exc).__name__, cursor=run.cursor)
 
     async def _save(self, run: Run, **changes: Any) -> Run:
-        run = run.model_copy(update={**changes, "updated_at": _now()})
+        run = run.model_copy(update={**changes, "updated_at": self._clock()})
         await self._store.update_run(run)
         return run
 
     async def _audit(self, run: Run, kind: RunAuditKind, detail: dict[str, Any]) -> None:
         event = AuditEvent(
-            run_id=run.id, at=_now(), principal_id=run.principal_id, kind=kind, detail=detail
+            run_id=run.id, at=self._clock(), principal_id=run.principal_id, kind=kind, detail=detail
         )
         await self._store.append_audit_event(event)
 
@@ -201,5 +332,5 @@ def _dump(value: Any) -> str:
     return json.dumps(to_jsonable_python(value, fallback=str), sort_keys=True)
 
 
-def _now() -> datetime:
-    return datetime.now(UTC)
+def _without(context: dict[str, Any], key: str) -> dict[str, Any]:
+    return {name: value for name, value in context.items() if name != key}

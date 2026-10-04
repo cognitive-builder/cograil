@@ -67,6 +67,8 @@ approvals = Table(
     Column("approver", Text, nullable=False),
     Column("decision", Text, nullable=False),
     Column("decided_at", DateTime(timezone=True)),
+    Column("expires_at", DateTime(timezone=True)),
+    Column("spent_at", DateTime(timezone=True)),
     Index("ix_approvals_run_id", "run_id"),
 )
 
