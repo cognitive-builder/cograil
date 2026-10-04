@@ -5,6 +5,7 @@ import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from sqlalchemy import text
@@ -357,6 +358,41 @@ async def test_an_approval_is_spent_only_by_the_execution_holding_the_claim(
     assert spent.spent_at == T0
     with pytest.raises(ApprovalNotSpendable):
         await store.spend_approval(token, T0, run=taken)
+
+
+async def test_creating_and_spending_an_approval_write_their_audit_events_with_them(
+    store: RunStore,
+) -> None:
+    """Issue #173: the pause and the spend are saved with their AuditEvents or not at all."""
+    run = await stored_run(store)
+    token = f"tok-{uuid.uuid4().hex}"
+    approval = Approval(token=token, run_id=run.id, step=1, tool="hris.book", args={},
+                        approver="bob")  # fmt: skip
+    paused = run.model_copy(update={"status": RunStatus.awaiting_approval, "updated_at": T0})
+
+    def event(kind: Literal["gate.paused", "gate.spent"]) -> AuditEvent:
+        return AuditEvent(run_id=run.id, at=T0, principal_id=run.principal_id, kind=kind,
+                          detail={"token": token})  # fmt: skip
+
+    pause, spend = event("gate.paused"), event("gate.spent")
+    unwritable = pause.model_copy(update={"run_id": "missing"})
+    with pytest.raises(RunNotFound):  # rolls back the pending Approval and the paused Run
+        await store.create_approval(approval, run=paused, events=[pause, unwritable])
+    assert await store.list_approvals(run.id) == []
+    assert await store.get_run(run.id) == run
+    assert await store.list_audit_events(run.id) == []
+
+    await store.create_approval(approval, run=paused, events=[pause])
+    assert await store.get_run(run.id) == paused
+    await store.decide_approval(token, "approved", T0, run=paused)
+    with pytest.raises(RunNotFound):  # rolls back the spend
+        await store.spend_approval(token, T0, run=paused, events=[spend, unwritable])
+    assert (await store.get_approval(token)).spent_at is None
+    assert await store.list_audit_events(run.id) == [pause]
+
+    await store.spend_approval(token, T0, run=paused, events=[spend])
+    assert (await store.get_approval(token)).spent_at == T0
+    assert await store.list_audit_events(run.id) == [pause, spend]
 
 
 async def test_audit_events_append_and_list_in_order(store: RunStore) -> None:
