@@ -51,7 +51,8 @@ A Run arrives on the CLI. The web and Slack channels are not built yet (issues #
 they are, they enter at the same place the CLI does: a loaded workspace, a provider, a store,
 a `Runner`.
 
-1. `cograil run workspaces/example-smb --protocol leave_request --as alice@example.com`.
+1. `cograil run workspaces/example-smb --protocol leave_request --as alice@example.com
+   --message "Annual leave from 2026-11-02 to 2026-11-04, please"`. The message is required.
 2. `load_workspace` reads the pack. Every failure is a `WorkspaceError` naming the file;
    `validate_workspace` reports every problem at once rather than the first.
 3. The Protocol is picked by name, then the Colleague whose `protocols` list names it.
@@ -67,14 +68,21 @@ a `Runner`.
    `ProgressStore` that echoes every AuditEvent and every finished Step as a line of progress.
 8. `build_registry` builds the `python`, `rest` and `mcp` kinds. A Step that names a Tool
    nothing implements refuses to start: the Run never begins with a whitelist it cannot honour.
-9. The Run is created — `Trigger` kind `chat`, channel `cli` — and saved.
+9. The Run is created — `Trigger` kind `chat`, channel `cli` — with its input,
+   `Run.context["input"] = {"message": <text>, "requester": <principal id>}`
+   (`cograil.run_input`), and saved. The web chat creates its Run the same way, with the
+   chat message. The message is the user's own data: it stays on the Run (a resumed Run needs
+   it) and never goes into an AuditEvent or a log line.
 10. `Runner.run` stamps the harness and tool pack versions on the Run, writes `run.started`,
     and `compile_protocol` builds the graph: one node per Step, edges in step order, entry at
     the Step after `Run.cursor`.
 11. Inside a Step, until `step_complete` or a bound:
-    - `ContextBuilder.opening` builds what the model sees: the prior Steps the Step declares
-      (else the harness default), the schemas of its whitelisted Tools only, and the data
-      preamble. Its tokens are counted in the Window Ledger, kept in `Run.context["ledger"]`.
+    - `ContextBuilder.opening` builds what the model sees: the Run's input (on every Step),
+      the prior Steps the Step declares (else the harness default), the schemas of its
+      whitelisted Tools only, and the data preamble in front of the input and prior outputs.
+      Only the requester's id goes in, never their groups. Its tokens are counted in the
+      Window Ledger, kept in `Run.context["ledger"]`, with the input as its own source,
+      `input`.
     - `check_bounds` runs before every provider call: the Step's turns, its token budget, the
       Run's cost budget. A breach escalates the Run.
     - `Provider.plan` returns text and planned tool calls, with token usage.

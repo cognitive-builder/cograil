@@ -33,6 +33,7 @@ def test_run_then_approve_through_postgres(
     rest.write_text(REST)
     runner = CliRunner()
     args = ["run", str(DEMO), "--protocol", "record_item", "--as", "alice@example.com"]
+    args += ["--message", "Please record the answer"]
     started = runner.invoke(app, [*args, "--fake-script", str(first)])
     assert started.exit_code == EXIT_AWAITING_APPROVAL, started.output
     run_id = re.search(r"^run (\w+) ", started.output, re.MULTILINE)

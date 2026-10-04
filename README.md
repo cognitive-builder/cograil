@@ -31,7 +31,7 @@ The runtime parses the steps, restricts each step to the tools it names, pauses 
 ```bash
 uv sync
 uv run cograil validate workspaces/example-smb
-uv run cograil run workspaces/example-smb --protocol leave_request --as alice@example.com
+uv run cograil run workspaces/example-smb --protocol leave_request --as alice@example.com --message "Annual leave from 2026-11-02 to 2026-11-04, please"
 # a paused run prints: cograil approve <token> --as <approver>
 ```
 

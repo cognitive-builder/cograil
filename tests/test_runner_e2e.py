@@ -1,7 +1,8 @@
 """End to end for issue #10: the example leave_request Protocol runs to completion.
 
 The real example workspace, its parsed Protocol, the mock HRIS and notify packs and the
-runner, with FakeProvider in place of the model. One Tool has no kind built yet, so it stands
+runner, with FakeProvider in place of the model. The Run carries a real message (issue #205),
+and every Step's prompt shows it. One Tool has no kind built yet, so it stands
 in: decide.approval_routing (decision tables). The approved Approval stands in for
 `cograil approve` (issue #13).
 """
@@ -14,6 +15,7 @@ import pytest
 from cograil.domain import Approval, RunStatus
 from cograil.providers import FakeProvider, PlannedToolCall, scripted
 from cograil.registry import build_registry
+from cograil.run_input import run_input
 from cograil.runner import Runner
 from cograil.store import InMemoryRunStore
 from cograil.workspace import load_workspace
@@ -31,6 +33,7 @@ LEAVE = {
 }
 ROUTING = {"duration_days": 3, "leave_type": "annual", "requester_role": "employee"}
 NOTE = {"to": "alice@example.com", "message": "Request req-e2e-1 is with bob."}
+MESSAGE = "I'd like annual leave from 2026-11-02 to 2026-11-04, please."
 
 
 def call(tool: str, args: dict[str, Any]) -> PlannedToolCall:
@@ -55,6 +58,9 @@ async def stand_in(args: dict[str, Any]) -> dict[str, Any]:
 async def test_leave_request_runs_to_completion(store: InMemoryRunStore) -> None:
     workspace = load_workspace(EXAMPLE)
     protocol = next(p for p in workspace.protocols if p.name == "leave_request")
+    received = await store.get_run("r1")
+    asked = {**received.context, "input": run_input(MESSAGE, received.principal)}
+    await store.update_run(received.model_copy(update={"context": asked}))
     built = [t for t in workspace.tools if t.kind == "python" and t.name not in STAND_INS]
     await store.create_approval(
         Approval(token="a1", run_id="r1", step=3, tool="hris.submit_leave", args=LEAVE,
@@ -68,7 +74,8 @@ async def test_leave_request_runs_to_completion(store: InMemoryRunStore) -> None
             if tool.name in STAND_INS:
                 registry.register(tool, stand_in)
         harper = workspace.colleagues[0]
-        run = await Runner(FakeProvider(SCRIPT), registry, store, harper).run("r1", protocol)
+        provider = FakeProvider(SCRIPT)
+        run = await Runner(provider, registry, store, harper).run("r1", protocol)
 
     assert (run.status, run.cursor) == (RunStatus.completed, 4)
     assert sorted(run.context["steps"]) == ["1", "2", "3", "4"]
@@ -84,3 +91,8 @@ async def test_leave_request_runs_to_completion(store: InMemoryRunStore) -> None
     events = await store.list_audit_events("r1")
     assert (events[0].kind, events[-1].kind) == ("run.started", "run.completed")
     assert {e.principal_id for e in events} == {"alice@example.com"}
+    openings = {c.step.number: c.context[0].content for c in reversed(provider.calls)}
+    assert sorted(openings) == [1, 2, 3, 4]
+    for opening in openings.values():
+        assert "2026-11-02 to 2026-11-04" in opening
+        assert '"requester": "alice@example.com"' in opening

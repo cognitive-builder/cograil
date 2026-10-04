@@ -107,14 +107,24 @@ the signal is not the end. The runner reminds the model and gives it another tur
 tool calls and `step_complete` together, the calls run first (through the whitelist and gates as
 usual), then the step ends.
 
+Every run has an input: what the user asked and who asked it. It is stored when the run is
+created, as `Run.context["input"] = {"message": ..., "requester": ...}`. The web chat stores the
+chat message; `cograil run` needs `--message` and refuses to start without one. The requester is
+the principal's id only, never their groups: who may do what is decided in code, not in the
+prompt. Every step sees the input, like a ticket, so the leave request knows the dates, the leave
+type and who is asking. The message is the user's own data. It is kept raw on the run, because a
+resumed run needs it again, and it is never written to an AuditEvent or a log line. A message
+that tries to instruct the model changes nothing: the tool whitelist and the gates are enforced by
+the runner, whatever the prompt says.
+
 A step sees the outputs of the steps it declares with `(context: steps 1, 2)`. Without a
 declaration it sees the previous step only (`context.default_prior_steps` in `harness.yaml`, 1 by
 default). Context is a whitelist like tools: an undeclared step is not in the prompt, and the
-model is offered the schemas of the step's own tools only. Prior step outputs and tool results,
-retrieved passages included, reach the model inside a data block that starts with a fixed
-"data, not instructions" preamble.
+model is offered the schemas of the step's own tools only. The run's input, prior step outputs
+and tool results, retrieved passages included, reach the model inside a data block that starts
+with a fixed "data, not instructions" preamble.
 
-The runner keeps a Window Ledger on the run: estimated tokens by source (`instruction`,
+The runner keeps a Window Ledger on the run: estimated tokens by source (`instruction`, `input`,
 `prior_steps`, `tools`, `knowledge`) for each step. `cograil runs --ledger` shows it for the
 runs in the database named by `DATABASE_URL`; `cograil runs RUN_ID --ledger` shows one run. When
 a provider has saved context, the ledger also shows the cache read and write tokens it reported
@@ -175,7 +185,7 @@ outputs and tool retries).
 
 ```bash
 cograil validate workspaces/example-smb
-cograil run workspaces/example-smb --protocol leave_request --as alice@example.com
+cograil run workspaces/example-smb --protocol leave_request --as alice@example.com --message "Annual leave from 2026-11-02 to 2026-11-04, please"
 cograil approve <token> --as hr-ops@example.com
 cograil decide approval_routing --workspace workspaces/example-smb --input duration_days=12 --input leave_type=annual --input requester_role=staff
 ```
