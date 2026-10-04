@@ -104,7 +104,7 @@ class ProgressStore:
     async def page_audit_events(
         self,
         *,
-        owner_id: str,
+        owner_id: str | None,
         run_id: str | None = None,
         principal_id: str | None = None,
         limit: int = 50,

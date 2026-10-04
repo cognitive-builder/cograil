@@ -27,11 +27,11 @@ Settings come only from environment variables. To run the service in a container
 | `GET /health` | Says the service is up. | Anyone. |
 | `/auth/*` | Sign-in routes. | Anyone (see `docs/auth.md`). |
 | `POST /chat` | Routes a message to a Protocol and streams the Run as SSE. | Signed in. |
-| `GET /runs` | Lists your Runs, newest first. `limit` is 1 to 100, default 20. | Signed in. |
-| `GET /runs/{id}` | One Run with its Steps, tool calls and Gates. `protocol_changed` is true when the Workspace no longer has the Protocol at the version the Run began with; then `steps` is empty and the rest of the Run is still shown. | The Principal who started it. |
+| `GET /runs` | Lists your Runs, newest first; an auditor's list is every Run. `limit` is 1 to 100, default 20. | Signed in. |
+| `GET /runs/{id}` | One Run with its Steps, tool calls and Gates. `protocol_changed` is true when the Workspace no longer has the Protocol at the version the Run began with; then `steps` is empty and the rest of the Run is still shown. | The Principal who started it. An auditor lists every Run but does not open another's. |
 | `GET /approvals/{token}` | Shows the call a Gate holds, and who asked. | The Approval's approver. |
 | `POST /approvals/{token}` | Approves or declines. Body: `{"decision": "approved"}` or `"declined"`. | The Approval's approver. |
-| `GET /audit` | Lists AuditEvents, oldest first. | Signed in, for your own Runs. |
+| `GET /audit` | Lists AuditEvents, oldest first. | Signed in. You read the events of your own Runs; an auditor reads every Run's. |
 | `/docs`, `/openapi.json` | Interactive docs and the OpenAPI document. | Anyone. |
 
 ## The Chat Stream
@@ -86,7 +86,7 @@ Limits: a decision answers when the Run next stops, not as a stream, so the card
 
 ## Reading the Audit Log
 
-`GET /audit` returns the AuditEvents of Runs you started, and nothing else. There is no administrator or auditor view yet.
+`GET /audit` returns the AuditEvents of Runs you started, and nothing else. The one exception is an auditor: a Principal that the Workspace's `principals.yaml` puts in the `auditors` group reads the events of every Run. A group that the identity provider claims does not make an auditor, only that file does.
 
 | Query | Meaning |
 | --- | --- |
