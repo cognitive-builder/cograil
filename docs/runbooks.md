@@ -185,6 +185,7 @@ outputs and tool retries).
 
 ```bash
 cograil validate workspaces/example-smb
+cograil eval workspaces/example-smb
 cograil run workspaces/example-smb --protocol leave_request --as alice@example.com --message "Annual leave from 2026-11-02 to 2026-11-04, please"
 cograil approve <token> --as hr-ops@example.com
 cograil decide approval_routing --workspace workspaces/example-smb --input duration_days=12 --input leave_type=annual --input requester_role=staff
@@ -211,6 +212,10 @@ it with `--decline` and start a new run. Declining still works and escalates the
 `decide` evaluates one decision table by hand, to test it. It starts no run, calls no model and
 writes no AuditEvent. Give each input as `--input name=value`; the value is read as the input's
 declared type. It needs no `DATABASE_URL`. See "Kind: decision" in the tools page.
+
+`eval` runs the workspace's golden set and reports each case's outcome, tokens and cost, and each
+Protocol's cost per resolved run. It needs no `DATABASE_URL`. It uses the FakeProvider unless
+`COGRAIL_LIVE=1` is set. See [Evals](evals.md).
 
 `--as` is taken at face value. This is a local and demo tool, and nothing in it authenticates the
 principal. The approver check still applies, since `approve` goes through the runner: anyone but
