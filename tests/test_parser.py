@@ -113,6 +113,26 @@ def test_known_tools_accepts_the_example_protocol() -> None:
     assert parse_protocol(LEAVE_REQUEST.read_text(), known_tools=known).name == "leave_request"
 
 
+@pytest.mark.parametrize("section", ["Guardrails", "Error handling"])
+def test_inline_section_text_is_an_error_not_silently_dropped(section: str) -> None:
+    with pytest.raises(ProtocolParseError, match="not text after the colon"):
+        parse_protocol(_with_step('1. Step "A": Do it.') + f"\n{section}: be kind\n")
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("Protocol: demo\nProtocol: other\n" + '1. Step "A": Do it.', "duplicate header"),
+        ("Protocol: demo\nAudience: a\nAudience: b\n" + '1. Step "A": Do it.', "duplicate header"),
+        ('Protocol: demo\n1. Step "A": Do it.\nDescription: late', "unexpected line after steps"),
+        ('Protocol: demo\n1. Step "A": Do it.\nHelpers: none', "unexpected line after steps"),
+    ],
+)
+def test_header_ordering_error_branches(text: str, message: str) -> None:
+    with pytest.raises(ProtocolParseError, match=message):
+        parse_protocol(text)
+
+
 def test_file_with_no_steps_is_an_error() -> None:
     with pytest.raises(ProtocolParseError, match="no steps"):
         parse_protocol(HEADER + "\nGuardrails:\n- Be kind.\n")

@@ -52,6 +52,11 @@ def parse_protocol(text: str, known_tools: Collection[str] | None = None) -> Pro
         else:
             key, value = _split_key_value(line, lineno)
             if key in _SECTIONS:
+                if value:
+                    raise ProtocolParseError(
+                        f"line {lineno}: {key!r} takes bullets on the following lines, "
+                        f"not text after the colon: {value!r}"
+                    )
                 current = sections[_SECTIONS[key]]
             elif steps:
                 raise ProtocolParseError(f"line {lineno}: unexpected line after steps: {line!r}")
