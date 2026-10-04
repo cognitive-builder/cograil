@@ -52,9 +52,7 @@ async def test_submit_leave_decreases_balance_and_replays_idempotently(
     assert after["annual"] == before["annual"] - 3
 
 
-async def test_pack_is_registered_and_callable(
-    store: InMemoryRunStore, ctx: CallContext
-) -> None:
+async def test_pack_is_registered_and_callable(store: InMemoryRunStore, ctx: CallContext) -> None:
     assert HRIS_NAMES <= {t.name for t in load_workspace(EXAMPLE).tools}
     async with await build_registry(hris_workspace(), store, EXAMPLE) as registry:
         manager = await registry.invoke("hris.get_manager", {"employee": "alice"}, ctx)
