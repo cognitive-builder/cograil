@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 
 from cograil.cli import app
 from cograil.decisions import DecisionTable
-from cograil.domain import Decision
+from cograil.domain import Decision, Tool, Workspace
 from cograil.errors import DecisionError, ToolConfigError
 from cograil.registry import CallContext, build_registry
 from cograil.store import InMemoryRunStore
@@ -186,6 +186,20 @@ async def test_evaluation_is_audited_with_table_version_and_rule(
              "hit_policy": "first", "rules": ["r2"]},
         )
     ]  # fmt: skip
+
+
+async def test_failed_evaluation_records_the_error_and_no_decision(
+    store: InMemoryRunStore, ctx: CallContext
+) -> None:
+    tool = Tool(name="decide.tier", kind="decision", scope="read")
+    workspace = Workspace(name="ws", colleagues=[], protocols=[], tools=[tool],
+                          decisions=[Decision.model_validate(table())])  # fmt: skip
+    async with await build_registry(workspace, store) as registry:
+        with pytest.raises(DecisionError, match="no rule matched"):
+            await registry.invoke("decide.tier", {"days": 1, "kind": "annual"}, ctx)
+    assert "no rule matched" in str((await store.list_tool_calls("r1"))[0].error)
+    kinds = [event.kind for event in await store.list_audit_events("r1")]
+    assert "tool.called" in kinds and "decision.evaluated" not in kinds
 
 
 # Criterion 5: `cograil decide <table> --input k=v` for manual testing.
