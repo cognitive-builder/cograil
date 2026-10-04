@@ -284,14 +284,18 @@ async def test_failure_threshold_stops_the_run_and_escalates(
     }  # fmt: skip
 
 
+@pytest.mark.parametrize("done", [False, True], ids=["", "step-complete-beside-it"])
 async def test_a_failure_under_the_threshold_lets_the_step_retry(
-    store: InMemoryRunStore, make: Any, protocol: Protocol, tools: Tools
+    store: InMemoryRunStore, make: Any, protocol: Protocol, tools: Tools, done: bool
 ) -> None:
+    """A step_complete planned beside the failed call does not end the Step (issue #44)."""
     tools.failing["hris.get_balance"] = 1
-    runner, _ = make([scripted("", call("hris.get_balance")), *LOOK_UP, *TO_GATE[2:]])
+    first = scripted("guessed", call("hris.get_balance"), done=done)
+    runner, _ = make([first, *LOOK_UP, *TO_GATE[2:]])
     run = await runner.run("r1", protocol)
     assert (run.status, run.cursor) == (RunStatus.awaiting_approval, 1)
     assert run.context["failures"] == {"hris.get_balance": 1}
+    assert run.context["steps"]["1"]["output"] == "25 days left"
 
 
 async def test_a_failure_of_a_tool_without_a_threshold_fails_the_run(

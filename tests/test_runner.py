@@ -130,16 +130,18 @@ async def assert_failed_closed(
         pytest.param([call("hris.get_balance"), call("notify.send")], id="listed-beside-unlisted"),
     ],
 )
+@pytest.mark.parametrize("done", [False, True], ids=["", "with-step-complete"])
 async def test_off_whitelist_call_raises_tool_not_allowed_and_fails_closed(
     store: InMemoryRunStore,
     registry: ToolRegistry,
     protocol: Protocol,
     invoked: list[str],
     planned: list[PlannedToolCall],
+    done: bool,
 ) -> None:
     await approve(store)
     with pytest.raises(ToolNotAllowed):
-        await run(store, registry, protocol, [scripted("", *planned)])
+        await run(store, registry, protocol, [scripted("", *planned, done=done)])
     assert invoked == []
     assert await store.list_tool_calls("r1") == []
     await assert_failed_closed(store, ToolNotAllowed, cursor=0)

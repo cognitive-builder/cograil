@@ -20,7 +20,8 @@ with the principal, the cursor left at the last completed Step, and the error re
 
 A Step ends only on the structured step_complete signal or a bound (ADR 0008). A plan with
 neither tool calls nor the signal gets a reminder and another turn; a plan with both runs
-its calls first. Before every provider call the Step is checked against the Harness bounds
+its calls first, and if one of them failed the model gets another turn instead. Before
+every provider call the Step is checked against the Harness bounds
 (harness.py); a breach raises LoopBudgetExceeded, which escalates the Run through
 `Gates.bounded`. Each call's tokens count against the Step and its cost against the Run.
 `Runner.run` stamps the harness version on the Run (ADR 0012).
@@ -248,7 +249,9 @@ class Runner:
                 Message(role="user", content=f"Tool result {DATA}:\n{_dump(call)}") for call in done
             )
             if progress.completing is not None:
-                return await self._complete(run, step, progress.completing.output, progress)
+                if not any("error" in call for call in done):
+                    return await self._complete(run, step, progress.completing.output, progress)
+                progress.completing = None  # it was said before a call failed: another turn
 
     async def _turn(
         self, run: Run, step: Step, progress: StepProgress, tools: list[Tool]
