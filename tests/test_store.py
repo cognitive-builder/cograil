@@ -153,7 +153,7 @@ async def test_approval_is_decided_once(store: RunStore) -> None:
     pending = Approval(
         token=token, run_id=run.id, step=1, tool="hris.book", args={"days": 3}, approver="bob"
     )
-    await store.create_approval(pending)
+    await store.create_approval(pending, run=run)
     assert await store.get_approval(token) == pending
     assert await store.list_approvals(run.id) == [pending]
 
@@ -175,7 +175,8 @@ async def test_deciding_an_approval_saves_its_run_with_it(store: RunStore) -> No
     run = await stored_run(store)
     token = f"tok-{uuid.uuid4().hex}"
     await store.create_approval(
-        Approval(token=token, run_id=run.id, step=1, tool="hris.book", args={}, approver="bob")
+        Approval(token=token, run_id=run.id, step=1, tool="hris.book", args={}, approver="bob"),
+        run=run,
     )
     paused = run.model_copy(update={"status": RunStatus.awaiting_approval})
     await store.update_run(paused)
@@ -197,7 +198,8 @@ async def test_deciding_an_approval_writes_its_audit_events_with_it(store: RunSt
     run = await stored_run(store)
     token = f"tok-{uuid.uuid4().hex}"
     await store.create_approval(
-        Approval(token=token, run_id=run.id, step=1, tool="hris.book", args={}, approver="bob")
+        Approval(token=token, run_id=run.id, step=1, tool="hris.book", args={}, approver="bob"),
+        run=run,
     )
     resumed = run.model_copy(update={"status": RunStatus.running, "updated_at": T0})
     event = AuditEvent(
@@ -226,7 +228,8 @@ async def test_an_approval_is_decided_only_with_its_own_run(store: RunStore) -> 
     await store.create_run(other)
     token = f"tok-{uuid.uuid4().hex}"
     await store.create_approval(
-        Approval(token=token, run_id=mine.id, step=1, tool="hris.book", args={}, approver="bob")
+        Approval(token=token, run_id=mine.id, step=1, tool="hris.book", args={}, approver="bob"),
+        run=mine,
     )
     resumed = other.model_copy(update={"status": RunStatus.running, "updated_at": T0})
     event = AuditEvent(
@@ -277,16 +280,17 @@ async def test_approval_errors(store: RunStore) -> None:
     approval = Approval(
         token=f"tok-{uuid.uuid4().hex}", run_id=run.id, step=0, tool="t", args={}, approver="bob"
     )
-    await store.create_approval(approval)
-    with pytest.raises(DuplicateRecord):
-        await store.create_approval(approval)
+    await store.create_approval(approval, run=run)
+    with pytest.raises(DuplicateRecord):  # and the Run's save is rolled back with it
+        await store.create_approval(approval, run=run.model_copy(update={"cursor": 1}))
+    assert await store.get_run(run.id) == run
     with pytest.raises(ApprovalNotFound):
         await store.get_approval("missing")
     with pytest.raises(ApprovalNotFound):
         await store.decide_approval("missing", "approved", T0, run=run)
     orphan = approval.model_copy(update={"token": "orphan", "run_id": "missing"})
     with pytest.raises(RunNotFound):
-        await store.create_approval(orphan)
+        await store.create_approval(orphan, run=make_run("missing"))
 
 
 async def test_approval_is_spent_once_even_by_concurrent_spends(store: RunStore) -> None:
@@ -294,11 +298,11 @@ async def test_approval_is_spent_once_even_by_concurrent_spends(store: RunStore)
     token = f"tok-{uuid.uuid4().hex}"
     approval = Approval(token=token, run_id=run.id, step=1, tool="hris.book", args={},
                         approver="bob", expires_at=T0 + timedelta(hours=1))  # fmt: skip
-    await store.create_approval(approval)
+    await store.create_approval(approval, run=run)
     with pytest.raises(ApprovalNotSpendable):  # still pending
-        await store.spend_approval(token, T0)
+        await store.spend_approval(token, T0, run=run)
     await store.decide_approval(token, "approved", T0, run=run)
-    spends = [store.spend_approval(token, T0 + timedelta(seconds=n)) for n in (1, 2)]
+    spends = [store.spend_approval(token, T0 + timedelta(seconds=n), run=run) for n in (1, 2)]
     results = await asyncio.gather(*spends, return_exceptions=True)
     spent = [r for r in results if isinstance(r, Approval)]
     assert len(spent) == 1
@@ -306,7 +310,53 @@ async def test_approval_is_spent_once_even_by_concurrent_spends(store: RunStore)
     assert await store.get_approval(token) == spent[0]
     assert spent[0].expires_at == T0 + timedelta(hours=1)
     with pytest.raises(ApprovalNotFound):
-        await store.spend_approval("missing", T0)
+        await store.spend_approval("missing", T0, run=run)
+
+
+async def test_an_approval_is_created_only_by_the_execution_holding_the_claim(
+    store: RunStore,
+) -> None:
+    """Issue #143: the pending Approval and the paused Run are saved together, and only while
+    the stored claim is still the caller's, so a taken-over execution leaves no Approval."""
+    run = await stored_run(store)
+    approval = Approval(token=f"tok-{uuid.uuid4().hex}", run_id=run.id, step=1,
+                        tool="hris.book", args={}, approver="bob")  # fmt: skip
+    paused = run.model_copy(update={"status": RunStatus.awaiting_approval, "updated_at": T0})
+    with pytest.raises(RunClaimLost):
+        await store.create_approval(approval, run=paused.model_copy(update={"claim": "lost"}))
+    with pytest.raises(ApprovalRunMismatch):
+        await store.create_approval(approval, run=paused.model_copy(update={"id": "other"}))
+    assert await store.list_approvals(run.id) == []
+    assert await store.get_run(run.id) == run
+
+    await store.create_approval(approval, run=paused)
+    assert await store.list_approvals(run.id) == [approval]
+    assert await store.get_run(run.id) == paused
+
+
+async def test_an_approval_is_spent_only_by_the_execution_holding_the_claim(
+    store: RunStore,
+) -> None:
+    """Issue #143: an execution whose claim was taken over cannot spend the Run's Approval;
+    the execution that took it over still can, once."""
+    run, other = await stored_run(store), await stored_run(store)
+    token = f"tok-{uuid.uuid4().hex}"
+    approval = Approval(token=token, run_id=run.id, step=1, tool="hris.book", args={},
+                        approver="bob", decision="approved")  # fmt: skip
+    await store.create_approval(approval, run=run)
+    taken = run.model_copy(update={"status": RunStatus.running, "claim": "winner"})
+    await store.claim_run(taken, run)
+
+    with pytest.raises(RunClaimLost):
+        await store.spend_approval(token, T0, run=run)
+    with pytest.raises(ApprovalRunMismatch):
+        await store.spend_approval(token, T0, run=other)
+    assert (await store.get_approval(token)).spent_at is None
+
+    spent = await store.spend_approval(token, T0, run=taken)
+    assert spent.spent_at == T0
+    with pytest.raises(ApprovalNotSpendable):
+        await store.spend_approval(token, T0, run=taken)
 
 
 async def test_audit_events_append_and_list_in_order(store: RunStore) -> None:

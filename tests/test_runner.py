@@ -93,7 +93,8 @@ def registry(store: InMemoryRunStore, invoked: list[str]) -> ToolRegistry:
 async def approve(store: InMemoryRunStore, token: str = "a1") -> None:
     await store.create_approval(
         Approval(token=token, run_id="r1", step=2, tool="hris.submit_leave", args=SUBMIT,
-                 approver="bob", decision="approved")
+                 approver="bob", decision="approved"),
+        run=await store.get_run("r1"),
     )  # fmt: skip
 
 

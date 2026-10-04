@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from cograil.domain import Colleague, Principal, Run, RunStatus, Step, Tool, Trigger
+from cograil.domain import Approval, Colleague, Principal, Run, RunStatus, Step, Tool, Trigger
 from cograil.errors import GateRequired, ProviderError, RunClaimLost
 from cograil.parser import parse_protocol
 from cograil.providers import FakeProvider, Plan, PlannedToolCall, scripted
@@ -57,6 +57,29 @@ class TakeoverAtFailStore(InMemoryRunStore):
                 stored.model_copy(update={"claim": "winner", "status": RunStatus.running}), stored
             )
         await super().update_run(run)
+
+
+class TakeoverAtApprovalStore(InMemoryRunStore):
+    """Another execution takes the Run over just before this one creates or spends an
+    Approval, as `at` says (#143)."""
+
+    def __init__(self, at: str) -> None:
+        super().__init__()
+        self.at = at
+
+    async def _take_over(self, run_id: str) -> None:
+        stored = await self.get_run(run_id)
+        await self.claim_run(stored.model_copy(update={"claim": "winner"}), stored)
+
+    async def create_approval(self, approval: Approval, *, run: Run) -> None:
+        if self.at == "create":
+            await self._take_over(run.id)
+        await super().create_approval(approval, run=run)
+
+    async def spend_approval(self, token: str, spent_at: datetime, *, run: Run) -> Approval:
+        if self.at == "spend":
+            await self._take_over(run.id)
+        return await super().spend_approval(token, spent_at, run=run)
 
 
 class HeldProvider(FakeProvider):
@@ -178,3 +201,36 @@ async def test_a_failure_is_the_callers_to_see_when_the_run_is_taken_over_as_it_
     stored = await store.get_run(run.id)
     assert (stored.status, stored.claim) == (RunStatus.running, "winner")
     assert "run.failed" not in await kinds(store, run.id)
+
+
+@pytest.mark.parametrize("at", ["create", "spend"])
+async def test_an_execution_that_lost_its_claim_neither_pauses_nor_spends(at: str) -> None:
+    """Issue #143: taken over at the gate, an execution leaves no pending Approval behind,
+    spends none and runs no gated write; the Run stays the winner's."""
+    store = TakeoverAtApprovalStore(at)  # memory only: test_store covers Postgres
+    run = Run(id=f"run-{uuid.uuid4().hex}", workspace="example-smb", colleague="harper",
+              protocol="demo", protocol_version=1, principal=Principal(id="alice@example.com"),
+              trigger=Trigger(kind="chat"), created_at=T0, updated_at=T0)  # fmt: skip
+    await store.create_run(run)
+    seeded: list[Approval] = []
+    if at == "spend":  # an approved Approval this execution finds and goes to spend
+        seeded.append(Approval(token="a1", run_id=run.id, step=1, tool="hris.submit_leave",
+                               args={}, approver=CONTACT, decision="approved"))  # fmt: skip
+        await store.create_approval(seeded[0], run=run)
+    invoked: list[str] = []
+    registry = ToolRegistry(store)
+    for tool in TOOLS:
+
+        async def invoke(args: dict[str, Any], name: str = tool.name) -> dict[str, Any]:
+            invoked.append(name)
+            return {"ok": True}
+
+        registry.register(tool, invoke)
+
+    with pytest.raises(RunClaimLost):
+        await Runner(FakeProvider([SUBMIT]), registry, store, HARPER).run(run.id, PROTOCOL)
+    assert invoked == []
+    assert await store.list_approvals(run.id) == seeded  # none created, none spent
+    stored = await store.get_run(run.id)
+    assert (stored.status, stored.claim) == (RunStatus.running, "winner")
+    assert not {"gate.paused", "gate.spent", "run.failed"} & set(await kinds(store, run.id))
