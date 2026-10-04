@@ -7,7 +7,9 @@ A Run is a span, each Step inside it a child span, and each model call inside th
 span carrying the GenAI semantic convention attributes (`gen_ai.request.model`,
 `gen_ai.response.model`, `gen_ai.usage.*`) and the call's dollars as `cograil.cost_usd`.
 Spans are an operator's view alongside the audit trail, never a replacement for it: they
-carry ids, names, models, tokens and cost, and never prompts, tool arguments or outputs.
+carry ids, names, models, tokens and cost, and never prompts, tool arguments or outputs. An
+exception that leaves a span is recorded by its type alone: its message may hold a tool's error
+text, which the audit trail redacts.
 
 `configure_tracing` sends spans to the console (stderr) unless OTEL_EXPORTER_OTLP_ENDPOINT is
 set, then to that OTLP endpoint (for example Arize Phoenix). Without it the spans are no-ops.
@@ -28,6 +30,7 @@ from opentelemetry import trace
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter, SpanExporter
+from opentelemetry.trace import StatusCode
 from pydantic_core import to_jsonable_python
 
 if TYPE_CHECKING:
@@ -75,11 +78,26 @@ def _tracer() -> trace.Tracer:
 
 
 @contextmanager
+def _span(name: str, attributes: dict[str, Any]) -> Iterator[trace.Span]:
+    """The current span, which keeps only the type of an exception that leaves it, never its
+    message or stack trace: a tool's error text may carry personal data the audit trail redacts."""
+    with _tracer().start_as_current_span(
+        name, attributes=attributes, record_exception=False, set_status_on_exception=False
+    ) as span:
+        try:
+            yield span
+        except BaseException as exc:
+            span.set_status(StatusCode.ERROR, type(exc).__name__)
+            span.set_attribute("exception.type", type(exc).__name__)
+            raise
+
+
+@contextmanager
 def run_span(run: Run, protocol: str) -> Iterator[trace.Span]:
     """The span of one execution of a Run (a `run` or a `resume`)."""
     attributes = {"cograil.run_id": run.id, "cograil.workspace": run.workspace,
                   "cograil.colleague": run.colleague, "cograil.protocol": protocol}  # fmt: skip
-    with _tracer().start_as_current_span(f"run {protocol}", attributes=attributes) as span:
+    with _span(f"run {protocol}", attributes) as span:
         yield span
 
 
@@ -91,9 +109,7 @@ def step_span(run: Run, step: Step) -> Iterator[trace.Span]:
         "cograil.step": step.number,
         "cograil.step.name": step.name,
     }
-    with _tracer().start_as_current_span(
-        f"step {step.number} {step.name}", attributes=attributes
-    ) as span:
+    with _span(f"step {step.number} {step.name}", attributes) as span:
         yield span
 
 
@@ -101,7 +117,7 @@ def step_span(run: Run, step: Step) -> Iterator[trace.Span]:
 def model_span(model: str) -> Iterator[trace.Span]:
     """The span of one provider call; `charge` adds its tokens and cost once it is known."""
     attributes = {"gen_ai.operation.name": "chat", "gen_ai.request.model": model}
-    with _tracer().start_as_current_span(f"chat {model}", attributes=attributes) as span:
+    with _span(f"chat {model}", attributes) as span:
         yield span
 
 

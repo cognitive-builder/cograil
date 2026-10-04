@@ -49,7 +49,10 @@ at different rates (see [ADR 0013](adr/0013-runtime-cost-discipline.md) and "Sav
 ## What Spans Never Hold
 
 Spans never carry prompts, Tool arguments or Tool output. They hold ids, names, models, tokens and
-cost. The audit trail stays the record of what happened and who did it.
+cost. When a Run fails, the span that it failed in is marked as an error and names the type of the
+error (for example `ProviderError`), never its message or stack trace, because a message can hold a
+Tool's error text with personal data in it. The audit trail stays the record of what happened and
+who did it.
 
 ## Where Spans Go
 

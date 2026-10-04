@@ -6,10 +6,11 @@ import pytest
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+from opentelemetry.trace import StatusCode
 
 from cograil.domain import Colleague, Harness, Price
 from cograil.harness import tier_model
-from cograil.observability import OTLP_ENDPOINT_ENV, _exporter
+from cograil.observability import OTLP_ENDPOINT_ENV, _exporter, model_span
 from cograil.parser import parse_protocol
 from cograil.providers import FakeProvider, scripted
 from cograil.registry import ToolRegistry
@@ -73,3 +74,16 @@ def test_spans_go_to_the_console_unless_an_otlp_endpoint_is_set(
     assert isinstance(_exporter(), ConsoleSpanExporter)
     monkeypatch.setenv(OTLP_ENDPOINT_ENV, "http://localhost:6006")
     assert isinstance(_exporter(), OTLPSpanExporter)
+
+
+def test_a_failing_span_keeps_the_exception_type_but_not_its_message(
+    spans: Callable[[], list[ReadableSpan]],
+) -> None:
+    with pytest.raises(ValueError), model_span("fake-model"):
+        raise ValueError("alice@example.com asked about her diagnosis")
+    (span,) = spans()
+    assert span.status.status_code is StatusCode.ERROR
+    assert span.status.description == "ValueError"
+    assert span.attributes is not None and span.attributes["exception.type"] == "ValueError"
+    assert not span.events
+    assert "alice@example.com" not in span.to_json()
