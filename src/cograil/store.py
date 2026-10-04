@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from pydantic_core import to_jsonable_python
 from sqlalchemy import insert, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
-from cograil.domain import Approval, AuditEvent, Run, ToolCall
+from cograil.domain import Approval, ApprovalDecision, AuditEvent, Run, ToolCall
 from cograil.errors import (
     ApprovalAlreadyDecided,
     ApprovalNotFound,
@@ -24,9 +24,8 @@ from cograil.errors import (
     DuplicateRecord,
     RunNotFound,
 )
+from cograil.store_memory import RUN_MUTABLE, InMemoryRunStore
 from cograil.store_tables import approvals, audit_events, runs, tool_calls
-
-ApprovalDecision = Literal["approved", "declined", "expired"]
 
 _UNIQUE_VIOLATION = "23505"
 _FOREIGN_KEY_VIOLATION = "23503"
@@ -38,8 +37,9 @@ class RunStore(Protocol):
 
     async def get_run(self, run_id: str) -> Run: ...
 
-    async def list_runs(self, limit: int = 20) -> list[Run]:
-        """The most recently created Runs first, at most `limit`."""
+    async def list_runs(self, limit: int = 20, *, principal_id: str | None = None) -> list[Run]:
+        """The most recently created Runs first, at most `limit`; with `principal_id`, only
+        the Runs that principal started."""
         ...
 
     async def update_run(self, run: Run) -> None:
@@ -75,98 +75,21 @@ class RunStore(Protocol):
 
     async def list_audit_events(self, run_id: str) -> list[AuditEvent]: ...
 
+    async def page_audit_events(
+        self,
+        *,
+        owner_id: str,
+        run_id: str | None = None,
+        principal_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[AuditEvent]:
+        """AuditEvents of the Runs `owner_id` started, oldest first, `limit` from `offset`.
 
-_RUN_MUTABLE = ("status", "cursor", "context", "cost_usd", "harness_version", "updated_at")
-
-
-class InMemoryRunStore:
-    """Dict-backed RunStore for unit tests and local runs without a database."""
-
-    def __init__(self) -> None:
-        self._runs: dict[str, Run] = {}
-        self._tool_calls: dict[str, list[ToolCall]] = {}
-        self._approvals: dict[str, Approval] = {}
-        self._audit: dict[str, list[AuditEvent]] = {}
-
-    def _require_run(self, run_id: str) -> None:
-        if run_id not in self._runs:
-            raise RunNotFound(run_id)
-
-    async def create_run(self, run: Run) -> None:
-        if run.id in self._runs:
-            raise DuplicateRecord(f"run {run.id}")
-        self._runs[run.id] = run.model_copy(deep=True)
-
-    async def get_run(self, run_id: str) -> Run:
-        self._require_run(run_id)
-        return self._runs[run_id].model_copy(deep=True)
-
-    async def list_runs(self, limit: int = 20) -> list[Run]:
-        newest = sorted(self._runs.values(), key=lambda r: (r.created_at, r.id), reverse=True)
-        return [r.model_copy(deep=True) for r in newest[:limit]]
-
-    async def update_run(self, run: Run) -> None:
-        self._save_run(run)
-
-    def _save_run(self, run: Run) -> None:
-        self._require_run(run.id)
-        changes = {name: getattr(run, name) for name in _RUN_MUTABLE}
-        self._runs[run.id] = self._runs[run.id].model_copy(update=changes, deep=True)
-
-    async def record_tool_call(self, run_id: str, call: ToolCall) -> None:
-        self._require_run(run_id)
-        self._tool_calls.setdefault(run_id, []).append(call.model_copy(deep=True))
-
-    async def list_tool_calls(self, run_id: str) -> list[ToolCall]:
-        return [c.model_copy(deep=True) for c in self._tool_calls.get(run_id, [])]
-
-    async def create_approval(self, approval: Approval) -> None:
-        self._require_run(approval.run_id)
-        if approval.token in self._approvals:
-            raise DuplicateRecord(f"approval {approval.token}")
-        self._approvals[approval.token] = approval.model_copy(deep=True)
-
-    async def get_approval(self, token: str) -> Approval:
-        if token not in self._approvals:
-            raise ApprovalNotFound(token)
-        return self._approvals[token].model_copy(deep=True)
-
-    async def decide_approval(
-        self, token: str, decision: ApprovalDecision, decided_at: datetime, *, run: Run
-    ) -> Approval:
-        # Every check comes before the first write, and no await between them.
-        current = await self.get_approval(token)
-        if current.decision != "pending":
-            raise ApprovalAlreadyDecided(token)
-        self._require_run(run.id)
-        decided = current.model_copy(update={"decision": decision, "decided_at": decided_at})
-        self._approvals[token] = decided
-        self._save_run(run)
-        return decided.model_copy(deep=True)
-
-    async def spend_approval(self, token: str, spent_at: datetime) -> Approval:
-        # No await between the check and the write, so concurrent spends cannot interleave.
-        current = await self.get_approval(token)
-        if current.decision != "approved" or current.spent_at is not None:
-            raise ApprovalNotSpendable(token)
-        spent = current.model_copy(update={"spent_at": spent_at})
-        self._approvals[token] = spent
-        return spent.model_copy(deep=True)
-
-    async def list_approvals(self, run_id: str) -> list[Approval]:
-        found = sorted((a for a in self._approvals.values() if a.run_id == run_id), key=_token)
-        return [a.model_copy(deep=True) for a in found]
-
-    async def append_audit_event(self, event: AuditEvent) -> None:
-        self._require_run(event.run_id)
-        self._audit.setdefault(event.run_id, []).append(event.model_copy(deep=True))
-
-    async def list_audit_events(self, run_id: str) -> list[AuditEvent]:
-        return [e.model_copy(deep=True) for e in self._audit.get(run_id, [])]
-
-
-def _token(approval: Approval) -> str:
-    return approval.token
+        `run_id` narrows to one Run and `principal_id` to the events that principal acted in.
+        Read-only: the log stays append-only.
+        """
+        ...
 
 
 def _json(value: Any) -> Any:
@@ -248,8 +171,10 @@ class PostgresRunStore:
             raise RunNotFound(run_id)
         return Run.model_validate(dict(row))
 
-    async def list_runs(self, limit: int = 20) -> list[Run]:
+    async def list_runs(self, limit: int = 20, *, principal_id: str | None = None) -> list[Run]:
         query = select(runs).order_by(runs.c.created_at.desc(), runs.c.id.desc()).limit(limit)
+        if principal_id is not None:
+            query = query.where(runs.c.principal_id == principal_id)
         async with self._engine.connect() as conn:
             rows = (await conn.execute(query)).mappings().all()
         return [Run.model_validate(dict(r)) for r in rows]
@@ -261,7 +186,7 @@ class PostgresRunStore:
     @staticmethod
     async def _update_run(conn: AsyncConnection, run: Run) -> None:
         values = _run_values(run)
-        changes = {name: values[name] for name in _RUN_MUTABLE}
+        changes = {name: values[name] for name in RUN_MUTABLE}
         result = await conn.execute(update(runs).where(runs.c.id == run.id).values(**changes))
         if result.rowcount == 0:
             raise RunNotFound(run.id)
@@ -347,6 +272,29 @@ class PostgresRunStore:
         query = select(audit_events).where(audit_events.c.run_id == run_id)
         async with self._engine.connect() as conn:
             rows = (await conn.execute(query.order_by(audit_events.c.id))).mappings().all()
+        return [AuditEvent.model_validate(_without(r, "id")) for r in rows]
+
+    async def page_audit_events(
+        self,
+        *,
+        owner_id: str,
+        run_id: str | None = None,
+        principal_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[AuditEvent]:
+        query = (
+            select(audit_events)
+            .join(runs, runs.c.id == audit_events.c.run_id)
+            .where(runs.c.principal_id == owner_id)
+        )
+        if run_id is not None:
+            query = query.where(audit_events.c.run_id == run_id)
+        if principal_id is not None:
+            query = query.where(audit_events.c.principal_id == principal_id)
+        query = query.order_by(audit_events.c.id).limit(limit).offset(offset)
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
         return [AuditEvent.model_validate(_without(r, "id")) for r in rows]
 
 

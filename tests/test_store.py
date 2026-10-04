@@ -95,6 +95,17 @@ async def test_list_runs_newest_first_up_to_the_limit(store: RunStore) -> None:
     assert [r.id for r in listed] == [ids[1], ids[2]]
 
 
+async def test_list_runs_can_be_limited_to_one_principal(store: RunStore) -> None:
+    mine = await stored_run(store)
+    other = make_run().model_copy(
+        update={"principal": Principal(id="bob@example.com"), "principal_id": "bob@example.com"}
+    )
+    await store.create_run(other)
+    assert [r.id for r in await store.list_runs(principal_id="alice@example.com")] == [mine.id]
+    assert await store.list_runs(principal_id="nobody@example.com") == []
+    assert {r.id for r in await store.list_runs()} == {mine.id, other.id}
+
+
 async def test_run_errors(store: RunStore) -> None:
     run = await stored_run(store)
     with pytest.raises(DuplicateRecord):
@@ -223,10 +234,42 @@ async def test_audit_events_append_and_list_in_order(store: RunStore) -> None:
         await store.append_audit_event(listed[0].model_copy(update={"run_id": "missing"}))
 
 
+async def test_audit_events_page_by_owner_run_and_acting_principal(store: RunStore) -> None:
+    mine, other = await stored_run(store), make_run()
+    await store.create_run(
+        other.model_copy(
+            update={"principal": Principal(id="bob@example.com"), "principal_id": "bob@example.com"}
+        )
+    )
+    for i, (run, who) in enumerate(
+        [(mine, "alice@example.com"), (other, "bob@example.com"), (mine, "mallory@example.com"),
+         (mine, "alice@example.com")]
+    ):  # fmt: skip
+        await store.append_audit_event(
+            AuditEvent(run_id=run.id, at=T0 + timedelta(seconds=i), principal_id=who,
+                       kind="run.started", detail={"n": i})
+        )  # fmt: skip
+
+    def numbers(events: list[AuditEvent]) -> list[int]:
+        return [e.detail["n"] for e in events]
+
+    owner = "alice@example.com"
+    assert numbers(await store.page_audit_events(owner_id=owner)) == [0, 2, 3]
+    assert numbers(await store.page_audit_events(owner_id=owner, limit=2)) == [0, 2]
+    assert numbers(await store.page_audit_events(owner_id=owner, limit=2, offset=2)) == [3]
+    by_actor = await store.page_audit_events(owner_id=owner, principal_id="mallory@example.com")
+    assert numbers(by_actor) == [2]
+    assert numbers(await store.page_audit_events(owner_id=owner, run_id=other.id)) == []
+    assert numbers(await store.page_audit_events(owner_id="bob@example.com", run_id=other.id)) == [
+        1
+    ]
+
+
 @pytest.mark.parametrize("cls", [RunStore, InMemoryRunStore, PostgresRunStore])
 def test_audit_events_have_no_update_or_delete_path(cls: type) -> None:
+    """Appending and reading are the only ways to touch the log; paging is a read."""
     audit_methods = {n for n in dir(cls) if "audit" in n and not n.startswith("__")}
-    assert audit_methods == {"append_audit_event", "list_audit_events"}
+    assert audit_methods == {"append_audit_event", "list_audit_events", "page_audit_events"}
 
 
 @pytest.mark.integration
