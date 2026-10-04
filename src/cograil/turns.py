@@ -15,6 +15,7 @@ from cograil.cost import charge
 from cograil.domain import Harness, Run, Step, Tier, Tool
 from cograil.gates import StepProgress
 from cograil.harness import check_bounds, escalation_tier, step_effort, tier_model
+from cograil.observability import model_span
 from cograil.providers.base import Message, Plan, Provider
 
 
@@ -70,13 +71,14 @@ class Turns:
         The call's cache reads and writes go to the Step's row of the Window Ledger.
         """
         model, effort = tier_model(self._harness, tier), step_effort(self._harness, step)
-        plan = await self._provider.plan(
-            step, progress.messages, tools, model=model, effort=effort, prefix=prefix
-        )
-        usage = plan.usage
-        cached = usage.cache_read_tokens + usage.cache_write_tokens
-        progress.tokens += usage.input_tokens + usage.output_tokens + cached
-        run = charge(self._harness, run, plan.model, usage)
+        with model_span(model):
+            plan = await self._provider.plan(
+                step, progress.messages, tools, model=model, effort=effort, prefix=prefix
+            )
+            usage = plan.usage
+            cached = usage.cache_read_tokens + usage.cache_write_tokens
+            progress.tokens += usage.input_tokens + usage.output_tokens + cached
+            run = charge(self._harness, run, plan.model, usage)
         context = add_cache_usage(
             run.context, step.number, usage.cache_read_tokens, usage.cache_write_tokens
         )

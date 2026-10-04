@@ -1,18 +1,17 @@
 """Runner: executes a Protocol as a LangGraph graph with one node per Step (ADR 0011).
 
-Inside a Step the model plans through the injected Provider and is offered only the
-Step's whitelisted Tools. Every call of a plan is checked before any of them runs: a Tool
-the Step does not list raises ToolNotAllowed, and a gated write needs an approved Approval
-(gates.py). Only then does the call go to `ToolRegistry.invoke`, which checks neither; this
-module is its only caller.
+Inside a Step the model plans through the injected Provider and is offered only the Step's
+whitelisted Tools. Every call of a plan is checked before any of them runs: a Tool the Step does not
+list raises ToolNotAllowed, and a gated write needs an approved Approval (gates.py). Only then does
+the call go to `ToolRegistry.invoke`, which checks neither; this module is its only caller.
 
 A gated write without an Approval pauses the Run awaiting_approval with the Step's progress
 saved, and nothing from that plan runs; `Runner.resume` with the Approval's token, decided
 by its approver (never the Run's own principal), continues the Run exactly there, running
-the saved plan. A declined or expired Approval escalates the
-Run, and so does a Tool reaching its FailureThreshold from the Protocol's Error handling:
-until then a failed call (ToolExecutionError) goes back to the model as data, while a failed
-call of a Tool with no threshold fails the Run. A paused or escalated Run ends the graph.
+the saved plan. A declined or expired Approval escalates the Run, and so does a Tool reaching
+its FailureThreshold from the Protocol's Error handling: until then a failed call
+(ToolExecutionError) goes back to the model as data, while a failed call of a Tool with no
+threshold fails the Run. A paused or escalated Run ends the graph.
 
 A Step's output (its final text and its tool results) is added to `Run.context["steps"]`,
 and `Run.cursor` moves to the Step's number only once the Step has completed; both are
@@ -21,17 +20,16 @@ with the principal, the cursor left at the last completed Step, and the error re
 
 A Step ends only on the structured step_complete signal or a bound (ADR 0008). A plan with
 neither tool calls nor the signal gets a reminder and another turn; a plan with both runs
-its calls first, and if one of them failed the model gets another turn instead. Before
-every provider call the Step is checked against the Harness bounds
-(harness.py); a breach raises LoopBudgetExceeded, which escalates the Run through
-`Gates.bounded`. Each call's tokens count against the Step and its cost against the Run.
+its calls first, and if one of them failed the model gets another turn instead. Before every
+provider call the Step is checked against the Harness bounds (harness.py); a breach raises
+LoopBudgetExceeded, which escalates the Run through `Gates.bounded`. Each call's tokens count
+against the Step and its cost against the Run.
 `Runner.run` stamps the harness version on the Run (ADR 0012), and the registry's tool pack
 version; an approval of a Run whose harness or tool pack has changed since is refused
 (run_versions.py, issue #97), so an approved write runs under what the Run started with.
 
 `Runner.run` and `Runner.resume` claim the Run (claims.py, `RunStore.claim_run`): of two
-executions only the last claim's saves land, and the other stops with RunClaimLost without
-failing the Run.
+executions only the last claim's saves land; the other stops with RunClaimLost, not failed.
 
 What a Step sees is the ContextBuilder's (context.py, ADR 0007): the prior Steps it declares,
 its whitelisted Tools' schemas, and Tool results inside a data block. The Window Ledger of
@@ -83,7 +81,7 @@ from cograil.gates import (
 )
 from cograil.harness import harness_version, step_tier
 from cograil.injection import Screen, kept
-from cograil.observability import log_event
+from cograil.observability import log_event, run_span, step_span
 from cograil.providers.base import Message, PlannedToolCall, Provider
 from cograil.registry import UNVERSIONED, CallContext, ToolRegistry
 from cograil.run_versions import RunVersions
@@ -236,7 +234,8 @@ class Runner:
 
     async def _execute(self, run: Run, protocol: Protocol) -> Run:
         graph = compile_protocol(protocol, lambda step: self._node(step, protocol))
-        final = await graph.ainvoke({"run": run}, {"recursion_limit": len(protocol.steps) + 1})
+        with run_span(run, protocol.name):
+            final = await graph.ainvoke({"run": run}, {"recursion_limit": len(protocol.steps) + 1})
         run = final["run"]
         if run.status is RunStatus.running:  # else paused or escalated, already saved
             run = await self._claims.save(run, status=RunStatus.completed)
@@ -246,7 +245,8 @@ class Runner:
 
     def _node(self, step: Step, protocol: Protocol) -> StepNode:
         async def node(state: RunState) -> RunState:
-            return {"run": await self._run_step(step, state["run"], protocol)}
+            with step_span(state["run"], step):
+                return {"run": await self._run_step(step, state["run"], protocol)}
 
         return node
 

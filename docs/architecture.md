@@ -147,6 +147,10 @@ edits, and a database trigger rejects UPDATE, DELETE and TRUNCATE. The applicati
 `cograil_app` role, which holds only INSERT and SELECT on `audit_events`, so even disabling the
 triggers needs the owner. See `docs/deploy.md`.
 
+Beside the audit trail, `observability.py` sends OpenTelemetry spans: one for each Run
+execution, one for each Step and one for each model call inside a Step, with tokens and cost but never prompts
+or Tool data. See [Observability](observability.md).
+
 Error text from a Tool can carry personal data or secrets, so it is redacted before it is
 saved (issue #78, `redaction.py`). Two passes run in order: patterns for emails, tokens and API
 keys, URL credentials and connection strings, then the small tier (ADR 0010) through the
@@ -184,7 +188,6 @@ of kind `system`) is allowed exactly when the Protocol allows scheduled executio
   entry point, and `--as` is not authenticated.
 - The `directory` Tool kind. `build_registry` builds `python`, `rest`, `mcp` and `decision`. The
   `knowledge` kind registers from `knowledge/tool.py` with its ACL pre-filter (issue #23).
-- OpenTelemetry spans. `observability.py` writes structured JSON log lines today.
 - Approver routing: decision tables exist now, and `approval_routing` returns an approver
   tier. The approver of a gate is still the Colleague's escalation contact until a directory
   lookup maps a tier to a principal.
