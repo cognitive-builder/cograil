@@ -126,11 +126,12 @@ def _unknown_tables(workspace: Workspace, file: Path) -> list[str]:
 
 
 def _shared_names(workspace: Workspace, file: Path) -> list[str]:
-    """An id or alias naming two principals would let one sign in as the other."""
+    """An id, alias or oid naming two principals would let one sign in as the other."""
     owners: dict[str, str] = {}
     shared: list[str] = []
     for principal in workspace.principals:
-        for name in dict.fromkeys([principal.id, *principal.aliases]):
+        oids = [principal.oid] if principal.oid else []
+        for name in dict.fromkeys([principal.id, *principal.aliases, *oids]):
             if owners.setdefault(name, principal.id) != principal.id:
                 shared.append(f"{file}: {name} names both {owners[name]} and {principal.id}")
     return shared
