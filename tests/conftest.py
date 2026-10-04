@@ -5,7 +5,7 @@ the application role (cograil_app)."""
 import asyncio
 import os
 import secrets
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,6 +13,10 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from opentelemetry import trace
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -24,6 +28,20 @@ T0 = datetime(2026, 10, 4, tzinfo=UTC)
 ROOT = Path(__file__).resolve().parents[1]
 APP_ROLE = "cograil_app"
 APP_ROLE_PASSWORD = secrets.token_hex(16)  # one per test session, so modules agree on it
+
+# OpenTelemetry allows one tracer provider per process: install ours before any test can.
+_SPANS = InMemorySpanExporter()
+_PROVIDER = TracerProvider()
+_PROVIDER.add_span_processor(SimpleSpanProcessor(_SPANS))
+trace.set_tracer_provider(_PROVIDER)
+
+
+@pytest.fixture
+def spans() -> Iterator[Callable[[], list[ReadableSpan]]]:
+    """A function returning the spans finished so far in the test, in the order they ended."""
+    _SPANS.clear()
+    yield lambda: list(_SPANS.get_finished_spans())
+    _SPANS.clear()
 
 
 @pytest.fixture

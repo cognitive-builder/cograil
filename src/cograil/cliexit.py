@@ -11,6 +11,7 @@ from typing import Any, NoReturn
 import typer
 
 from cograil.domain import RunStatus
+from cograil.observability import configure_tracing
 
 EXIT_ERROR = 1
 EXIT_AWAITING_APPROVAL = 3
@@ -41,8 +42,10 @@ def await_command(body: Coroutine[Any, Any, None]) -> None:
     """Run a command's async body to its end; an error outside CograilError is one line, exit 1.
 
     `fail` inside the body raises typer.Exit, itself a RuntimeError, so it passes through with
-    the code the command chose instead of being flattened onto exit 1.
+    the code the command chose instead of being flattened onto exit 1. Spans of the command go
+    to the console or OTLP (observability.configure_tracing).
     """
+    configure_tracing()
     try:
         asyncio.run(body)
     except typer.Exit:

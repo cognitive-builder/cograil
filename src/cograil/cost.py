@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict
 
 from cograil.domain import Harness, Run, RunStatus
 from cograil.harness import call_cost
+from cograil.observability import record_model_call
 from cograil.providers.base import Usage
 
 USAGE_KEY = "usage"  # Run.context["usage"]: the Run's token tally
@@ -60,12 +61,13 @@ def run_usage(run: Run) -> RunUsage:
 
 
 def charge(harness: Harness, run: Run, model: str, usage: Usage) -> Run:
-    """`run` with one call's dollars and tokens added. Raises LoopBudgetExceeded as
-    `call_cost` does, for an unpriced model under a dollar budget."""
+    """`run` with one call's dollars and tokens added; they go on the current model span too.
+    Raises LoopBudgetExceeded as `call_cost` does, for an unpriced model under a dollar budget."""
     cost = call_cost(
         harness, model, usage.input_tokens, usage.output_tokens,
         usage.cache_read_tokens, usage.cache_write_tokens,
     )  # fmt: skip
+    record_model_call(model, usage, cost)
     tally = run_usage(run) + _of_call(usage)
     context: dict[str, Any] = {**run.context, USAGE_KEY: tally.model_dump()}
     return run.model_copy(update={"cost_usd": run.cost_usd + cost, "context": context})

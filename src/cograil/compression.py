@@ -33,6 +33,7 @@ from cograil.domain import Harness, Run, Step
 from cograil.errors import ProviderError
 from cograil.gates import StepProgress
 from cograil.harness import task_tier, tier_model
+from cograil.observability import model_span
 from cograil.providers.base import Provider
 
 GUIDE = (
@@ -89,13 +90,16 @@ class Compressor:
                      instruction=f"{GUIDE}{step.name}\n{step.instruction}")  # fmt: skip
         model = tier_model(self._harness, task_tier(self._harness, "compression"))
         messages = [data_message([(f"tool {call['tool']}", call["result"])])]
-        plan = await self._provider.plan(guide, messages, [], model=model)
-        summary = (plan.text or (plan.step_complete.output if plan.step_complete else "")).strip()
-        if not summary:
-            raise ProviderError(f"compression of {call['tool']} returned no summary")
-        usage = plan.usage
-        progress.tokens += usage.input_tokens + usage.output_tokens
-        run = charge(self._harness, run, plan.model, usage)
+        with model_span(model):
+            plan = await self._provider.plan(guide, messages, [], model=model)
+            summary = (
+                plan.text or (plan.step_complete.output if plan.step_complete else "")
+            ).strip()
+            if not summary:
+                raise ProviderError(f"compression of {call['tool']} returned no summary")
+            usage = plan.usage
+            progress.tokens += usage.input_tokens + usage.output_tokens
+            run = charge(self._harness, run, plan.model, usage)
         compressed = estimate_tokens(dump(compressed_result(summary)))
         detail = {"step": step.number, "tool": call["tool"], "raw_tokens": raw,
                   "compressed_tokens": compressed, "threshold": threshold}  # fmt: skip

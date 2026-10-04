@@ -40,6 +40,7 @@ from cograil.domain import Harness, Run, Step
 from cograil.errors import ProviderError
 from cograil.gates import StepProgress
 from cograil.harness import task_tier, tier_model
+from cograil.observability import model_span
 from cograil.providers.base import SCREEN_STEP, Provider
 
 REMOVED = "[removed: instruction-like text]"
@@ -187,11 +188,12 @@ class Screen:
         ]
         guide = Step(number=step.number, name=SCREEN_STEP, instruction=GUIDE)
         model = tier_model(self._harness, task_tier(self._harness, "classification"))
-        plan = await self._provider.plan(guide, [data_message(entries)], [], model=model)
-        verdict = plan.text or (plan.step_complete.output if plan.step_complete else "")
-        usage = plan.usage
-        progress.tokens += usage.input_tokens + usage.output_tokens
-        run = charge(self._harness, run, plan.model, usage)
+        with model_span(model):
+            plan = await self._provider.plan(guide, [data_message(entries)], [], model=model)
+            verdict = plan.text or (plan.step_complete.output if plan.step_complete else "")
+            usage = plan.usage
+            progress.tokens += usage.input_tokens + usage.output_tokens
+            run = charge(self._harness, run, plan.model, usage)
         return run, parse_verdict(verdict, len(items))
 
 
