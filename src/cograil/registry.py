@@ -4,6 +4,7 @@
 failure), calls the Tool, then records a ToolCall and a `tool.called` AuditEvent through
 the RunStore, whether the call succeeded or not. The error text is redacted before it is
 stored (`cograil.redaction`, issue #78); the exception the caller gets keeps the raw text.
+The redaction's model pass is charged to the Run through the CallContext's `charge` (#221).
 A scope=write Tool also gets a `tool.started` AuditEvent just before it runs, so a crash
 mid-write still leaves a record.
 Whitelists and gates are the runner's job; the registry only answers "what is this Tool
@@ -42,6 +43,7 @@ from jsonschema import Draft202012Validator, SchemaError
 from jsonschema.protocols import Validator
 from jsonschema.validators import validator_for
 
+from cograil.cost import Charge
 from cograil.decisions import DecisionOutcome, DecisionTable, table_for, table_name
 from cograil.domain import AuditEvent, Tool, ToolCall, Workspace
 from cograil.errors import (
@@ -73,12 +75,14 @@ _HTTP_TIMEOUT_S = 10.0
 @dataclass(frozen=True)
 class CallContext:
     """Who calls a Tool and where: recorded on the ToolCall and the AuditEvent. `groups` are
-    the principal's, for the kinds that filter by entitlement; none means nothing is visible."""
+    the principal's, for the kinds that filter by entitlement; none means nothing is visible.
+    `charge` charges the Run for the model calls the registry makes for it (a redaction)."""
 
     run_id: str
     step: int
     principal_id: str
     groups: tuple[str, ...] = ()
+    charge: Charge | None = None
 
 
 @dataclass(frozen=True)
@@ -152,7 +156,7 @@ class ToolRegistry:
         self, ctx: CallContext, call: ToolCall, result: Any = None, error: str | None = None
     ) -> None:
         if error is not None:  # redacted before it is stored; the model still gets the raw error
-            error = await self.redactor.redact(error)
+            error = await self.redactor.redact(error, ctx.charge)
         done = call.model_copy(update={"result": result, "error": error, "ended_at": _now()})
         await self._store.record_tool_call(ctx.run_id, done)
         detail = {"tool": call.tool, "step": ctx.step, "error": error}

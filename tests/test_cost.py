@@ -1,4 +1,7 @@
-"""Cost telemetry tests for issue #29: one per acceptance criterion (ADR 0013)."""
+"""Cost telemetry tests for issue #29: one per acceptance criterion (ADR 0013).
+
+Issue #221: redactions are charged to their Run, and a Run that fails or escalates on a loop
+bound keeps the spend of the calls before it. The routing's charge is tested in test_api.py."""
 
 from datetime import UTC, datetime
 from typing import Any
@@ -10,6 +13,7 @@ from cograil.domain import (
     Colleague,
     ContextSettings,
     Harness,
+    LoopBounds,
     Price,
     Principal,
     Run,
@@ -17,10 +21,12 @@ from cograil.domain import (
     Tool,
     Trigger,
 )
+from cograil.errors import ToolExecutionError
 from cograil.harness import CACHE_READ_FACTOR, CACHE_WRITE_FACTOR
 from cograil.parser import parse_protocol
 from cograil.providers import FakeProvider, PlannedToolCall, scripted
 from cograil.providers.base import Usage
+from cograil.redaction import REDACT_TOOL, Redactor
 from cograil.registry import ToolRegistry
 from cograil.runner import Runner
 from cograil.store import InMemoryRunStore
@@ -100,6 +106,96 @@ async def test_the_runner_charges_every_turn_to_the_run() -> None:
     run = await runner.run("r1", protocol)
     assert run_usage(run) == RunUsage(input_tokens=100, output_tokens=40, cache_read_tokens=500)
     assert run.cost_usd == pytest.approx((100 + 500 * 0.1 + 40) / 1_000_000)
+
+
+# Issue #221. The Runs' model is fake-model at $1 per million tokens in and out, so a Run's
+# dollars are its tokens / 1e6. A redaction (the Redactor's own FakeProvider) spends 1000 + 100.
+
+PER_TOKEN = 1 / 1_000_000
+ONE_DOLLAR = Price(input_per_mtok=1.0, output_per_mtok=1.0)
+PRICED = Harness(pricing={"fake-model": ONE_DOLLAR})
+HARPER = Colleague(name="harper", role="HR", escalation_contact="hr@example.com",
+                   protocols=["leave_request"])  # fmt: skip
+LOOK_UP = scripted("", PlannedToolCall(id="c", tool="hris.get_balance", args={}))
+RETRIED = parse_protocol(
+    'Protocol: leave_request\n1. Step "Look up": Use @hris.get_balance.\n\nError handling:\n'
+    "- @hris.get_balance fails: retry once, then escalate to the Human Manager.\n"
+)
+
+
+def redactions(count: int, input_tokens: int = 1000) -> FakeProvider:
+    answer = PlannedToolCall(id="r", tool=REDACT_TOOL, args={"text": "[REDACTED:error]"})
+    plan = scripted("", answer, input_tokens=input_tokens, output_tokens=100)
+    return FakeProvider([plan] * count)
+
+
+async def _fail(args: dict[str, Any]) -> None:
+    raise RuntimeError("no record for bob@example.com")
+
+
+def failing_registry(store: InMemoryRunStore, redactor: FakeProvider) -> ToolRegistry:
+    registry = ToolRegistry(store, Redactor(redactor))
+    registry.register(Tool(name="hris.get_balance", kind="python", scope="read"), _fail)
+    return registry
+
+
+async def test_a_runs_redaction_calls_are_charged_to_it(store: InMemoryRunStore) -> None:
+    # Each failure is redacted for the ToolCall, then for the Step's record or the escalation.
+    redactor = redactions(4)
+    registry = failing_registry(store, redactor)
+    runner = Runner(FakeProvider([LOOK_UP, LOOK_UP]), registry, store, HARPER, harness=PRICED)
+    run = await runner.run("r1", RETRIED)
+    assert run.status is RunStatus.escalated and len(redactor.calls) == 4
+    expected = RunUsage(input_tokens=2 * 10 + 4 * 1000, output_tokens=2 * 5 + 4 * 100)
+    stored = await store.get_run("r1")
+    assert run_usage(stored) == expected
+    assert stored.cost_usd == pytest.approx(expected.total_tokens * PER_TOKEN)
+
+
+async def test_a_run_that_fails_keeps_the_spend_of_its_calls(store: InMemoryRunStore) -> None:
+    # Two turns, then a Tool with no failure threshold fails: its error is redacted for the
+    # ToolCall and again for the run.failed AuditEvent.
+    redactor = redactions(2)
+    protocol = parse_protocol('Protocol: leave_request\n1. Step "Look up": Use @hris.get_balance.')
+    runner = Runner(FakeProvider([scripted("thinking"), LOOK_UP]),
+                    failing_registry(store, redactor), store, HARPER, harness=PRICED)  # fmt: skip
+    with pytest.raises(ToolExecutionError):
+        await runner.run("r1", protocol)
+    stored = await store.get_run("r1")
+    expected = RunUsage(input_tokens=2 * 10 + 2 * 1000, output_tokens=2 * 5 + 2 * 100)
+    assert stored.status is RunStatus.failed and len(redactor.calls) == 2
+    assert run_usage(stored) == expected
+    assert stored.cost_usd == pytest.approx(expected.total_tokens * PER_TOKEN)
+
+
+async def test_a_run_that_escalates_on_a_loop_bound_keeps_the_call_that_breached_it(
+    store: InMemoryRunStore,
+) -> None:
+    # The small tier's unsure answer spends the Step's 15 tokens; asking one tier up is refused.
+    harness = PRICED.model_copy(update={"loop": LoopBounds(token_budget_per_step=15)})
+    protocol = parse_protocol('Protocol: leave_request\n1. Step "A": Answer. (model: small)')
+    provider = FakeProvider([scripted("unsure", done=True, confidence=0.2)])
+    run = await Runner(provider, ToolRegistry(store), store, HARPER, harness=harness).run(
+        "r1", protocol
+    )
+    assert run.status is RunStatus.escalated
+    stored = await store.get_run("r1")
+    assert run_usage(stored) == RunUsage(input_tokens=10, output_tokens=5)
+    assert stored.cost_usd == pytest.approx(15 * PER_TOKEN)
+
+
+async def test_the_dollar_budget_counts_a_runs_redactions(store: InMemoryRunStore) -> None:
+    # One failure is redacted twice at $1 each; the $1.50 budget stops the second turn.
+    tiers = ("claude-haiku-4-5", "claude-sonnet-5-5", "claude-opus-5-5", "fake-model")
+    harness = Harness(pricing=dict.fromkeys(tiers, ONE_DOLLAR),
+                      loop=LoopBounds(usd_budget_per_run=1.5))  # fmt: skip
+    registry = failing_registry(store, redactions(2, input_tokens=1_000_000 - 100))
+    provider = FakeProvider([LOOK_UP, LOOK_UP])
+    run = await Runner(provider, registry, store, HARPER, harness=harness).run("r1", RETRIED)
+    assert run.status is RunStatus.escalated and len(provider.calls) == 1
+    [bounded] = [e for e in await store.list_audit_events("r1") if e.kind == "loop.bounded"]
+    assert bounded.detail["bound"] == "usd_budget_per_run"
+    assert (await store.get_run("r1")).cost_usd == pytest.approx(2.0 + 15 * PER_TOKEN)
 
 
 async def test_compression_and_screen_calls_are_charged_to_the_run() -> None:

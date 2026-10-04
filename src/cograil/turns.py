@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from cograil.claims import RunClaims
 from cograil.context import add_cache_usage
-from cograil.cost import charge
 from cograil.domain import Harness, Run, Step, Tier, Tool
 from cograil.gates import StepProgress
 from cograil.harness import check_bounds, escalation_tier, step_effort, tier_model
@@ -37,7 +36,9 @@ class Turns:
         """One turn inside the Step's bounds; raises LoopBudgetExceeded past them.
 
         `prefix` is the Run's stable prompt prefix, sent first on every call (ADR 0013).
+        The bounds see all the Run has spent, redactions included (issue #221).
         """
+        run = self._claims.settled(run)
         self._check(run, step, progress)
         run, plan = await self._ask(run, step, tier, progress, tools, prefix)
         confidence = plan.step_complete.confidence if plan.step_complete else None
@@ -78,7 +79,7 @@ class Turns:
             usage = plan.usage
             cached = usage.cache_read_tokens + usage.cache_write_tokens
             progress.tokens += usage.input_tokens + usage.output_tokens + cached
-            run = charge(self._harness, run, plan.model, usage)
+            run = self._claims.charge(run, plan.model, usage)
         context = add_cache_usage(
             run.context, step.number, usage.cache_read_tokens, usage.cache_write_tokens
         )
