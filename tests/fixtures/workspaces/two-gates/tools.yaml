@@ -1,0 +1,18 @@
+tools:
+  - name: demo.lookup
+    kind: python
+    scope: read
+    description: Look up a value.
+    args_schema: {type: object, properties: {key: {type: string}}, required: [key]}
+  - name: demo.record_a
+    kind: python
+    scope: write
+    confirm_before_write: true
+    description: Record an item, first gate.
+    args_schema: {type: object, properties: {item: {type: string}}, required: [item]}
+  - name: demo.record_b
+    kind: python
+    scope: write
+    confirm_before_write: true
+    description: Record an item, second gate.
+    args_schema: {type: object, properties: {item: {type: string}}, required: [item]}

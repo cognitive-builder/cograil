@@ -33,7 +33,12 @@ async def list_runs(
 
 @router.get("/{run_id}")
 async def get_run(run_id: str, principal: CurrentPrincipal, services: ServicesDep) -> RunDetail:
-    """A Run with its Steps, tool calls and gates."""
+    """A Run with its Steps, tool calls and gates.
+
+    A Workspace that has moved on — the Protocol gone, or now at another version, as `decide`
+    refuses — leaves the Run's Steps unknowable; `protocol_changed` says so instead of a silent
+    empty list.
+    """
     try:
         run = await services.store.get_run(run_id)
     except RunNotFound:
@@ -41,10 +46,16 @@ async def get_run(run_id: str, principal: CurrentPrincipal, services: ServicesDe
     if run.principal_id != principal.id:
         raise HTTPException(404, "no such run")
     protocol = services.protocol(run.protocol)
-    steps = [StepView.of(step, run) for step in protocol.steps] if protocol else []
+    changed = (
+        protocol is None
+        or run.workspace != services.workspace.name
+        or protocol.version != run.protocol_version
+    )
+    steps = [StepView.of(step, run) for step in protocol.steps] if protocol and not changed else []
     return RunDetail(
         **RunSummary.of(run).model_dump(),
         protocol_version=run.protocol_version,
+        protocol_changed=changed,
         harness_version=run.harness_version,
         cursor=run.cursor,
         steps=steps,

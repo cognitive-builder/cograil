@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from cograil.api.app import create_app
 from cograil.api.auth_settings import auth_settings
 from cograil.domain import Workspace
-from cograil.errors import AuthNotConfigured
+from cograil.errors import StoreNotConfigured
 from cograil.knowledge.store import PostgresKnowledgeStore
 from cograil.knowledge.tool import add_knowledge
 from cograil.orchestrator import classification_model
@@ -40,7 +40,7 @@ async def open_registry(workspace: Workspace, store: RunStore, root: Path) -> To
 def app_from_env() -> FastAPI:
     url = os.environ.get("DATABASE_URL")
     if not url:
-        raise AuthNotConfigured("DATABASE_URL is not set")
+        raise StoreNotConfigured("DATABASE_URL is not set")
     path = Path(os.environ.get("COGRAIL_WORKSPACE", "."))
     workspace = load_workspace(path)
     store = PostgresRunStore.from_url(url)

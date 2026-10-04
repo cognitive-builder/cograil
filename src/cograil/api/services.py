@@ -28,6 +28,7 @@ from cograil.domain import (
     Workspace,
 )
 from cograil.errors import ToolNotFound, WorkspaceError
+from cograil.identity import same_principal
 from cograil.orchestrator import Routing, classify_intent
 from cograil.progress import ProgressStore
 from cograil.providers.base import Provider
@@ -125,10 +126,17 @@ class Services:
             )
         async with self.runner(protocol, colleague, _ignore) as (runner, _):
             ended = await runner.resume(token, protocol, decider=principal.id, decision=decision)
-        return await self.outcome(ended)
+        return await self.outcome(ended, approver=principal.id)
 
-    async def outcome(self, run: Run) -> RunOutcome:
+    async def outcome(self, run: Run, *, approver: str | None = None) -> RunOutcome:
+        """Where a Run stands; `approver` limits `awaiting` to that approver's own gates.
+
+        The Run's principal (its chat) is shown every pending gate as the pointer of a paused
+        Run; a deciding approver is shown only their own, as an Approval's token is the
+        approver's (schemas.py)."""
         pending = [a for a in await self.store.list_approvals(run.id) if a.decision == "pending"]
+        if approver is not None:
+            pending = [a for a in pending if same_principal(a.approver, approver)]
         return RunOutcome(
             run=RunSummary.of(run),
             awaiting=[

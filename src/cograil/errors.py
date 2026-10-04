@@ -57,6 +57,10 @@ class AuthNotConfigured(CograilError):
     """COGRAIL_AUTH or the settings its mode needs are missing or invalid."""
 
 
+class StoreNotConfigured(CograilError):
+    """DATABASE_URL is not set, so there is no RunStore to serve from."""
+
+
 class LoginDenied(CograilError):
     """The identity provider's answer does not let this person sign in."""
 
