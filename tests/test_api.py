@@ -16,9 +16,10 @@ from fastapi.testclient import TestClient
 
 from cograil.api.app import create_app
 from cograil.api.auth_settings import auth_settings
-from cograil.api.wiring import open_registry
+from cograil.api.wiring import app_from_env, open_registry
 from cograil.audience import resolve_principal
 from cograil.domain import Colleague, Principal, Protocol, RunStatus
+from cograil.errors import AuthNotConfigured, StoreNotConfigured
 from cograil.orchestrator import ROUTE_TOOL
 from cograil.providers import FakeProvider, PlannedToolCall, scripted
 from cograil.providers.base import Provider
@@ -27,7 +28,9 @@ from cograil.store import InMemoryRunStore, PostgresRunStore, RunStore
 from cograil.workspace import load_workspace
 
 DEMO = Path(__file__).parent / "fixtures/workspaces/cli-demo"
+TWO_GATES = Path(__file__).parent / "fixtures/workspaces/two-gates"
 ALICE, MANAGER, MALLORY = "alice@example.com", "manager@example.com", "mallory@example.com"
+BOSS = "boss@example.com"
 # Step 1 looks a value up; step 2 plans a gated write, so the Run pauses there.
 RUN_SCRIPT = """
 - tool_calls: [{tool: demo.lookup, args: {key: answer}}]
@@ -35,20 +38,36 @@ RUN_SCRIPT = """
 - tool_calls: [{tool: demo.record, args: {item: "42"}}]
 """
 REST_SCRIPT = "- {text: Recorded, done: true}\n"
+# The two-gate workspace: the first gate pauses the chat, the second pauses the resume.
+TWO_GATE_SCRIPT = """
+- tool_calls: [{tool: demo.lookup, args: {key: answer}}]
+- {text: Found 42, done: true}
+- tool_calls: [{tool: demo.record_a, args: {item: "42"}}]
+"""
+ON_TO_B_SCRIPT = """
+- {text: Recorded A, done: true}
+- tool_calls: [{tool: demo.record_b, args: {item: "42"}}]
+"""
 
 
 class Env:
     """The app under test, the providers it will hand out, and the store behind it."""
 
-    def __init__(self, tmp_path: Path, store: RunStore | None = None, close: Any = None) -> None:
+    def __init__(
+        self,
+        tmp_path: Path,
+        store: RunStore | None = None,
+        close: Any = None,
+        root: Path = DEMO,
+    ) -> None:
         self.tmp_path = tmp_path
         self.store = store or InMemoryRunStore()
         self.run_scripts: list[Provider] = []
         self.classifier = FakeProvider([])
-        workspace = load_workspace(DEMO)
+        workspace = load_workspace(root)
         self.app = create_app(
             workspace,
-            DEMO,
+            root,
             self.store,
             auth=auth_settings({"COGRAIL_AUTH": "dev", "COGRAIL_DEV_PRINCIPAL": ALICE}),
             classifier=self.classifier,
@@ -119,6 +138,11 @@ def stored(env: Env, run_id: str) -> Any:
 
 def kinds(env: Env, run_id: str) -> list[str]:
     return [e.kind for e in asyncio.run(env.store.list_audit_events(run_id))]
+
+
+def workspace(env: Env) -> Any:
+    """The workspace the app serves, live: a test can move it on under a stored Run."""
+    return env.app.state.cograil_services.workspace
 
 
 # /chat
@@ -207,6 +231,21 @@ def test_run_detail_shows_steps_calls_and_gates(env: Env) -> None:
     (gate,) = detail["gates"]
     assert (gate["tool"], gate["approver"], gate["decision"]) == ("demo.record", MANAGER, "pending")
     assert "token" not in gate
+    assert detail["protocol_changed"] is False
+
+
+@pytest.mark.parametrize("moved_on", ["new-version", "gone"])
+def test_run_detail_says_when_the_workspaces_protocol_moved_on(env: Env, moved_on: str) -> None:
+    run_id = env.paused_run()["run"]["id"]
+    protocol = next(p for p in workspace(env).protocols if p.name == "record_item")
+    if moved_on == "new-version":
+        protocol.version += 1
+    else:
+        workspace(env).protocols.remove(protocol)
+    detail = env.get(f"/runs/{run_id}").json()
+    assert detail["protocol_changed"] is True
+    assert detail["steps"] == []  # the Workspace's Steps are no longer the ones that ran
+    assert detail["protocol_version"] == 1 and detail["protocol"] == "record_item"
 
 
 @pytest.mark.parametrize("caller", [MALLORY, MANAGER])
@@ -258,6 +297,29 @@ def test_approval_post_approves_and_the_run_goes_on_at_the_paused_step(env: Env)
         e for e in asyncio.run(env.store.list_audit_events(run_id)) if e.kind == "gate.resumed"
     ]
     assert [e.detail["decided_by"] for e in resumed] == [MANAGER]
+
+
+def test_a_decider_is_shown_only_their_own_gates(tmp_path: Path) -> None:
+    # Two gates, two approvers: the Run pauses at manager's gate, then at the boss's.
+    env = Env(tmp_path, root=TWO_GATES)
+    env.route_to("gatekeeper/double_record")
+    env.run_scripts.append(env.script(TWO_GATE_SCRIPT))
+    done = dict(env.chat())["done"]
+    run_id, gate_a = done["run"]["id"], done["awaiting"][0]["token"]
+    assert done["awaiting"][0]["approver"] == MANAGER
+    # The interim approver rule pins every gate to the Colleague's escalation_contact, so
+    # moving it between the two pauses stands in for the approver routing still to land.
+    gatekeeper = next(c for c in workspace(env).colleagues if c.name == "gatekeeper")
+    gatekeeper.escalation_contact = BOSS
+    env.run_scripts.append(env.script(ON_TO_B_SCRIPT))
+    answer = env.post(f"/approvals/{gate_a}", {"decision": "approved"})
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["awaiting"] == []  # the boss's gate is not the manager's to see
+    pending = [a for a in asyncio.run(env.store.list_approvals(run_id)) if a.decision == "pending"]
+    assert [(a.approver, a.tool, a.step) for a in pending] == [(BOSS, "demo.record_b", 3)]
+    env.run_scripts.append(env.script(REST_SCRIPT))
+    answer = env.post(f"/approvals/{pending[0].token}", {"decision": "approved"}, as_=BOSS)
+    assert answer.json()["run"]["status"] == "completed"
 
 
 def test_approval_post_declined_escalates(env: Env) -> None:
@@ -366,6 +428,16 @@ def test_health_and_openapi_docs_are_served(env: Env) -> None:
         paths
     )
     assert set(paths["/approvals/{token}"]) == {"get", "post"}
+
+
+# wiring
+
+
+def test_app_from_env_without_a_database_url_names_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    with pytest.raises(StoreNotConfigured, match="DATABASE_URL") as raised:
+        app_from_env()
+    assert not isinstance(raised.value, AuthNotConfigured)
 
 
 # End to end (issue labelled needs:e2e): the same flow over Postgres. Everything goes through

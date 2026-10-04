@@ -28,7 +28,7 @@ Settings come only from environment variables. To run the service in a container
 | `/auth/*` | Sign-in routes. | Anyone (see `docs/auth.md`). |
 | `POST /chat` | Routes a message to a Protocol and streams the Run as SSE. | Signed in. |
 | `GET /runs` | Lists your Runs, newest first. `limit` is 1 to 100, default 20. | Signed in. |
-| `GET /runs/{id}` | One Run with its Steps, tool calls and Gates. | The Principal who started it. |
+| `GET /runs/{id}` | One Run with its Steps, tool calls and Gates. `protocol_changed` is true when the Workspace no longer has the Protocol at the version the Run began with; then `steps` is empty and the rest of the Run is still shown. | The Principal who started it. |
 | `GET /approvals/{token}` | Shows the call a Gate holds, and who asked. | The Approval's approver. |
 | `POST /approvals/{token}` | Approves or declines. Body: `{"decision": "approved"}` or `"declined"`. | The Approval's approver. |
 | `GET /audit` | Lists AuditEvents, oldest first. | Signed in, for your own Runs. |
@@ -79,7 +79,8 @@ Limits: a decision answers when the Run next stops, not as a stream, so the card
 - Only the Approval's approver can view or decide it. Anyone else gets 403.
 - The decider is always the signed-in Principal. The POST body carries only `decision`. Any other field gives 422, so a client cannot name someone else.
 - The Runner refuses a decider who is not the approver, or who started the Run. It writes a `gate.refused` AuditEvent naming whoever tried.
-- A POST to an Approval runs the rest of the Run before it answers. The answer is the Run's state when it next stops.
+- A POST to an Approval runs the rest of the Run before it answers. The answer is the Run's state when it next stops; its `awaiting` lists only gates that wait on you. A Run's own chat shows every pending gate to the Principal who started it.
+- A missing `DATABASE_URL` stops the service at startup with `StoreNotConfigured`; sign-in problems are the only `AuthNotConfigured` ones.
 - Closing the connection does not stop a Run. The stream ends, and the Run carries on to a stop.
 - When a message matches, the classification is an AuditEvent `orchestrator.classified` on the new Run. A refusal has no Run, so it is only logged.
 

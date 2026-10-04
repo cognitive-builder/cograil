@@ -1,0 +1,5 @@
+name: gatekeeper
+role: Demo Assistant
+escalation_contact: manager@example.com
+protocols: [double_record]
+audiences: [staff]

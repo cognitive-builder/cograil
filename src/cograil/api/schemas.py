@@ -95,6 +95,10 @@ class GateView(BaseModel):
 
 class RunDetail(RunSummary):
     protocol_version: int
+    protocol_changed: bool = Field(
+        description="The Workspace has moved on: the Protocol is gone or at another version, "
+        "so the Run's Steps cannot be shown and `steps` is empty."
+    )
     harness_version: str
     cursor: int
     steps: list[StepView]
@@ -110,7 +114,8 @@ class PendingApproval(BaseModel):
 
 
 class RunOutcome(BaseModel):
-    """Where a Run stands after a chat or a decision; `awaiting` lists the gates it waits on."""
+    """Where a Run stands after a chat or a decision; `awaiting` lists the gates it waits on:
+    every one to the Run's principal, only their own to a deciding approver."""
 
     run: RunSummary
     awaiting: list[PendingApproval]
