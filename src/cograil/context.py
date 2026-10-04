@@ -117,7 +117,8 @@ class ContextBuilder:
                                  ("Guardrails", protocol.guardrails))
             if lines
         ]  # fmt: skip
-        head = f"Protocol {protocol.name}: {protocol.description}".rstrip(": ")
+        about = f": {protocol.description}" if protocol.description else ""
+        head = f"Protocol {protocol.name}{about}"
         return "\n\n".join([persona, head, *steps, *rules])
 
     def prior_step_numbers(self, step: Step) -> list[int]:

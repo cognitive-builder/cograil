@@ -55,8 +55,8 @@ The parts of a prompt that do not change between calls are sent first and marked
 repeated calls pay the cache-read rate (ADR 0013). A call's prompt is ordered from the most
 stable part to the least: the Step's tool schemas, then the Run's prefix (the Colleague's persona
 and the Protocol's text: its steps, error handling and guardrails), then the Step's own
-instruction and the per-run data (prior outputs and Tool results). The prefix is built once from
-the Colleague and the Protocol, so every Step of a Run sends it unchanged.
+instruction and the per-run data (prior outputs and Tool results). The prefix is built from
+the Colleague and the Protocol only, so every Step of a Run sends it unchanged.
 
 The Anthropic provider puts a cache marker on the prefix. The Ollama provider has no saved
 context and sends the prefix as the start of its system message. A Step's tool schemas come
