@@ -129,6 +129,8 @@ def test_cograil_live_runs_the_smoke_subset_on_the_small_tier_through_the_live_p
     monkeypatch.setenv("COGRAIL_LIVE", "1")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     result = runner.invoke(app, ["eval", str(EXAMPLE), "--cases", str(GOLDEN)])
+    # The stand-in completes every Step without a tool call, so most cases fail their
+    # expectations: this test is about which cases ran and on which model, not the tally.
     smoke = [c.id for c in CASES if c.smoke]
     assert f"level smoke, {len(smoke)} cases" in result.output, result.output
     assert all(case_id in result.output for case_id in smoke)
@@ -140,6 +142,7 @@ def test_cograil_live_runs_the_smoke_subset_on_the_small_tier_through_the_live_p
     ("env", "args", "message"),
     [({}, ["--level", "smoke"], "set COGRAIL_LIVE=1"),
      ({"COGRAIL_LIVE": "1", "ANTHROPIC_API_KEY": "k"}, ["--level", "full"], "batch path"),
+     ({}, ["--level", "full"], "batch path"),
      ({"COGRAIL_LIVE": "1"}, [], "ANTHROPIC_API_KEY is not set")],
 )  # fmt: skip
 def test_a_live_level_runs_only_when_allowed_and_full_only_through_the_batch_path(

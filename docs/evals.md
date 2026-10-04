@@ -75,8 +75,8 @@ The levels run from free to dear (ADR 0013).
   tiers. It is for releases only, and only through the provider's batch path. That path does not
   exist yet (issue #55), so until it does, `full` refuses to run.
 
-Without `COGRAIL_LIVE=1`, asking for `smoke` or `full` is refused. Spending money takes two
-deliberate settings: the variable and the level.
+Without `COGRAIL_LIVE=1`, asking for `smoke` is refused, so a run on a real model never starts
+by accident. `full` is refused either way until the batch path exists.
 
 ## The Report
 

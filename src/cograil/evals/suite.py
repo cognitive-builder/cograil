@@ -84,18 +84,18 @@ class CaseResult(EvalModel):
 def choose_level(asked: Level | None, live: bool) -> Level:
     """The level to run: fake unless COGRAIL_LIVE=1 (`live`); live, smoke unless asked.
 
-    Raises EvalError for a live level without `live`, and for the full level until the batch
-    path exists: the full live suite runs only through it.
+    Raises EvalError for the full level until the batch path exists (the full live suite runs
+    only through it), and for a live level without `live`.
     """
-    if not live:
-        if asked in (None, Level.fake):
-            return Level.fake
-        raise EvalError(f"--level {asked} calls a real model; set COGRAIL_LIVE=1 to allow it")
     if asked is Level.full:
         raise EvalError(
             "the full live suite runs only through the provider's batch path, which is not "
             f"built yet (issue #{BATCH_ISSUE}); use --level smoke"
         )
+    if not live:
+        if asked in (None, Level.fake):
+            return Level.fake
+        raise EvalError(f"--level {asked} calls a real model; set COGRAIL_LIVE=1 to allow it")
     return asked or Level.smoke
 
 
