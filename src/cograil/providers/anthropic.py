@@ -60,7 +60,7 @@ def _messages(context: Sequence[Message]) -> list[dict[str, str]]:
     return messages
 
 
-def _wire_names(tools: Sequence[Tool]) -> dict[str, str]:
+def wire_names(tools: Sequence[Tool]) -> dict[str, str]:
     """Map each wire name back to its tool; two tools sharing a wire name would misroute calls."""
     names: dict[str, str] = {STEP_COMPLETE: STEP_COMPLETE}
     for tool in tools:
@@ -117,7 +117,7 @@ class AnthropicProvider:
         return cls(resolve_model(protocol, colleague), client=client)
 
     async def plan(self, step: Step, context: Sequence[Message], tools: Sequence[Tool]) -> Plan:
-        names = _wire_names(tools)
+        names = wire_names(tools)
         kwargs: dict[str, Any] = {
             "model": self.model,
             "max_tokens": self.max_tokens,

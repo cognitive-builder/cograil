@@ -250,6 +250,7 @@ class Workspace(Entity):
     connections: list[Connection] = Field(default_factory=list)
     audiences: list[Audience] = Field(default_factory=list)
     knowledge: list[KnowledgeSource] = Field(default_factory=list)
+    principals: list[Principal] = Field(default_factory=list)
     harness: Harness = Field(default_factory=Harness)
 
 

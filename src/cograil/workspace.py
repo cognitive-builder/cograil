@@ -1,13 +1,17 @@
 """Load a workspace folder into a Workspace (ADR 0004).
 
 Layout: tools.yaml, colleagues/*.yaml and protocols/*.md are required;
-connections.yaml, audiences.yaml and knowledge.yaml are optional and default to empty;
-harness.yaml is optional and defaults to the Harness defaults (ADR 0012).
-Every failure is a WorkspaceError whose message names the offending file.
+connections.yaml, audiences.yaml, knowledge.yaml and principals.yaml are optional and default
+to empty; harness.yaml is optional and defaults to the Harness defaults (ADR 0012).
+Every failure is a WorkspaceError whose message names the offending file. `check_workspace`
+keeps going after a failure and reports every problem it can find; `load_workspace` raises one
+WorkspaceError carrying all of them, one per line.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +24,7 @@ from cograil.domain import (
     Connection,
     Harness,
     KnowledgeSource,
+    Principal,
     Protocol,
     Tool,
     Workspace,
@@ -28,22 +33,58 @@ from cograil.errors import ProtocolParseError, WorkspaceError
 from cograil.parser import parse_protocol
 
 
+@dataclass(frozen=True)
+class WorkspaceReport:
+    """What a check found. `workspace` holds whatever loaded; it is whole only if no problems."""
+
+    workspace: Workspace
+    problems: list[str]
+
+
+class _Problems:
+    def __init__(self) -> None:
+        self.found: list[str] = []
+
+    def attempt[**P, T](self, load: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T | None:
+        """The result of load, or None after recording the WorkspaceError it raised."""
+        try:
+            return load(*args, **kwargs)
+        except WorkspaceError as exc:
+            self.found.append(str(exc))
+            return None
+
+
 def load_workspace(path: Path | str) -> Workspace:
     """Load and validate the workspace at path; raise WorkspaceError on any problem."""
+    report = check_workspace(path)
+    if report.problems:
+        raise WorkspaceError("\n".join(report.problems))
+    return report.workspace
+
+
+def check_workspace(path: Path | str) -> WorkspaceReport:
+    """Load the workspace at path, collecting every problem instead of stopping at the first."""
     root = Path(path)
+    problems = _Problems()
     if not root.is_dir():
-        raise WorkspaceError(f"{root}: workspace folder not found")
-    tools = _load_list(root / "tools.yaml", "tools", Tool, required=True)
-    return Workspace(
+        problems.found.append(f"{root}: workspace folder not found")
+        return WorkspaceReport(Workspace(name=root.resolve().name, colleagues=[], protocols=[],
+                                         tools=[]), problems.found)  # fmt: skip
+    tools = _load_list(problems, root / "tools.yaml", "tools", Tool, required=True)
+    # Without a readable tools.yaml the @refs cannot be checked, but the Steps still parse.
+    known = {tool.name for tool in tools} if tools else None
+    workspace = Workspace(
         name=root.resolve().name,
-        colleagues=_load_colleagues(root / "colleagues"),
-        protocols=_load_protocols(root / "protocols", {tool.name for tool in tools}),
+        colleagues=_load_colleagues(problems, root / "colleagues"),
+        protocols=_load_protocols(problems, root / "protocols", known),
         tools=tools,
-        connections=_load_list(root / "connections.yaml", "connections", Connection),
-        audiences=_load_list(root / "audiences.yaml", "audiences", Audience),
-        knowledge=_load_list(root / "knowledge.yaml", "knowledge", KnowledgeSource),
-        harness=_load_harness(root / "harness.yaml"),
+        connections=_load_list(problems, root / "connections.yaml", "connections", Connection),
+        audiences=_load_list(problems, root / "audiences.yaml", "audiences", Audience),
+        knowledge=_load_list(problems, root / "knowledge.yaml", "knowledge", KnowledgeSource),
+        principals=_load_list(problems, root / "principals.yaml", "principals", Principal),
+        harness=problems.attempt(_load_harness, root / "harness.yaml") or Harness(),
     )
+    return WorkspaceReport(workspace, problems.found)
 
 
 def _load_harness(file: Path) -> Harness:
@@ -67,17 +108,23 @@ def _build[M: BaseModel](model: type[M], data: object, file: Path) -> M:
 
 
 def _load_list[M: BaseModel](
-    file: Path, key: str, model: type[M], required: bool = False
+    problems: _Problems, file: Path, key: str, model: type[M], required: bool = False
 ) -> list[M]:
     if not file.is_file():
         if required:
-            raise WorkspaceError(f"{file}: required file is missing")
+            problems.found.append(f"{file}: required file is missing")
         return []
+    items = problems.attempt(_list_items, file, key)
+    built = (problems.attempt(_build, model, item, file) for item in items or [])
+    return [item for item in built if item is not None]
+
+
+def _list_items(file: Path, key: str) -> list[Any]:
     data = _read_yaml(file)
     items = data.get(key) if isinstance(data, dict) else None
     if not isinstance(items, list):
         raise WorkspaceError(f"{file}: expected a top-level '{key}' list")
-    return [_build(model, item, file) for item in items]
+    return items
 
 
 def _files(folder: Path, pattern: str) -> list[Path]:
@@ -89,15 +136,26 @@ def _files(folder: Path, pattern: str) -> list[Path]:
     return files
 
 
-def _load_colleagues(folder: Path) -> list[Colleague]:
-    return [_build(Colleague, _read_yaml(f), f) for f in _files(folder, "*.yaml")]
+def _load_colleagues(problems: _Problems, folder: Path) -> list[Colleague]:
+    files = problems.attempt(_files, folder, "*.yaml") or []
+    loaded = (problems.attempt(_colleague, file) for file in files)
+    return [colleague for colleague in loaded if colleague is not None]
 
 
-def _load_protocols(folder: Path, tool_names: set[str]) -> list[Protocol]:
-    protocols = []
-    for file in _files(folder, "*.md"):
-        try:
-            protocols.append(parse_protocol(file.read_text(), known_tools=tool_names))
-        except (OSError, UnicodeDecodeError, ProtocolParseError) as exc:
-            raise WorkspaceError(f"{file}: {exc}") from exc
-    return protocols
+def _colleague(file: Path) -> Colleague:
+    return _build(Colleague, _read_yaml(file), file)
+
+
+def _load_protocols(
+    problems: _Problems, folder: Path, tool_names: set[str] | None
+) -> list[Protocol]:
+    files = problems.attempt(_files, folder, "*.md") or []
+    loaded = (problems.attempt(_protocol, file, tool_names) for file in files)
+    return [protocol for protocol in loaded if protocol is not None]
+
+
+def _protocol(file: Path, tool_names: set[str] | None) -> Protocol:
+    try:
+        return parse_protocol(file.read_text(), known_tools=tool_names)
+    except (OSError, UnicodeDecodeError, ProtocolParseError) as exc:
+        raise WorkspaceError(f"{file}: {exc}") from exc

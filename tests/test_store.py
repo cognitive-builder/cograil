@@ -1,16 +1,12 @@
 """RunStore contract, run against InMemoryRunStore and, when DATABASE_URL is set, Postgres."""
 
 import asyncio
-import os
 import uuid
-from collections.abc import AsyncIterator, Iterator
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -27,19 +23,6 @@ from cograil.store import InMemoryRunStore, PostgresRunStore, RunStore
 
 ROOT = Path(__file__).resolve().parents[1]
 T0 = datetime(2026, 10, 4, 9, 0, tzinfo=UTC)
-
-
-@pytest.fixture(scope="module")
-def migrated_url() -> Iterator[str]:
-    url = os.environ.get("DATABASE_URL")
-    if not url:
-        pytest.skip("DATABASE_URL is not set")
-    config = Config(str(ROOT / "alembic.ini"))
-    config.set_main_option("script_location", str(ROOT / "migrations"))
-    # env.py calls asyncio.run, which needs a thread free of a running event loop.
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        pool.submit(command.upgrade, config, "head").result()
-    yield url
 
 
 @pytest.fixture

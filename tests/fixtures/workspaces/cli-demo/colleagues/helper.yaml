@@ -1,0 +1,5 @@
+name: helper
+role: Demo Assistant
+escalation_contact: manager@example.com
+protocols: [record_item]
+audiences: [staff]
