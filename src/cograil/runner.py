@@ -261,12 +261,20 @@ class Runner:
             if run.status is not RunStatus.running:
                 return run
             progress.planned = []
-            progress.calls.extend(done)
+            progress.calls.extend(await self._recorded(done))
             run = self._remember(run, step, progress, done)
             if progress.completing is not None:
                 if not any("error" in call for call in done):
                     return await self._complete(run, step, progress.completing.output, progress)
                 progress.completing = None  # it was said before a call failed: another turn
+
+    async def _recorded(self, done: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """`done` as it is recorded in the Step's `tool_calls`: error text redacted (#78).
+
+        The model's own messages are built from `done` as it is, so it still sees the raw error.
+        """
+        redact = self._registry.redactor.redact
+        return [{**c, "error": await redact(c["error"])} if "error" in c else c for c in done]
 
     def _remember(
         self, run: Run, step: Step, progress: StepProgress, done: list[dict[str, Any]]

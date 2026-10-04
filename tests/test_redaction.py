@@ -13,7 +13,13 @@ from cograil.domain import Colleague, Tool, Workspace
 from cograil.errors import ToolExecutionError
 from cograil.parser import parse_protocol
 from cograil.providers import FakeProvider, PlannedToolCall, scripted
-from cograil.redaction import REDACT_TOOL, Redactor, redact_patterns, redaction_model
+from cograil.redaction import (
+    REDACT_TOOL,
+    Redactor,
+    redact_patterns,
+    redaction_model,
+    redactor,
+)
 from cograil.registry import CallContext, ToolRegistry
 from cograil.runner import Runner
 from cograil.store import InMemoryRunStore
@@ -171,3 +177,40 @@ async def test_a_run_that_fails_closed_audits_the_redacted_message(store: InMemo
     [failed] = [e for e in await store.list_audit_events("r1") if e.kind == "run.failed"]
     assert PII not in failed.detail["message"]
     assert "[REDACTED:email]" in failed.detail["message"]
+
+
+async def test_the_step_record_holds_the_redacted_error_while_the_model_saw_the_raw_one(
+    store: InMemoryRunStore,
+) -> None:
+    failures = [RuntimeError(RAW)]
+
+    async def flaky(args: dict[str, Any]) -> str:
+        if failures:
+            raise failures.pop()
+        return "25 days"
+
+    registry = ToolRegistry(store)
+    registry.register(TOOL, flaky)
+    provider = FakeProvider([LOOK_UP, LOOK_UP, scripted("done", done=True)])
+    run = await Runner(provider, registry, store, HARPER).run("r1", parse_protocol(PROTOCOL))
+    assert run.status == "completed"
+    assert PII in provider.calls[1].context[-1].content
+    [failed, ok] = run.context["steps"]["1"]["tool_calls"]
+    assert PII not in failed["error"] and "[REDACTED:email]" in failed["error"]
+    assert ok["result"] == "25 days"
+
+
+@pytest.mark.parametrize(
+    ("live", "key", "small_tier"),
+    [(True, "k", True), (False, "k", False), (True, None, False)],
+    ids=["live-with-key", "scripted", "no-key"],
+)
+def test_the_small_tier_backs_the_patterns_only_for_a_live_run_with_a_key(
+    monkeypatch: pytest.MonkeyPatch, live: bool, key: str | None, small_tier: bool
+) -> None:
+    if key is None:
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", key)
+    ws = Workspace(name="w", colleagues=[], protocols=[], tools=[])
+    assert (redactor(ws, live)._provider is not None) is small_tier
