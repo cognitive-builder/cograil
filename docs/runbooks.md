@@ -165,9 +165,9 @@ in. Like `usd_budget_per_run`, a cap needs a `pricing` entry for every tier mode
   It escalates with a `run.escalated` AuditEvent whose reason is `monthly_cap_reached`, which names
   the Colleague's `escalation_contact` and the spend. A run already under way is never cut off by
   the cap; the per-run bounds above still apply to it.
-- When a run ends and the month's spend is at or over `alert_at` of the cap, one `budget.alerted`
-  AuditEvent names the `escalation_contact`. The store counts the month's alerts, so later runs
-  send no second one.
+- When an execution ends — the run completed, was escalated, or paused on an Approval — and the
+  month's spend is at or over `alert_at` of the cap, one `budget.alerted` AuditEvent names the
+  `escalation_contact`. The store counts the month's alerts, so later runs send no second one.
 
 ## Step directives
 

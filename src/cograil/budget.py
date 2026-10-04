@@ -6,10 +6,11 @@ month (UTC), so one client cannot spend another's budget. Spend is the sum of th
 
 A Run that would start with the cap already spent is refused: the Runner escalates it with
 reason `monthly_cap_reached` (`Gates.escalate`), which audits it with the Colleague's
-escalation_contact. When a Run's execution ends with the month's spend at or over
-`budget.alert_at` of the cap, one `budget.alerted` AuditEvent naming the contact is written;
-the store counts the month's alerts, so later Runs find it and stay quiet. Delivering either
-message is the channels' job, as for any escalation (gates.py).
+escalation_contact. When a Run's execution ends — it completed, was escalated, or paused on an
+Approval — with the month's spend at or over `budget.alert_at` of the cap, one `budget.alerted`
+AuditEvent naming the contact is written; the store counts the month's alerts, so later Runs
+find it and stay quiet. Delivering either message is the channels' job, as for any escalation
+(gates.py).
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from cograil.domain import AuditEvent, BudgetSettings, Colleague, Run
+from cograil.domain import BUDGET_ALERT_KIND, AuditEvent, BudgetSettings, Colleague, Run
 from cograil.gates import Clock
 from cograil.observability import log_event
 from cograil.store import RunStore
@@ -54,7 +55,12 @@ class Budget:
         return None
 
     async def alert_if_crossed(self, run: Run) -> None:
-        """Write the month's one `budget.alerted` AuditEvent once spend reaches alert_at."""
+        """Write the month's one `budget.alerted` AuditEvent once spend reaches alert_at.
+
+        The Runner calls this at the end of every execution, so also when the Run paused on an
+        Approval or was escalated: the alert may be written while the Run is still under way,
+        and an earlier alert is not a bug."""
+
         cap = self._settings.monthly_usd
         if cap is None:
             return
@@ -76,11 +82,11 @@ class Budget:
             run_id=run.id,
             at=self._clock(),
             principal_id=run.principal_id,
-            kind="budget.alerted",
+            kind=BUDGET_ALERT_KIND,
             detail=detail,
         )
         await self._store.append_audit_event(event)
-        log_event("budget.alerted", logging.WARNING, run_id=run.id, workspace=run.workspace,
+        log_event(BUDGET_ALERT_KIND, logging.WARNING, run_id=run.id, workspace=run.workspace,
                   contact=contact, spend_usd=usage.spend_usd)  # fmt: skip
 
     async def _spend(self, workspace: str) -> float:

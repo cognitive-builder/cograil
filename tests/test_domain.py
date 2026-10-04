@@ -1,12 +1,13 @@
 """Domain model tests: one per acceptance criterion of issue #5."""
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from pydantic import ValidationError
 
 from cograil.domain import (
+    BUDGET_ALERT_KIND,
     Approval,
     Audience,
     AuditEvent,
@@ -147,6 +148,10 @@ def test_run_non_dict_principal_or_trigger_is_a_validation_error(key: str) -> No
 
 def test_trigger_kind_is_defined_once() -> None:
     assert Trigger.model_fields["kind"].annotation is Run.model_fields["trigger_kind"].annotation
+
+
+def test_budget_alert_kind_matches_the_kind_list() -> None:
+    assert BUDGET_ALERT_KIND in get_args(AuditEvent.model_fields["kind"].annotation)
 
 
 ENDPOINT = {"method": "GET", "path": "/people"}

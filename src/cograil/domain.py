@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -440,6 +440,12 @@ class Approval(Entity):
     decided_at: datetime | None = None
     expires_at: datetime | None = None
     spent_at: datetime | None = None
+
+
+BUDGET_ALERT_KIND: Final = "budget.alerted"
+# The one constant for the writer (budget.py) and both stores' counters. The kind list below
+# spells the string again because mypy rejects Literal[BUDGET_ALERT_KIND]; pydantic validates
+# kind against that list at runtime, so the constant and the list cannot drift apart.
 
 
 class AuditEvent(Entity):
