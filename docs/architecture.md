@@ -106,12 +106,14 @@ compares the claim and status the caller read and sets a fresh claim, and every 
 the Run is conditional on that claim. Of two executions started from the same read, exactly
 one goes on and the other raises `RunClaimLost`. A Run left `running` by a killed process can
 still be run again; its new claim takes the Run over, and an execution whose claim was taken
-over stops at its next save without failing the Run. The claim fences Run saves only: until
-that next save, the execution that was taken over may still make provider and tool calls, as
-a process killed mid-Step would have. A gated write still needs an Approval, and each
-Approval lets one call through. The claim does not fence the Approval itself, though:
-until that save, the taken-over execution can still spend an Approval it already holds,
-and `Gates.pause` can still leave a pending Approval behind — exactly the #143 case.
+over stops at its next save without failing the Run. The claim fences Run saves and
+Approvals: until that next save, the execution that was taken over may still make provider
+calls and ungated tool calls, as a process killed mid-Step would have, but it can neither
+spend an Approval nor create one. `RunStore.spend_approval` spends only while the stored
+claim is still the caller's, and no claim can take the Run over until the spend commits;
+`Gates.pause` saves the paused Run and its pending Approval together in one fenced
+transaction, so a taken-over execution leaves no Approval behind. Each Approval lets one
+gated call through.
 Approved, the Run continues exactly at the paused Step and runs the plan that was waiting.
 Declined or past its expiry, it escalates to the Colleague's escalation contact. A Protocol
 whose version has changed since the Run started is refused.

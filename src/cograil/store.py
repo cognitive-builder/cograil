@@ -332,6 +332,8 @@ class PostgresRunStore:
         statement = (
             update(approvals).where(spendable).values(spent_at=spent_at).returning(approvals)
         )
+        # Run row, then Approval row: decide_approval locks the other way round, but only
+        # on a pending row, never the approved one a spend locks, so the two cannot deadlock.
         async with self._engine.begin() as conn:
             await self._hold_claim(conn, run)
             row = (await conn.execute(statement)).mappings().first()
