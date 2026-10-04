@@ -1,0 +1,95 @@
+# The Web API
+
+The web service lets a signed-in person chat with a Colleague, follow a Run, and decide an Approval. It is a FastAPI app. The chat answers as server-sent events (SSE), a one-way stream over plain HTTP. Sign-in is described in `docs/auth.md`.
+
+## Starting the Service
+
+```bash
+uvicorn --factory cograil.api.wiring:app_from_env
+```
+
+Settings come only from environment variables.
+
+| Variable | Meaning |
+| --- | --- |
+| `COGRAIL_WORKSPACE` | The Workspace folder. The default is the current directory. |
+| `DATABASE_URL` | Required. The Postgres store, as a SQLAlchemy URL (`postgresql+asyncpg://...`). |
+| `ANTHROPIC_API_KEY` | Read by the Anthropic provider. |
+| `COGRAIL_AUTH` | Required. `dev` or `oidc`, with the settings of that mode. See `docs/auth.md`. |
+
+## Endpoints
+
+"Signed in" means any Principal with a valid session. Every endpoint needs one, and answers 401 without it, except `/health`, `/auth/*`, `/docs` and `/openapi.json`.
+
+| Endpoint | What it does | Who may call it |
+| --- | --- | --- |
+| `GET /health` | Says the service is up. | Anyone. |
+| `/auth/*` | Sign-in routes. | Anyone (see `docs/auth.md`). |
+| `POST /chat` | Routes a message to a Protocol and streams the Run as SSE. | Signed in. |
+| `GET /runs` | Lists your Runs, newest first. `limit` is 1 to 100, default 20. | Signed in. |
+| `GET /runs/{id}` | One Run with its Steps, tool calls and Gates. | The Principal who started it. |
+| `GET /approvals/{token}` | Shows the call a Gate holds, and who asked. | The Approval's approver. |
+| `POST /approvals/{token}` | Approves or declines. Body: `{"decision": "approved"}` or `"declined"`. | The Approval's approver. |
+| `GET /audit` | Lists AuditEvents, oldest first. | Signed in, for your own Runs. |
+| `/docs`, `/openapi.json` | Interactive docs and the OpenAPI document. | Anyone. |
+
+## The Chat Stream
+
+`POST /chat` takes `{"message": "..."}` (1 to 8000 characters) and answers with `text/event-stream`. Each event has a name and a JSON `data` line.
+
+| Event | Meaning |
+| --- | --- |
+| `routed` | The Colleague and Protocol chosen, with a confidence. Both are null when none fits. |
+| `refusal` | Nothing fits that you may start. `text` says what you can ask. The stream ends. |
+| `run` | The Run exists. `run_id` names it for `/runs/{id}`. |
+| `progress` | One `line` for each AuditEvent and each finished Step, as it is written. |
+| `done` | The Run stopped: completed, awaiting an Approval, or escalated. The body lists any pending Approvals. The stream ends. |
+| `error` | The request failed. `type` is the error class and `message` says why. The stream ends. |
+
+```text
+event: routed
+data: {"colleague": "helper", "protocol": "record_item", "confidence": 0.93}
+
+event: run
+data: {"run_id": "3f9c1e0a5b7d4c2e9a1b6d8f0c2e4a61"}
+
+event: progress
+data: {"line": "step 1 complete Look up"}
+
+event: done
+data: {"run": {"id": "3f9c...", "status": "awaiting_approval", ...}, "awaiting": [{"token": "...", "approver": "manager@example.com", "tool": "demo.record", "step": 2}]}
+```
+
+## Rules
+
+- A Run is visible only to its Principal. Another person's Run answers 404, the same as one that does not exist.
+- Only the Approval's approver can view or decide it. Anyone else gets 403.
+- The decider is always the signed-in Principal. The POST body carries only `decision`. Any other field gives 422, so a client cannot name someone else.
+- The Runner refuses a decider who is not the approver, or who started the Run. It writes a `gate.refused` AuditEvent naming whoever tried.
+- A POST to an Approval runs the rest of the Run before it answers. The answer is the Run's state when it next stops.
+- Closing the connection does not stop a Run. The stream ends, and the Run carries on to a stop.
+- When a message matches, the classification is an AuditEvent `orchestrator.classified` on the new Run. A refusal has no Run, so it is only logged.
+
+## Reading the Audit Log
+
+`GET /audit` returns the AuditEvents of Runs you started, and nothing else. There is no administrator or auditor view yet.
+
+| Query | Meaning |
+| --- | --- |
+| `limit` | Page size, 1 to 200. The default is 50. |
+| `offset` | How many events to skip. The default is 0. |
+| `run_id` | Only this Run's events. |
+| `principal` | Only events this Principal acted in. On a refused decision, that is the person who tried to decide. |
+
+The answer has `items`, `limit`, `offset` and `next_offset`. Pass `next_offset` as `offset` to get the next page. It is null on the last page.
+
+## Status Codes
+
+| Code | When |
+| --- | --- |
+| 401 | Nobody is signed in. |
+| 403 | You are not the approver of this Approval, or the Runner refused your decision. |
+| 404 | No such Run or Approval, or the Run is not yours. |
+| 409 | The Approval is already decided, the Run is not paused, or the Workspace changed since the Run began. |
+| 422 | The body or a query value is invalid. An extra field in a body counts. |
+| 500 | The Run failed while resuming. The body names the error class. |
