@@ -90,6 +90,16 @@ async def test_submit_leave_refuses_more_than_the_remaining_balance(
         assert (await registry.invoke("hris.get_balance", {"employee": "bob"}, ctx))["sick"] == 10
 
 
+async def test_submit_leave_refuses_an_end_before_the_start(
+    store: InMemoryRunStore, ctx: CallContext
+) -> None:
+    async with await build_registry(hris_workspace(), store, EXAMPLE) as registry:
+        args = request("bob", "sick", "req-4") | {"start": "2026-11-05", "end": "2026-11-04"}
+        with pytest.raises(ToolExecutionError, match=r"end 2026-11-04 is before start 2026-11-05"):
+            await registry.invoke("hris.submit_leave", args, ctx)
+        assert (await registry.invoke("hris.get_balance", {"employee": "bob"}, ctx))["sick"] == 10
+
+
 async def test_untracked_leave_type_submits_without_touching_balances(
     store: InMemoryRunStore, ctx: CallContext
 ) -> None:
