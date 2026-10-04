@@ -1,6 +1,6 @@
 # ADR 0004: Workspace Packs Are Data; The Runtime Is Code
 
-Status: Proposed · Date: 2026-10-03
+Status: Accepted 2026-10-04 · Date: 2026-10-03
 
 ## Context
 

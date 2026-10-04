@@ -1,6 +1,6 @@
 # ADR 0002: Gates Are Tool Metadata Enforced By The Runner
 
-Status: Proposed · Date: 2026-10-03
+Status: Accepted 2026-10-04 · Date: 2026-10-03
 
 ## Context
 
