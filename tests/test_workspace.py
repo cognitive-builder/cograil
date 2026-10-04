@@ -78,3 +78,11 @@ def test_validate_exits_non_zero_on_broken_workspace() -> None:
     result = runner.invoke(app, ["validate", str(BROKEN)])
     assert result.exit_code == 1
     assert "@hris.submit_leave (step 2)" in result.output
+
+
+def test_undecodable_file_is_a_workspace_error(tmp_path: Path) -> None:
+    copy = tmp_path / "ws"
+    shutil.copytree(EXAMPLE, copy)
+    (copy / "tools.yaml").write_bytes(b"\xff\xfe\x00")
+    with pytest.raises(WorkspaceError, match=r"tools\.yaml"):
+        load_workspace(copy)

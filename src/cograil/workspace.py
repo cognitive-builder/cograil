@@ -46,7 +46,7 @@ def load_workspace(path: Path | str) -> Workspace:
 def _read_yaml(file: Path) -> Any:
     try:
         return yaml.safe_load(file.read_text())
-    except (OSError, yaml.YAMLError) as exc:
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
         raise WorkspaceError(f"{file}: cannot read YAML: {exc}") from exc
 
 
@@ -89,6 +89,6 @@ def _load_protocols(folder: Path, tool_names: set[str]) -> list[Protocol]:
     for file in _files(folder, "*.md"):
         try:
             protocols.append(parse_protocol(file.read_text(), known_tools=tool_names))
-        except (OSError, ProtocolParseError) as exc:
+        except (OSError, UnicodeDecodeError, ProtocolParseError) as exc:
             raise WorkspaceError(f"{file}: {exc}") from exc
     return protocols
