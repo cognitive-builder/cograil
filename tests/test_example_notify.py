@@ -34,9 +34,9 @@ async def test_build_registry_succeeds_over_the_full_example_workspace(
     store: InMemoryRunStore,
 ) -> None:
     workspace = load_workspace(EXAMPLE)
-    python_tools = {tool.name for tool in workspace.tools if tool.kind == "python"}
+    built = {tool.name for tool in workspace.tools if tool.kind in ("python", "decision")}
     async with await build_registry(workspace, store, EXAMPLE) as registry:
-        assert {tool.name for tool in registry.tools} == python_tools
+        assert {tool.name for tool in registry.tools} == built
 
 
 def test_send_is_declared_as_an_ungated_write_with_both_args() -> None:

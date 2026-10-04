@@ -7,8 +7,11 @@ the RunStore, whether the call succeeded or not. A scope=write Tool also gets a
 Whitelists and gates are the runner's job; the registry only answers "what is this Tool
 and what did it do".
 
-`build_registry` builds the python, rest and mcp kinds of a Workspace. The knowledge,
-directory and decision kinds register themselves with `register` from their own modules.
+A `decision` Tool also gets a `decision.evaluated` AuditEvent naming the table, its version and
+the rules that fired (ADR 0009); its ToolCall result is the outcome as plain data.
+
+`build_registry` builds the python, rest, mcp and decision kinds of a Workspace. The knowledge
+and directory kinds register themselves with `register` from their own modules.
 """
 
 from __future__ import annotations
@@ -28,9 +31,11 @@ from jsonschema import Draft202012Validator, SchemaError
 from jsonschema.protocols import Validator
 from jsonschema.validators import validator_for
 
+from cograil.decisions import DecisionOutcome, DecisionTable, table_for, table_name
 from cograil.domain import AuditEvent, Tool, ToolCall, Workspace
 from cograil.errors import (
     CograilError,
+    DecisionError,
     ToolArgumentError,
     ToolConfigError,
     ToolExecutionError,
@@ -104,6 +109,10 @@ class ToolRegistry:
             if entry.tool.scope == "write":
                 await self._audit(ctx, "tool.started", {"tool": name, "step": ctx.step})
             result = await entry.invoke(copy.deepcopy(dict(args)))
+            if isinstance(result, DecisionOutcome):
+                detail = {"tool": name, "step": ctx.step, **result.audit_detail()}
+                await self._audit(ctx, "decision.evaluated", detail)
+                result = result.as_result()
         except CograilError as exc:
             await self._record(ctx, call, error=str(exc))
             raise
@@ -124,7 +133,10 @@ class ToolRegistry:
         log_event("tool.called", tool=call.tool, step=ctx.step, ok=error is None)
 
     async def _audit(
-        self, ctx: CallContext, kind: Literal["tool.started", "tool.called"], detail: dict[str, Any]
+        self,
+        ctx: CallContext,
+        kind: Literal["tool.started", "tool.called", "decision.evaluated"],
+        detail: dict[str, Any],
     ) -> None:
         await self._store.append_audit_event(
             AuditEvent(
@@ -161,13 +173,15 @@ async def build_registry(
     http: httpx.AsyncClient | None = None,
     mcp_client: McpClientFactory = default_mcp_client,
 ) -> ToolRegistry:
-    """Build the python, rest and mcp Tools of a workspace loaded from root."""
+    """Build the python, rest, mcp and decision Tools of a workspace loaded from root."""
     registry = ToolRegistry(store)
     try:
         resolver = PythonResolver(root)
         for tool in workspace.tools:
             if tool.kind == "python":
                 registry.register(tool, resolver.resolve(tool))
+            elif tool.kind == "decision":
+                registry.register(tool, _decision(tool, workspace))
         _add_rest(registry, workspace, http)
         for tool in workspace.tools:
             if tool.kind == "mcp" and tool.mcp is not None:
@@ -176,6 +190,13 @@ async def build_registry(
         await registry.aclose()
         raise
     return registry
+
+
+def _decision(tool: Tool, workspace: Workspace) -> DecisionTable:
+    try:
+        return table_for(workspace.decisions, table_name(tool))
+    except DecisionError as exc:
+        raise ToolConfigError(f"{tool.name}: {exc}") from exc
 
 
 def _add_rest(registry: ToolRegistry, workspace: Workspace, http: httpx.AsyncClient | None) -> None:

@@ -1,7 +1,7 @@
 """Domain model: the source of truth for every name used in Cograil.
 
 Vocabulary: Workspace, Colleague, Protocol, Step, Tool, Connection, Audience,
-Trigger, Run, Gate, Approval, AuditEvent, KnowledgeSource, Chunk, Harness, Tier.
+Trigger, Run, Gate, Approval, AuditEvent, KnowledgeSource, Chunk, Decision, Harness, Tier.
 The shapes below are the contract; Product Plan section 3 holds the ERD.
 """
 
@@ -173,6 +173,29 @@ class Chunk(Entity):
     acl_groups: list[str]
 
 
+class DecisionField(Entity):
+    type: Literal["string", "integer", "number", "boolean"]
+
+
+class DecisionRule(Entity):
+    """`when` maps inputs to conditions (omitted inputs match anything); `then` sets outputs."""
+
+    id: str
+    when: dict[str, Any] = Field(default_factory=dict)
+    then: dict[str, Any]
+
+
+class Decision(Entity):
+    """A decision table, decisions/<name>.yaml (ADR 0009); decisions.py checks and evaluates it."""
+
+    name: str
+    version: int = Field(ge=1)
+    hit_policy: Literal["first", "collect"] = "first"
+    inputs: dict[str, DecisionField]
+    outputs: dict[str, DecisionField]
+    rules: list[DecisionRule] = Field(min_length=1)
+
+
 Tier = Literal["small", "standard", "strong"]
 
 
@@ -250,6 +273,7 @@ class Workspace(Entity):
     connections: list[Connection] = Field(default_factory=list)
     audiences: list[Audience] = Field(default_factory=list)
     knowledge: list[KnowledgeSource] = Field(default_factory=list)
+    decisions: list[Decision] = Field(default_factory=list)
     principals: list[Principal] = Field(default_factory=list)
     harness: Harness = Field(default_factory=Harness)
 

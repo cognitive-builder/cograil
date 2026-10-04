@@ -108,8 +108,9 @@ edits, and a database trigger rejects UPDATE, DELETE and TRUNCATE.
 
 - The web and Slack channels, and the API in front of them (issues #17, #18, #27). The CLI is the only
   entry point, and `--as` is not authenticated.
-- The `knowledge`, `directory` and `decision` Tool kinds, and with them retrieval's ACL
-  pre-filter and decision tables. `build_registry` builds `python`, `rest` and `mcp`.
+- The `knowledge` and `directory` Tool kinds, and with them retrieval's ACL pre-filter.
+  `build_registry` builds `python`, `rest`, `mcp` and `decision`.
 - OpenTelemetry spans. `observability.py` writes structured JSON log lines today.
-- Approver routing: the approver of a gate is the Colleague's escalation contact until
-  decision tables and a directory lookup exist to route it.
+- Approver routing: decision tables exist now, and `approval_routing` returns an approver
+  tier. The approver of a gate is still the Colleague's escalation contact until a directory
+  lookup maps a tier to a principal.

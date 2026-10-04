@@ -2,7 +2,7 @@
 
 The tool registry turns a Tool name into something the runner can call. Before a Tool runs, the registry checks the arguments against the Tool's `args_schema`. This is a JSON Schema. The draft comes from its `$schema` field and defaults to 2020-12. Formats such as `date` are checked. A failed check raises `ToolArgumentError` and the Tool does not run. Every call, successful or not, records a `ToolCall` and a `tool.called` AuditEvent through the RunStore. A `scope: write` Tool also records a `tool.started` AuditEvent after the check and before it runs, so a write that crashes partway still leaves a record. It names the Tool and the step but not the arguments; those stay in the `ToolCall`.
 
-The registry does not decide who may call a Tool. Whitelists and gates stay with the runner. This page covers the `python`, `rest` and `mcp` kinds. The `knowledge`, `directory` and `decision` kinds register from their own modules.
+The registry does not decide who may call a Tool. Whitelists and gates stay with the runner. This page covers the `python`, `rest`, `mcp` and `decision` kinds. The `knowledge` and `directory` kinds register from their own modules.
 
 ## Kind: python
 
@@ -119,3 +119,104 @@ tools:
 A `stdio` server needs `command`, which the registry starts as a local process, so treat it as trusted configuration. An `http` server needs `url` and uses streamable HTTP. This kind needs the `mcp` extra: `pip install cograil[mcp]`.
 
 The server's output is returned as data, never as instructions. Because Protocol `@` references can only name Tools whose names are word characters and dots, a protocol can reference an MCP Tool only when both the entry name and the server's tool name use those characters.
+
+## Kind: decision
+
+A `decision` Tool evaluates a decision table. The model supplies the inputs. The table decides. The Tool name is `<anything>.<table>`. The part after the last dot names the table in `decisions/<table>.yaml`. The file name (without `.yaml`) must equal the table's `name`.
+
+```yaml
+# tools.yaml
+tools:
+  - name: decide.approval_routing
+    kind: decision
+    scope: read
+    description: Approval tier from duration, leave type and role.
+    args_schema:
+      type: object
+      properties: {duration_days: {type: integer}, leave_type: {type: string}, requester_role: {type: string}}
+      required: [duration_days, leave_type, requester_role]
+```
+
+```yaml
+# decisions/approval_routing.yaml
+name: approval_routing
+version: 1
+hit_policy: first
+inputs:
+  duration_days: {type: integer}
+  leave_type: {type: string}
+  requester_role: {type: string}
+outputs:
+  approver_tier: {type: string}
+  requires_hr: {type: boolean}
+rules:
+  - id: r1
+    when: {leave_type: unpaid}
+    then: {approver_tier: hr_ops, requires_hr: true}
+  - id: r2
+    when: {duration_days: ">10"}
+    then: {approver_tier: skip_level, requires_hr: true}
+  - id: r3
+    when: {requester_role: manager}
+    then: {approver_tier: director, requires_hr: false}
+  - id: default
+    when: {}
+    then: {approver_tier: manager, requires_hr: false}
+```
+
+### The Table Format
+
+- `name` and `version` identify the table. Rule ids must be unique.
+- `hit_policy` is `first` or `collect`. Under `first`, the first rule in table order whose conditions all hold decides. Under `collect`, every matching rule is returned, in table order.
+- `inputs` and `outputs` map a name to a type. The types are `string`, `integer`, `number` and `boolean`.
+- Each rule has an `id`, a `when` and a `then`.
+
+### Conditions
+
+A `when` maps an input to a condition. An input the rule leaves out matches anything. A condition is one of these:
+
+- A value. The input must equal it.
+- A list. The input must equal one of the values.
+- A comparison string, such as `">10"`, `"<=5"` or `"=3"`. This works for `integer` and `number` inputs only.
+
+Every rule's `then` must set every output, each with its declared type.
+
+### Inputs and Results
+
+After the `args_schema` check, the table checks the inputs itself. All declared inputs are required. Unknown inputs are refused. Each input must have its declared type, except that an `integer` input accepts `3.0` as `3`. A bad input raises `DecisionError`.
+
+Under `first`, if no rule matches, the call raises `DecisionError`. Under `collect`, zero matches is fine.
+
+The model sees this result under `first`:
+
+```json
+{"table": "approval_routing", "version": 1, "rule": "r2", "outputs": {"approver_tier": "skip_level", "requires_hr": true}}
+```
+
+Under `collect` it sees every match:
+
+```json
+{"table": "approval_routing", "version": 1, "matches": [{"rule": "r2", "outputs": {"approver_tier": "skip_level", "requires_hr": true}}, {"rule": "default", "outputs": {"approver_tier": "manager", "requires_hr": false}}]}
+```
+
+### Audit
+
+Every evaluation writes a `decision.evaluated` AuditEvent. It records the `tool`, the `step`, the `table`, its `version`, the `hit_policy` and `rules`, the ids of the rules that fired. The inputs stay in the `ToolCall`.
+
+### Checks at Load Time
+
+`cograil validate` rejects an invalid table. It also rejects a `decision` Tool whose table is missing.
+
+### Trying a Table by Hand
+
+```bash
+cograil decide approval_routing --workspace workspaces/example-smb \
+  --input duration_days=12 --input leave_type=annual --input requester_role=staff
+```
+
+```
+approval_routing v1 (first)
+rule r2: {"approver_tier": "skip_level", "requires_hr": true}
+```
+
+This starts no Run and calls no model. It writes no AuditEvent. Each value is read as its input's declared type, and a boolean is `true` or `false`. The command exits with 1 on a bad input or when no rule matches.

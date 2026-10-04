@@ -1,4 +1,4 @@
-"""The cograil command line: validate, run, approve and runs.
+"""The cograil command line: validate, run, approve, runs and decide.
 
 `run` and `approve` are a local and demo tool. `--as` is taken at face value: nothing here
 authenticates the principal, and the safety comes from needing DATABASE_URL. A principal's
@@ -10,6 +10,7 @@ belongs to the web and Slack channels (issue #108).
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import uuid
 from collections.abc import AsyncIterator, Awaitable
@@ -22,6 +23,7 @@ import typer
 
 from cograil.audience import check_audience
 from cograil.context import format_ledger, window_ledger
+from cograil.decisions import parse_inputs, table_for
 from cograil.domain import Colleague, Principal, Protocol, Run, RunStatus, Trigger, Workspace
 from cograil.errors import (
     ApprovalAlreadyDecided,
@@ -29,6 +31,7 @@ from cograil.errors import (
     ApprovalNotFound,
     AudienceDenied,
     CograilError,
+    DecisionError,
     RunNotFound,
     RunNotPaused,
     ToolNotFound,
@@ -347,3 +350,33 @@ async def _show_runs(run_id: str | None, ledger: bool, limit: int) -> None:
         if ledger:
             for line in format_ledger(window_ledger(each)):
                 typer.echo(line)
+
+
+@app.command()
+def decide(
+    table: Annotated[str, typer.Argument(help="Decision table name: decisions/<table>.yaml.")],
+    inputs: Annotated[
+        list[str] | None,
+        typer.Option("--input", help="An input as name=value, read as its declared type; repeat."),
+    ] = None,
+    workspace: Annotated[Path, typer.Option(help="Workspace folder.")] = Path("."),
+) -> None:
+    """Evaluate a decision table by hand: print the rules that fired and their outputs.
+
+    For testing a table: no Run, no model and no AuditEvent.
+
+    \b
+    Exit codes: 0 evaluated; 1 error (invalid workspace, unknown table, bad or missing input,
+    no rule matched under hit_policy first); 2 usage error.
+    """
+    loaded = _load(workspace)
+    try:
+        found = table_for(loaded.decisions, table)
+        outcome = found.evaluate(parse_inputs(found.decision, inputs or []))
+    except DecisionError as exc:
+        fail(f"invalid: {exc}")
+    typer.echo(f"{outcome.table} v{outcome.version} ({outcome.hit_policy})")
+    for rule, outputs in outcome.matches:
+        typer.echo(f"rule {rule}: {json.dumps(outputs)}")
+    if not outcome.matches:
+        typer.echo("no rule matched")
