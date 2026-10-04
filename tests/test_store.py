@@ -67,6 +67,17 @@ async def stored_run(store: RunStore) -> Run:
     return run
 
 
+def unique_principal(name: str) -> str:
+    """A principal id no other test uses: Postgres rows outlive a test inside one CI job."""
+    return f"{name}-{uuid.uuid4().hex}@example.com"
+
+
+def run_for(principal_id: str) -> Run:
+    return make_run().model_copy(
+        update={"principal": Principal(id=principal_id), "principal_id": principal_id}
+    )
+
+
 async def test_run_round_trips_and_update_saves_progress(store: RunStore) -> None:
     run = await stored_run(store)
     assert await store.get_run(run.id) == run
@@ -96,14 +107,13 @@ async def test_list_runs_newest_first_up_to_the_limit(store: RunStore) -> None:
 
 
 async def test_list_runs_can_be_limited_to_one_principal(store: RunStore) -> None:
-    mine = await stored_run(store)
-    other = make_run().model_copy(
-        update={"principal": Principal(id="bob@example.com"), "principal_id": "bob@example.com"}
-    )
+    alice, bob = unique_principal("alice"), unique_principal("bob")
+    mine, other = run_for(alice), run_for(bob)
+    await store.create_run(mine)
     await store.create_run(other)
-    assert [r.id for r in await store.list_runs(principal_id="alice@example.com")] == [mine.id]
-    assert await store.list_runs(principal_id="nobody@example.com") == []
-    assert {r.id for r in await store.list_runs()} == {mine.id, other.id}
+    assert [r.id for r in await store.list_runs(principal_id=alice)] == [mine.id]
+    assert [r.id for r in await store.list_runs(principal_id=bob)] == [other.id]
+    assert await store.list_runs(principal_id=unique_principal("nobody")) == []
 
 
 async def test_run_errors(store: RunStore) -> None:
@@ -235,15 +245,12 @@ async def test_audit_events_append_and_list_in_order(store: RunStore) -> None:
 
 
 async def test_audit_events_page_by_owner_run_and_acting_principal(store: RunStore) -> None:
-    mine, other = await stored_run(store), make_run()
-    await store.create_run(
-        other.model_copy(
-            update={"principal": Principal(id="bob@example.com"), "principal_id": "bob@example.com"}
-        )
-    )
+    owner, bob, mallory = (unique_principal(n) for n in ("alice", "bob", "mallory"))
+    mine, other = run_for(owner), run_for(bob)
+    await store.create_run(mine)
+    await store.create_run(other)
     for i, (run, who) in enumerate(
-        [(mine, "alice@example.com"), (other, "bob@example.com"), (mine, "mallory@example.com"),
-         (mine, "alice@example.com")]
+        [(mine, owner), (other, bob), (mine, mallory), (mine, owner)]
     ):  # fmt: skip
         await store.append_audit_event(
             AuditEvent(run_id=run.id, at=T0 + timedelta(seconds=i), principal_id=who,
@@ -253,16 +260,13 @@ async def test_audit_events_page_by_owner_run_and_acting_principal(store: RunSto
     def numbers(events: list[AuditEvent]) -> list[int]:
         return [e.detail["n"] for e in events]
 
-    owner = "alice@example.com"
     assert numbers(await store.page_audit_events(owner_id=owner)) == [0, 2, 3]
     assert numbers(await store.page_audit_events(owner_id=owner, limit=2)) == [0, 2]
     assert numbers(await store.page_audit_events(owner_id=owner, limit=2, offset=2)) == [3]
-    by_actor = await store.page_audit_events(owner_id=owner, principal_id="mallory@example.com")
+    by_actor = await store.page_audit_events(owner_id=owner, principal_id=mallory)
     assert numbers(by_actor) == [2]
     assert numbers(await store.page_audit_events(owner_id=owner, run_id=other.id)) == []
-    assert numbers(await store.page_audit_events(owner_id="bob@example.com", run_id=other.id)) == [
-        1
-    ]
+    assert numbers(await store.page_audit_events(owner_id=bob, run_id=other.id)) == [1]
 
 
 @pytest.mark.parametrize("cls", [RunStore, InMemoryRunStore, PostgresRunStore])
