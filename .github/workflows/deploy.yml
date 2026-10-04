@@ -1,12 +1,23 @@
 name: Deploy
 
-# Deploys a tagged release to Cloud Run. Enabled in Phase 2 (issue 21).
-# Requires: GCP_PROJECT, GCP_REGION, GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT secrets.
+# Deploys a tagged release to Cloud Run (docs/deploy.md has the one-time setup).
+# Requires these repository secrets: GCP_PROJECT, GCP_REGION, GCP_WORKLOAD_IDENTITY_PROVIDER,
+# GCP_SERVICE_ACCOUNT. They name the project and the identity; none of them is a key.
+# DATABASE_URL and the other secrets are never stored in GitHub: Cloud Run reads them from
+# Secret Manager when an instance starts.
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  SERVICE: cograil
+  MAX_IMAGE_MB: "300"
 
 jobs:
   deploy:
@@ -14,16 +25,58 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      IMAGE: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/cograil/cograil:${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: google-github-actions/auth@v2
         with:
+          project_id: ${{ secrets.GCP_PROJECT }}
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/deploy-cloudrun@v2
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Let Docker push to Artifact Registry
+        run: gcloud auth configure-docker "${{ secrets.GCP_REGION }}-docker.pkg.dev" --quiet
+      - name: Build
+        run: docker build --tag "$IMAGE" .
+      - name: Check the image size
+        # The compressed size is what Artifact Registry stores and Cloud Run pulls.
+        run: |
+          size_mb=$(( $(docker save "$IMAGE" | gzip -1 | wc -c) / 1000000 ))
+          echo "Image size: ${size_mb} MB compressed (limit ${MAX_IMAGE_MB} MB)" | tee -a "$GITHUB_STEP_SUMMARY"
+          test "$size_mb" -lt "$MAX_IMAGE_MB"
+      - name: Push
+        run: docker push "$IMAGE"
+      - id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
         with:
-          service: cograil
+          service: ${{ env.SERVICE }}
           region: ${{ secrets.GCP_REGION }}
-          source: .
+          image: ${{ env.IMAGE }}
           env_vars: |
             COGRAIL_ENV=production
+          # name=secret:version. The values live in Secret Manager, not in GitHub.
+          secrets: |
+            DATABASE_URL=cograil-database-url:latest
+            ANTHROPIC_API_KEY=cograil-anthropic-api-key:latest
+            COGRAIL_OIDC_CLIENT_SECRET=cograil-oidc-client-secret:latest
+            COGRAIL_SESSION_SECRET=cograil-session-secret:latest
+          # Scale to zero. Sign-in is enforced by the app (COGRAIL_AUTH=oidc), so Cloud Run
+          # must let browsers reach it.
+          flags: >-
+            --min-instances=0
+            --max-instances=3
+            --concurrency=40
+            --memory=512Mi
+            --cpu=1
+            --port=8080
+            --allow-unauthenticated
+      - name: Measure the cold start
+        # A new revision has no warm instance, so its first request is a cold start.
+        shell: bash
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          curl -fsS -o /dev/null --retry 3 \
+            -w "Cold start: first /health in %{time_total}s (HTTP %{http_code})\n" \
+            "$URL/health" | tee -a "$GITHUB_STEP_SUMMARY"
