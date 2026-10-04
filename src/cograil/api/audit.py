@@ -1,7 +1,8 @@
 """GET /audit: the AuditEvents of the signed-in principal's Runs, a page at a time.
 
-The log is the principal's own: events of Runs they started, oldest first. There is no
-administrator or auditor view yet (see docs/api.md). `run_id` narrows it to one Run and
+The log is the principal's own: events of Runs they started, oldest first. A principal in the
+workspace's `auditors` group (principals.yaml, issue #138) reads every Run's events instead.
+`run_id` narrows it to one Run and
 `principal` to the events a given principal acted in: the Run's principal on most, and on a
 refused decision the principal that tried to decide.
 """
@@ -15,6 +16,7 @@ from fastapi import APIRouter, Depends, Query
 from cograil.api.auth import current_principal
 from cograil.api.deps import CurrentPrincipal, ServicesDep
 from cograil.api.schemas import AuditPage
+from cograil.audience import is_auditor
 from cograil.identity import normalise_principal_id
 
 router = APIRouter(prefix="/audit", tags=["audit"], dependencies=[Depends(current_principal)])
@@ -36,7 +38,11 @@ async def list_audit(
     """A page of AuditEvents; `next_offset` is null on the last page."""
     wanted = normalise_principal_id(acting) if acting else None
     found = await services.store.page_audit_events(
-        owner_id=principal.id, run_id=run_id, principal_id=wanted, limit=limit + 1, offset=offset
+        owner_id=None if is_auditor(services.workspace, principal) else principal.id,
+        run_id=run_id,
+        principal_id=wanted,
+        limit=limit + 1,
+        offset=offset,
     )
     more = len(found) > limit
     return AuditPage(

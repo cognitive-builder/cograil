@@ -125,13 +125,15 @@ class RunStore(Protocol):
     async def page_audit_events(
         self,
         *,
-        owner_id: str,
+        owner_id: str | None,
         run_id: str | None = None,
         principal_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[AuditEvent]:
         """AuditEvents of the Runs `owner_id` started, oldest first, `limit` from `offset`.
+
+        `owner_id=None` reads every Run's events; only an auditor's request passes it.
 
         `run_id` narrows to one Run and `principal_id` to the events that principal acted in.
         Read-only: the log stays append-only.
@@ -356,17 +358,15 @@ class PostgresRunStore:
     async def page_audit_events(
         self,
         *,
-        owner_id: str,
+        owner_id: str | None,
         run_id: str | None = None,
         principal_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[AuditEvent]:
-        query = (
-            select(audit_events)
-            .join(runs, runs.c.id == audit_events.c.run_id)
-            .where(runs.c.principal_id == owner_id)
-        )
+        query = select(audit_events).join(runs, runs.c.id == audit_events.c.run_id)
+        if owner_id is not None:
+            query = query.where(runs.c.principal_id == owner_id)
         if run_id is not None:
             query = query.where(audit_events.c.run_id == run_id)
         if principal_id is not None:

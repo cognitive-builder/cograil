@@ -164,13 +164,13 @@ class InMemoryRunStore:
     async def page_audit_events(
         self,
         *,
-        owner_id: str,
+        owner_id: str | None,
         run_id: str | None = None,
         principal_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[AuditEvent]:
-        owned = {r.id for r in self._runs.values() if r.principal_id == owner_id}
+        owned = {r.id for r in self._runs.values() if owner_id in (None, r.principal_id)}
         found = [
             e
             for e in self._audit

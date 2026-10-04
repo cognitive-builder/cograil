@@ -10,7 +10,8 @@ The CLI and the orchestrator share this rule; neither keeps its own copy.
 
 `resolve_principal` is the one way a signed-in id becomes a Principal: it looks the id up in
 the workspace's principals by id or alias, and adds the groups of every Audience whose
-`claims` include one of the identity provider's group claim values.
+`claims` include one of the identity provider's group claim values. `is_auditor` is the one
+rule for who may read other principals' Runs and AuditEvents.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from cograil.errors import AudienceDenied
 from cograil.identity import normalise_principal_id
 
 EVERYONE = "everyone"
+AUDITORS = "auditors"
 
 
 def audience_denial(
@@ -70,3 +72,14 @@ def resolve_principal(
     mapped = [g for a in workspace.audiences if claimed & set(a.claims) for g in a.groups]
     merged = sorted({*principal.groups, *mapped, *groups})
     return principal.model_copy(update={"groups": merged})
+
+
+def is_auditor(workspace: Workspace, principal: Principal) -> bool:
+    """Whether the workspace's `principals.yaml` puts this principal in the `auditors` group.
+
+    Only that file decides (issue #138): a group an identity provider claims, or one a dev
+    sign-in adds, never makes an auditor, and the system actor is never one.
+    """
+    wanted = normalise_principal_id(principal.id)
+    known = next((p for p in workspace.principals if wanted in (p.id, *p.aliases)), None)
+    return known is not None and known.kind == "user" and AUDITORS in known.groups

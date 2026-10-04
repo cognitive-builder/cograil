@@ -2,7 +2,7 @@
 
 import pytest
 
-from cograil.audience import audience_denial, check_audience, resolve_principal
+from cograil.audience import audience_denial, check_audience, is_auditor, resolve_principal
 from cograil.domain import Audience, Colleague, Principal, Protocol, Step, Workspace
 from cograil.errors import AudienceDenied
 
@@ -96,3 +96,31 @@ def test_resolve_principal_maps_ids_aliases_and_group_claims(
     """Issue #19: one Principal per person; group claims reach groups only through Audiences."""
     principal = resolve_principal(DIRECTORY, signed_in, claims=claims)
     assert (principal.id, principal.groups) == expected
+
+
+@pytest.mark.parametrize(
+    ("listed", "who", "expected"),
+    [
+        (Principal(id="a@x.com", groups=["auditors"]), "a@x.com", True),
+        (Principal(id="a@x.com", aliases=["a2@x.com"], groups=["auditors"]), "A2@x.com", True),
+        (Principal(id="a@x.com", groups=["staff"]), "a@x.com", False),
+        (Principal(id="a@x.com", groups=["auditors"]), "b@x.com", False),
+        (Principal(id="job", groups=["auditors"], kind="system"), "job", False),
+    ],
+)
+def test_only_principals_yaml_makes_an_auditor(listed: Principal, who: str, expected: bool) -> None:
+    workspace = WORKSPACE.model_copy(update={"principals": [listed]})
+    assert is_auditor(workspace, resolve_principal(workspace, who)) is expected
+
+
+def test_a_claimed_or_added_auditors_group_is_not_enough() -> None:
+    workspace = WORKSPACE.model_copy(
+        update={
+            "principals": [Principal(id="a@x.com")],
+            "audiences": [Audience(name="idp", groups=["auditors"], claims=["idp-auditors"])],
+        }
+    )
+    claimed = resolve_principal(workspace, "a@x.com", claims=["idp-auditors"])
+    added = resolve_principal(workspace, "a@x.com", groups=["auditors"])
+    assert "auditors" in claimed.groups and "auditors" in added.groups
+    assert not is_auditor(workspace, claimed) and not is_auditor(workspace, added)

@@ -31,6 +31,7 @@ DEMO = Path(__file__).parent / "fixtures/workspaces/cli-demo"
 TWO_GATES = Path(__file__).parent / "fixtures/workspaces/two-gates"
 ALICE, MANAGER, MALLORY = "alice@example.com", "manager@example.com", "mallory@example.com"
 BOSS = "boss@example.com"
+AUDITOR = "auditor@example.com"
 # Step 1 looks a value up; step 2 plans a gated write, so the Run pauses there.
 RUN_SCRIPT = """
 - tool_calls: [{tool: demo.lookup, args: {key: answer}}]
@@ -228,6 +229,11 @@ def test_chat_refuses_a_bad_body(env: Env, body: dict[str, Any]) -> None:
 # /runs
 
 
+def with_auditor(env: Env) -> None:
+    """The auditor is listed in principals.yaml's `auditors` group; MANAGER is merely staff."""
+    workspace(env).principals.append(Principal(id=AUDITOR, groups=["auditors"]))
+
+
 def test_runs_lists_only_the_principals_own(env: Env) -> None:
     run_id = env.paused_run()["run"]["id"]
     mine = env.get("/runs").json()
@@ -236,6 +242,17 @@ def test_runs_lists_only_the_principals_own(env: Env) -> None:
     ]
     assert env.get("/runs", as_=MALLORY).json() == []
     assert env.client.get("/runs").status_code == 401
+
+
+def test_an_auditor_lists_and_opens_every_run_and_others_do_not(env: Env) -> None:
+    with_auditor(env)
+    run_id = env.paused_run()["run"]["id"]
+    assert [r["id"] for r in env.get("/runs", as_=AUDITOR).json()] == [run_id]
+    assert env.get(f"/runs/{run_id}", as_=AUDITOR).status_code == 200
+    for caller in (MANAGER, MALLORY):
+        assert env.get("/runs", as_=caller).json() == []
+        assert env.get(f"/runs/{run_id}", as_=caller).status_code == 404
+    assert env.get("/runs/nope", as_=AUDITOR).status_code == 404
 
 
 def test_run_detail_shows_steps_calls_and_gates(env: Env) -> None:
@@ -463,6 +480,30 @@ def test_audit_is_the_principals_own_and_needs_sign_in(env: Env) -> None:
     assert env.get("/audit", as_=MALLORY).json()["items"] == []
     assert env.get("/audit", as_=MALLORY, run_id=run_id).json()["items"] == []
     assert env.client.get("/audit").status_code == 401
+
+
+def test_an_auditor_reads_every_principals_events_and_others_do_not(env: Env) -> None:
+    with_auditor(env)
+    run_id = env.paused_run()["run"]["id"]
+    everything = kinds(env, run_id)
+    assert [e["kind"] for e in env.get("/audit", as_=AUDITOR).json()["items"]] == everything
+    assert {e["run_id"] for e in env.get("/audit", as_=AUDITOR, run_id=run_id).json()["items"]} == {
+        run_id
+    }
+    for caller in (MANAGER, MALLORY):
+        assert env.get("/audit", as_=caller).json()["items"] == []
+        assert env.get("/audit", as_=caller, run_id=run_id).json()["items"] == []
+
+
+def test_the_principal_filter_still_narrows_an_auditors_events(env: Env) -> None:
+    with_auditor(env)
+    done = env.paused_run()
+    token = done["awaiting"][0]["token"]
+    assert env.post(f"/approvals/{token}", {"decision": "approved"}, as_=MALLORY).status_code == 403
+    by_alice = env.get("/audit", as_=AUDITOR, principal=ALICE).json()["items"]
+    by_mallory = env.get("/audit", as_=AUDITOR, principal=MALLORY).json()["items"]
+    assert by_alice and {e["principal_id"] for e in by_alice} == {ALICE}
+    assert [e["kind"] for e in by_mallory] == ["gate.refused"]
 
 
 @pytest.mark.parametrize("params", [{"limit": 0}, {"limit": 201}, {"offset": -1}])
