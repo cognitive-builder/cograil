@@ -49,7 +49,9 @@ def shown(done: Sequence[dict[str, Any]], summaries: Sequence[str | None]) -> li
     ]
 
 
-def recorded(done: Sequence[dict[str, Any]], summaries: Sequence[str | None]) -> list[dict[str, Any]]:
+def recorded(
+    done: Sequence[dict[str, Any]], summaries: Sequence[str | None]
+) -> list[dict[str, Any]]:
     """`done` for the Step's record: the raw result stays, with its summary beside it."""
     return [
         call if summary is None else {**call, RECORD_KEY: summary}
@@ -85,8 +87,8 @@ class Compressor:
         guide = Step(number=step.number, name="Compress a Tool output",
                      instruction=f"{GUIDE}{step.name}\n{step.instruction}")  # fmt: skip
         model = tier_model(self._harness, task_tier(self._harness, "compression"))
-        context = [data_message([(f"tool {call['tool']}", call["result"])])]
-        plan = await self._provider.plan(guide, context, [], model=model)
+        messages = [data_message([(f"tool {call['tool']}", call["result"])])]
+        plan = await self._provider.plan(guide, messages, [], model=model)
         summary = (plan.text or (plan.step_complete.output if plan.step_complete else "")).strip()
         if not summary:
             raise ProviderError(f"compression of {call['tool']} returned no summary")

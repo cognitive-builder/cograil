@@ -148,7 +148,9 @@ def add_to_ledger(
     return {**context, LEDGER_KEY: ledger}
 
 
-def add_compression(context: dict[str, Any], step: int, raw: int, compressed: int) -> dict[str, Any]:
+def add_compression(
+    context: dict[str, Any], step: int, raw: int, compressed: int
+) -> dict[str, Any]:
     """`context` with one compressed result's raw and compressed tokens added to the Step's row."""
     ledger = {**context.get(LEDGER_KEY, {})}
     row = {**ledger.get(str(step), {})}
