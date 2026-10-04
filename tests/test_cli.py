@@ -170,14 +170,37 @@ def test_a_principal_outside_the_audience_is_denied(
 def test_run_refuses_a_workspace_whose_tools_are_not_built_yet(
     shared_store: InMemoryRunStore, tmp_path: Path
 ) -> None:
+    copy = tmp_path / "ws"
+    shutil.copytree(DEMO, copy)
+    tools = (copy / "tools.yaml").read_text()
+    # The directory kind is the one Tool kind still without an implementation.
+    unbuilt = tools.replace(
+        "name: demo.lookup\n    kind: python", "name: demo.lookup\n    kind: directory", 1
+    )
+    assert unbuilt != tools
+    (copy / "tools.yaml").write_text(unbuilt)
+    result = runner.invoke(
+        app,
+        ["run", str(copy), "--protocol", "record_item", "--as", ALICE,
+         "--fake-script", script(tmp_path, "[]")],
+    )  # fmt: skip
+    assert result.exit_code == cograil.cli.EXIT_ERROR
+    assert "tool demo.lookup (kind directory) is not available" in result.output
+    assert asyncio.run(shared_store.list_runs()) == []
+
+
+def test_the_example_workspace_builds_every_tool(
+    shared_store: InMemoryRunStore, tmp_path: Path
+) -> None:
     result = runner.invoke(
         app,
         ["run", str(EXAMPLE), "--protocol", "policy_question", "--as", ALICE,
          "--fake-script", script(tmp_path, "[]")],
     )  # fmt: skip
-    assert result.exit_code == cograil.cli.EXIT_ERROR
-    assert "step 1: tool knowledge.search (kind knowledge) is not available" in result.output
-    assert asyncio.run(shared_store.list_runs()) == []
+    assert "is not available" not in result.output
+    # The Run starts; it fails only because the scripted provider has no plan to give.
+    assert result.exit_code == cograil.cli.EXIT_FAILED
+    assert len(asyncio.run(shared_store.list_runs())) == 1
 
 
 def test_run_needs_a_database_and_an_api_key(

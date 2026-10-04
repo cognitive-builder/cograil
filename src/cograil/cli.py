@@ -38,6 +38,8 @@ from cograil.errors import (
     WorkspaceError,
 )
 from cograil.knowledge.cli import knowledge_app
+from cograil.knowledge.store import PostgresKnowledgeStore
+from cograil.knowledge.tool import add_knowledge
 from cograil.progress import ProgressStore
 from cograil.providers import AnthropicProvider, FakeProvider, Provider
 from cograil.providers.fake import load_script
@@ -148,9 +150,15 @@ def _provider(protocol: Protocol, colleague: Colleague, script: Path | None) -> 
 
 async def _registry(workspace: Workspace, store: RunStore, root: Path) -> ToolRegistry:
     try:
-        return await build_registry(workspace, store, root)
+        registry = await build_registry(workspace, store, root)
     except CograilError as exc:
         fail(f"cannot build the tools: {exc}")
+    url = os.environ.get("DATABASE_URL")
+    if url and any(tool.kind == "knowledge" for tool in workspace.tools):
+        knowledge = PostgresKnowledgeStore.from_url(url)  # the Chunks `knowledge sync` stored
+        registry.on_close(knowledge.dispose)
+        add_knowledge(registry, workspace, knowledge)
+    return registry
 
 
 def _check_tools(workspace: Workspace, protocol: Protocol, registry: ToolRegistry) -> None:

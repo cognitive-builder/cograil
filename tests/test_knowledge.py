@@ -158,22 +158,25 @@ def acl(workspace: Path, relative: str, *groups: str) -> None:
     (workspace / "kb" / relative).write_text(f"acl_groups: [{listed}]\n")
 
 
-def groups_by_file(workspace: Path) -> dict[str, list[str]]:
-    chunks = build_chunks(workspace, source())[1]
+WIDE = ["staff", "everyone", "hr", "hr-leads", "payroll"]
+
+
+def groups_by_file(workspace: Path, groups: list[str] = WIDE) -> dict[str, list[str]]:
+    chunks = build_chunks(workspace, source(acl_groups=groups))[1]
     assert chunks
     return {c.source_uri: c.acl_groups for c in chunks}
 
 
 def test_without_acl_files_every_chunk_gets_the_source_groups(workspace: Path) -> None:
-    assert set(map(tuple, groups_by_file(workspace).values())) == {("staff",)}
+    assert set(map(tuple, groups_by_file(workspace).values())) == {tuple(WIDE)}
 
 
 def test_a_sidecar_file_sets_the_groups_of_its_document(workspace: Path) -> None:
     acl(workspace, "intro.md.acl.yaml", "everyone")
     assert groups_by_file(workspace) == {
         "kb/intro.md": ["everyone"],
-        "kb/hr/pay.md": ["staff"],
-        "kb/faq.pdf": ["staff"],
+        "kb/hr/pay.md": WIDE,
+        "kb/faq.pdf": WIDE,
     }
 
 
@@ -183,7 +186,26 @@ def test_a_folder_acl_file_covers_its_folder_and_subfolders(workspace: Path) -> 
     acl(workspace, "hr/.acl.yaml", "hr", "hr-leads")
     found = groups_by_file(workspace)
     assert found["kb/hr/pay.md"] == found["kb/hr/deep/x.md"] == ["hr", "hr-leads"]
-    assert found["kb/intro.md"] == ["staff"]
+    assert found["kb/intro.md"] == WIDE
+
+
+@pytest.mark.parametrize("relative", ["intro.md.acl.yaml", ".acl.yaml"])
+def test_an_acl_file_only_narrows_the_source_groups(workspace: Path, relative: str) -> None:
+    acl(workspace, relative, "outsiders", "staff")
+    assert groups_by_file(workspace, ["staff"])["kb/intro.md"] == ["staff"]
+
+
+def test_an_acl_file_sharing_no_source_group_is_an_error(workspace: Path) -> None:
+    acl(workspace, "intro.md.acl.yaml", "outsiders")
+    with pytest.raises(KnowledgeSourceError, match="only narrows"):
+        build_chunks(workspace, source())
+
+
+def test_empty_acl_groups_are_refused_by_the_domain() -> None:
+    with pytest.raises(ValueError, match="acl_groups"):
+        source(acl_groups=[])
+    with pytest.raises(ValueError, match="acl_groups"):
+        chunk("c", groups=())
 
 
 def test_the_sidecar_beats_the_folder_file(workspace: Path) -> None:
@@ -202,7 +224,7 @@ def test_a_bad_acl_file_fails_instead_of_widening_or_hiding(workspace: Path, con
 
 
 def test_acl_files_are_not_loaded_as_documents(workspace: Path) -> None:
-    acl(workspace, "intro.md.acl.yaml", "everyone")
+    acl(workspace, "intro.md.acl.yaml", "staff")
     assert {c.source_uri for c in build_chunks(workspace, source())[1]} == {
         "kb/intro.md",
         "kb/hr/pay.md",

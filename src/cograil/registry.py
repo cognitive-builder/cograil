@@ -11,7 +11,8 @@ A `decision` Tool also gets a `decision.evaluated` AuditEvent naming the table, 
 the rules that fired (ADR 0009); its ToolCall result is the outcome as plain data.
 
 `build_registry` builds the python, rest, mcp and decision kinds of a Workspace. The knowledge
-and directory kinds register themselves with `register` from their own modules.
+and directory kinds register themselves with `register_entitled` from their own modules: their
+invoke also gets the CallContext's groups, the principal's, which the model cannot set.
 """
 
 from __future__ import annotations
@@ -43,7 +44,7 @@ from cograil.errors import (
 )
 from cograil.observability import log_event
 from cograil.store import RunStore
-from cograil.tool_kinds import Invoke
+from cograil.tool_kinds import EntitledInvoke, Invoke
 from cograil.tool_kinds.mcp import McpClientFactory, McpToolset, default_mcp_client
 from cograil.tool_kinds.python import PythonResolver
 from cograil.tool_kinds.rest import OAuthClientCredentials, RestTool
@@ -58,17 +59,19 @@ _HTTP_TIMEOUT_S = 10.0
 
 @dataclass(frozen=True)
 class CallContext:
-    """Who calls a Tool and where: recorded on the ToolCall and the AuditEvent."""
+    """Who calls a Tool and where: recorded on the ToolCall and the AuditEvent. `groups` are
+    the principal's, for the kinds that filter by entitlement; none means nothing is visible."""
 
     run_id: str
     step: int
     principal_id: str
+    groups: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class _Entry:
     tool: Tool
-    invoke: Invoke
+    invoke: EntitledInvoke
     validator: Validator
 
 
@@ -81,6 +84,13 @@ class ToolRegistry:
         self._closers: list[Closer] = []
 
     def register(self, tool: Tool, invoke: Invoke) -> None:
+        async def call(args: dict[str, Any], groups: tuple[str, ...]) -> Any:
+            return await invoke(args)
+
+        self.register_entitled(tool, call)
+
+    def register_entitled(self, tool: Tool, invoke: EntitledInvoke) -> None:
+        """Register a Tool whose invoke also takes the calling principal's groups."""
         if tool.name in self._entries:
             raise ToolConfigError(f"{tool.name}: registered twice")
         self._entries[tool.name] = _Entry(tool, invoke, _validator(tool))
@@ -108,7 +118,7 @@ class ToolRegistry:
             _validate(entry, args)
             if entry.tool.scope == "write":
                 await self._audit(ctx, "tool.started", {"tool": name, "step": ctx.step})
-            result = await entry.invoke(copy.deepcopy(dict(args)))
+            result = await entry.invoke(copy.deepcopy(dict(args)), ctx.groups)
             if isinstance(result, DecisionOutcome):
                 detail = {"tool": name, "step": ctx.step, **result.audit_detail()}
                 await self._audit(ctx, "decision.evaluated", detail)

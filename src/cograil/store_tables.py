@@ -4,6 +4,7 @@ The Alembic migration in migrations/versions is the source of truth for the sche
 these definitions only describe it to the query builder.
 """
 
+from pgvector.sqlalchemy import VECTOR
 from sqlalchemy import (
     BigInteger,
     Column,
@@ -19,6 +20,9 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 
 metadata = MetaData()
+
+EMBEDDING_DIMENSIONS = 256
+"""The width of `chunks.embedding`; an Embedder must give vectors this wide (migration 0004)."""
 
 runs = Table(
     "runs",
@@ -92,6 +96,7 @@ chunks = Table(
     Column("source_uri", Text, nullable=False),
     Column("text", Text, nullable=False),
     Column("acl_groups", ARRAY(Text), nullable=False),
+    Column("embedding", VECTOR(EMBEDDING_DIMENSIONS)),
     Index("ix_chunks_source", "source"),
     Index("ix_chunks_acl_groups", "acl_groups", postgresql_using="gin"),
 )
