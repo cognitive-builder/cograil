@@ -170,7 +170,13 @@ def _check_tools(workspace: Workspace, protocol: Protocol, registry: ToolRegistr
             try:
                 registry.get(name)
             except ToolNotFound:
-                fail(f"step {step.number}: tool {name} (kind {kinds[name]}) is not available")
+                # _registry leaves the knowledge kind out when DATABASE_URL is unset.
+                hint = (
+                    "; knowledge tools need DATABASE_URL"
+                    if kinds[name] == "knowledge" and not os.environ.get("DATABASE_URL")
+                    else ""
+                )
+                fail(f"step {step.number}: tool {name} (kind {kinds[name]}) is not available{hint}")
 
 
 def _new_run(

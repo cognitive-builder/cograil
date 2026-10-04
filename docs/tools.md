@@ -2,7 +2,7 @@
 
 The tool registry turns a Tool name into something the runner can call. Before a Tool runs, the registry checks the arguments against the Tool's `args_schema`. This is a JSON Schema. The draft comes from its `$schema` field and defaults to 2020-12. Formats such as `date` are checked. A failed check raises `ToolArgumentError` and the Tool does not run. Every call, successful or not, records a `ToolCall` and a `tool.called` AuditEvent through the RunStore. A `scope: write` Tool also records a `tool.started` AuditEvent after the check and before it runs, so a write that crashes partway still leaves a record. It names the Tool and the step but not the arguments; those stay in the `ToolCall`.
 
-The registry does not decide who may call a Tool. Whitelists and gates stay with the runner. This page covers the `python`, `rest`, `mcp` and `decision` kinds. The `knowledge` and `directory` kinds register from their own modules. They use `register_entitled`. Its invoke also receives the calling principal's groups from the CallContext. The runner sets them from the Run's principal, so the model cannot widen access.
+The registry does not decide who may call a Tool. Whitelists and gates stay with the runner. This page covers the `python`, `rest`, `mcp` and `decision` kinds. The `knowledge` kind registers from its own module, `knowledge/tool.py`, with `register_entitled`. Its invoke also receives the calling principal's groups from the CallContext. The runner sets them from the Run's principal, so the model cannot widen access. The `directory` kind is not implemented yet.
 
 ## Kind: python
 

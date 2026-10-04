@@ -3,7 +3,7 @@
 
 import asyncio
 import shutil
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from itertools import pairwise
 from pathlib import Path
@@ -24,6 +24,8 @@ from cograil.knowledge import (
     chunk_text,
     sync_source,
 )
+from cograil.knowledge.embedding import Embedder
+from cograil.store_tables import EMBEDDING_DIMENSIONS
 
 ROOT = Path(__file__).parents[1]
 EXAMPLE = ROOT / "workspaces/example-smb"
@@ -278,6 +280,35 @@ async def test_sync_chunks_of_one_source_leaves_the_others(store: KnowledgeStore
     await store.sync_chunks(other, [keep])
     await store.sync_chunks(one, [])
     assert await store.list_chunks(other) == [keep]
+
+
+# --- Both stores take only an embedder as wide as chunks.embedding ---
+
+
+class WideEmbedder:
+    """An Embedder one dimension too wide for the `chunks.embedding` column."""
+
+    dimensions = EMBEDDING_DIMENSIONS + 1
+
+    async def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        return [[0.0] * self.dimensions for _ in texts]
+
+
+def _in_memory(embedder: Embedder) -> KnowledgeStore:
+    return InMemoryKnowledgeStore(embedder)
+
+
+def _postgres(embedder: Embedder) -> KnowledgeStore:
+    # from_url only builds the engine, which is lazy, so nothing connects before the check.
+    return PostgresKnowledgeStore.from_url("postgresql+asyncpg://user:pw@localhost/db", embedder)
+
+
+@pytest.mark.parametrize("make", [_in_memory, _postgres], ids=["in-memory", "postgres"])
+def test_every_store_refuses_an_embedder_of_the_wrong_width(
+    make: Callable[[Embedder], KnowledgeStore],
+) -> None:
+    with pytest.raises(KnowledgeSourceError, match="dimensions"):
+        make(WideEmbedder())
 
 
 @pytest.fixture
