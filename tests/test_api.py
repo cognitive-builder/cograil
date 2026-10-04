@@ -60,6 +60,7 @@ class Env:
         store: RunStore | None = None,
         close: Any = None,
         root: Path = DEMO,
+        approval_mail: Any = None,
     ) -> None:
         self.tmp_path = tmp_path
         self.store = store or InMemoryRunStore()
@@ -75,6 +76,7 @@ class Env:
             provider_for=self.next_provider,
             open_registry=open_registry,
             close=close,
+            approval_mail=approval_mail,
         )
         self.app.state.cograil_principal = lambda request: who(workspace, request)
         self.client = TestClient(self.app)

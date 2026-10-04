@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from cograil.api.approval_mail import ApprovalMail
 from cograil.api.schemas import PendingApproval, RunOutcome, RunSummary
 from cograil.api.sse import Emit
 from cograil.audience import check_audience
@@ -56,7 +57,9 @@ class Services:
         provider_for: ProviderFactory,
         open_registry: RegistryOpener,
         redactor: Redactor | None = None,
+        approval_mail: ApprovalMail | None = None,
     ) -> None:
+        self.approval_mail = approval_mail
         self.workspace = workspace
         self.path = path
         self.store = store
@@ -117,23 +120,59 @@ class Services:
             emit("run", {"run_id": run.id})
             await store.append_audit_event(_classified(run, routing))
             ended = await runner.run(run.id, protocol)
+            await self._email_approvers(ended)
             emit("done", (await self.outcome(ended)).model_dump(mode="json"))
 
     async def decide(
         self, token: str, principal: Principal, decision: Literal["approved", "declined"]
     ) -> RunOutcome:
         """Decide the Approval as `principal`; the Runner refuses anyone but its approver."""
+        return await self._decide(token, principal.id, decision, via=None)
+
+    async def decide_by_link(
+        self, token: str, decision: Literal["approved", "declined"]
+    ) -> RunOutcome:
+        """Decide the Approval as its approver, whom a verified email link stands for."""
         approval = await self.store.get_approval(token)
-        run = await self.store.get_run(approval.run_id)
+        return await self._decide(token, approval.approver, decision, via="email_link")
+
+    async def expire(self, token: str) -> Run:
+        """Escalate the Run paused on this Approval if it is past its expiry (an expired link)."""
+        run = await self.store.get_run((await self.store.get_approval(token)).run_id)
+        protocol, colleague = self._pick_for(run)
+        async with self.runner(protocol, colleague, _ignore) as (runner, _):
+            return await runner.expire(token)
+
+    async def _decide(
+        self,
+        token: str,
+        decider: str,
+        decision: Literal["approved", "declined"],
+        *,
+        via: str | None,
+    ) -> RunOutcome:
+        run = await self.store.get_run((await self.store.get_approval(token)).run_id)
+        protocol, colleague = self._pick_for(run)
+        async with self.runner(protocol, colleague, _ignore) as (runner, _):
+            ended = await runner.resume(
+                token, protocol, decider=decider, decision=decision, via=via
+            )
+        await self._email_approvers(ended)
+        return await self.outcome(ended, approver=decider)
+
+    def _pick_for(self, run: Run) -> tuple[Protocol, Colleague]:
+        """The Protocol and Colleague a stored Run started with, if the workspace still has them."""
         protocol, colleague = self.pick(run.protocol, run.colleague)
         if run.workspace != self.workspace.name or protocol.version != run.protocol_version:
             raise WorkspaceError(
                 f"run {run.id} was started on {run.workspace} protocol "
                 f"{run.protocol} version {run.protocol_version}, which this workspace no longer has"
             )
-        async with self.runner(protocol, colleague, _ignore) as (runner, _):
-            ended = await runner.resume(token, protocol, decider=principal.id, decision=decision)
-        return await self.outcome(ended, approver=principal.id)
+        return protocol, colleague
+
+    async def _email_approvers(self, run: Run) -> None:
+        if self.approval_mail is not None and run.status is RunStatus.awaiting_approval:
+            await self.approval_mail.notify(self.store, run)
 
     async def outcome(self, run: Run, *, approver: str | None = None) -> RunOutcome:
         """Where a Run stands; `approver` limits `awaiting` to that approver's own gates.

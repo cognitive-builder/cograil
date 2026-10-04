@@ -2,8 +2,8 @@
 
 Routes: POST /chat (SSE), GET /runs, GET /runs/{id}, GET and POST /approvals/{token}, GET /audit,
 GET /health, the sign-in routes of cograil.api.auth, the web chat page at GET / and the OpenAPI
-docs at /docs. Everything but /health, the web chat page and the sign-in routes needs a signed-in
-Principal.
+docs at /docs. Everything but /health, the web chat page, the sign-in routes and the signed
+email links of GET and POST /approvals/link/{token} needs a signed-in Principal.
 """
 
 from __future__ import annotations
@@ -16,7 +16,8 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from cograil import __version__
-from cograil.api import approvals, audit, chat, runs
+from cograil.api import approvals, audit, chat, link_decisions, runs
+from cograil.api.approval_mail import ApprovalMail
 from cograil.api.auth import install_auth
 from cograil.api.auth_settings import AuthSettings
 from cograil.api.services import ProviderFactory, RegistryOpener, Services
@@ -38,11 +39,13 @@ def create_app(
     open_registry: RegistryOpener,
     close: Callable[[], Awaitable[None]] | None = None,
     redactor: Redactor | None = None,
+    approval_mail: ApprovalMail | None = None,
 ) -> FastAPI:
     """The service for the workspace loaded from `path`.
 
     `classifier` routes chat messages on the small tier, `provider_for` gives the Provider a
-    Protocol's Runs use, `redactor` redacts the opt-in message snippet log, and `close` runs
+    Protocol's Runs use, `redactor` redacts the opt-in message snippet log, `approval_mail`
+    emails approvers a signed link (without it the link routes answer 404), and `close` runs
     at shutdown.
     """
 
@@ -57,12 +60,20 @@ def create_app(
     services = Services(
         workspace, path, store,
         classifier=classifier, provider_for=provider_for, open_registry=open_registry,
-        redactor=redactor,
+        redactor=redactor, approval_mail=approval_mail,
     )  # fmt: skip
     app = FastAPI(title="Cograil", version=__version__, lifespan=lifespan)
     app.state.cograil_services = services
     install_auth(app, auth, workspace)
-    for router in (web.router, chat.router, runs.router, approvals.router, audit.router):
+    routers = (
+        web.router,
+        chat.router,
+        runs.router,
+        approvals.router,
+        link_decisions.router,
+        audit.router,
+    )
+    for router in routers:
         app.include_router(router)
 
     @app.get("/health", tags=["health"])

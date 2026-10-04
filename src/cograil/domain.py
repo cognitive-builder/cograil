@@ -405,6 +405,8 @@ class AuditEvent(Entity):
         "gate.resumed",
         "gate.spent",
         "gate.refused",
+        "approval.emailed",
+        "approval.email_failed",
         "tier.escalated",
         "loop.bounded",
         "run.escalated",
