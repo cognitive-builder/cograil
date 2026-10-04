@@ -312,6 +312,7 @@ class AuditEvent(Entity):
         "gate.paused",
         "gate.resumed",
         "gate.spent",
+        "gate.refused",
         "tier.escalated",
         "loop.bounded",
         "run.escalated",

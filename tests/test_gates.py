@@ -1,6 +1,7 @@
 """Gate tests for issue #11: pause, resume, escalate, failure thresholds and GateRequired.
 
-The approval timeout comes from the Harness (issue #44).
+The approval timeout comes from the Harness (issue #44). Who may decide an Approval, and
+the decider in the audit trail, is issue #94.
 """
 
 import asyncio
@@ -21,6 +22,7 @@ from cograil.domain import (
 )
 from cograil.errors import (
     ApprovalAlreadyDecided,
+    ApprovalNotAllowed,
     GateRequired,
     RunNotPaused,
     ToolExecutionError,
@@ -35,7 +37,8 @@ from cograil.store import InMemoryRunStore
 T0 = datetime(2026, 10, 4, 9, 0, tzinfo=UTC)
 TIMEOUT = timedelta(hours=1)
 HARNESS = Harness(approvals=ApprovalSettings(timeout_hours=1))
-CONTACT = "hr-ops@example.com"
+CONTACT = "hr-ops@example.com"  # the approver of every Approval
+PRINCIPAL = "alice@example.com"  # the Run's
 HARPER = Colleague(name="harper", role="HR", escalation_contact=CONTACT, protocols=["demo"])
 SUBMIT = {"employee": "alice", "days": 3}
 OTHER = {"employee": "alice", "days": 1}
@@ -153,7 +156,7 @@ async def test_gated_write_pauses_the_run_awaiting_approval_and_persists_state(
     approval = await store.get_approval(token)
     assert approval.model_dump(exclude={"token"}) == {
         "run_id": "r1", "step": 2, "tool": "hris.submit_leave", "args": SUBMIT,
-        "approver": "alice@example.com", "decision": "pending", "decided_at": None,
+        "approver": CONTACT, "decision": "pending", "decided_at": None,
         "expires_at": T0 + TIMEOUT, "spent_at": None,
     }  # fmt: skip
     paused = stored.context["paused"]
@@ -171,7 +174,7 @@ async def test_resume_continues_exactly_at_the_paused_step(
 ) -> None:
     token = await pause(make, protocol, store)
     runner, provider = make(AFTER_GATE)
-    run = await runner.resume(token, protocol)
+    run = await runner.resume(token, protocol, decider=CONTACT)
     assert (run.status, run.cursor) == (RunStatus.completed, 3)
     assert tools.invoked == ["hris.get_balance", "hris.submit_leave", "notify.send"]
     # The saved plan ran without asking the model again; its first turn after the gate is
@@ -187,6 +190,44 @@ async def test_resume_continues_exactly_at_the_paused_step(
     seen = await kinds(store)
     assert seen[seen.index("gate.paused") :][:3] == ["gate.paused", "gate.resumed", "gate.spent"]
     assert seen[-1] == "run.completed"
+    resumed = next(e for e in await store.list_audit_events("r1") if e.kind == "gate.resumed")
+    assert (resumed.detail["approver"], resumed.detail["decided_by"]) == (CONTACT, CONTACT)
+
+
+@pytest.mark.parametrize("decision", ["approved", "declined"])
+@pytest.mark.parametrize("decider", ["bob@example.com", PRINCIPAL], ids=["other", "own"])
+async def test_only_the_approver_may_decide_an_approval(
+    store: InMemoryRunStore,
+    make: Any,
+    protocol: Protocol,
+    tools: Tools,
+    decider: str,
+    decision: Any,
+) -> None:
+    token = await pause(make, protocol, store)
+    runner, provider = make(AFTER_GATE)
+    with pytest.raises(ApprovalNotAllowed):
+        await runner.resume(token, protocol, decider=decider, decision=decision)
+    assert (await store.get_run("r1")).status == RunStatus.awaiting_approval
+    assert (await store.get_approval(token)).decision == "pending"
+    assert (provider.calls, tools.invoked) == ([], ["hris.get_balance"])
+    refused = (await store.list_audit_events("r1"))[-1]
+    assert (refused.kind, refused.detail["decided_by"]) == ("gate.refused", decider)
+
+
+async def test_a_run_cannot_approve_its_own_gated_write(
+    store: InMemoryRunStore, registry: ToolRegistry, protocol: Protocol, tools: Tools
+) -> None:
+    """Not even when the Colleague's escalation_contact is the Run's own principal."""
+    own = HARPER.model_copy(update={"escalation_contact": PRINCIPAL})
+    runner = Runner(FakeProvider([*TO_GATE, *AFTER_GATE]), registry, store, own, harness=HARNESS)
+    await runner.run("r1", protocol)
+    (approval,) = await store.list_approvals("r1")
+    assert approval.approver == PRINCIPAL
+    with pytest.raises(ApprovalNotAllowed):
+        await runner.resume(approval.token, protocol, decider=PRINCIPAL)
+    assert (await store.get_approval(approval.token)).decision == "pending"
+    assert tools.invoked == ["hris.get_balance"]
 
 
 async def test_a_plan_that_ends_its_step_at_a_gate_ends_it_after_the_resume(
@@ -198,7 +239,7 @@ async def test_a_plan_that_ends_its_step_at_a_gate_ends_it_after_the_resume(
     await runner.run("r1", protocol)
     (approval,) = await store.list_approvals("r1")
     runner, provider = make(AFTER_GATE[1:])
-    run = await runner.resume(approval.token, protocol)
+    run = await runner.resume(approval.token, protocol, decider=CONTACT)
     assert (run.status, run.cursor) == (RunStatus.completed, 3)
     assert {c.step.number for c in provider.calls} == {3}  # step 2 ended without another turn
     assert run.context["steps"]["2"]["output"] == "submitted"
@@ -211,7 +252,9 @@ async def test_racing_resumes_let_one_through(
     token = await pause(make, protocol, store)
     (one, _), (two, _) = make(AFTER_GATE), make(AFTER_GATE)
     results = await asyncio.gather(
-        one.resume(token, protocol), two.resume(token, protocol), return_exceptions=True
+        one.resume(token, protocol, decider=CONTACT),
+        two.resume(token, protocol, decider=CONTACT),
+        return_exceptions=True,
     )
     done = [r for r in results if not isinstance(r, BaseException)]
     lost = [r for r in results if isinstance(r, BaseException)]
@@ -245,7 +288,8 @@ async def test_declined_or_timed_out_approval_escalates_to_the_escalation_contac
     if how == "expire":
         run = await runner.expire(token)
     else:
-        run = await runner.resume(token, protocol, "declined" if how == "decline" else "approved")
+        decided = "declined" if how == "decline" else "approved"
+        run = await runner.resume(token, protocol, decider=CONTACT, decision=decided)
     assert run.status == RunStatus.escalated
     assert (await store.get_run("r1")).status == RunStatus.escalated
     assert (await store.get_approval(token)).decision == decision
@@ -254,7 +298,8 @@ async def test_declined_or_timed_out_approval_escalates_to_the_escalation_contac
     last = (await store.list_audit_events("r1"))[-1]
     assert (last.kind, last.principal_id) == ("run.escalated", "alice@example.com")
     assert last.detail == {"reason": reason, "contact": CONTACT, "step": 2,
-                           "tool": "hris.submit_leave", "token": token}  # fmt: skip
+                           "tool": "hris.submit_leave", "token": token, "approver": CONTACT,
+                           "decided_by": None if how == "expire" else CONTACT}  # fmt: skip
 
 
 async def test_expire_before_the_deadline_changes_nothing(
@@ -318,14 +363,15 @@ async def test_nothing_runs_until_every_gated_call_of_a_plan_is_approved(
     await runner.run("r1", protocol)
     (first,) = await store.list_approvals("r1")
     runner, provider = make([])
-    run = await runner.resume(first.token, protocol)
+    run = await runner.resume(first.token, protocol, decider=CONTACT)
     assert run.status == RunStatus.awaiting_approval
     assert provider.calls == []
     assert tools.invoked == ["hris.get_balance"]
     second = next(a for a in await store.list_approvals("r1") if a.token != first.token)
     assert (second.args, (await store.get_approval(first.token)).spent_at) == (OTHER, None)
     runner, _ = make(AFTER_GATE)
-    assert (await runner.resume(second.token, protocol)).status == RunStatus.completed
+    run = await runner.resume(second.token, protocol, decider=CONTACT)
+    assert run.status == RunStatus.completed
     assert tools.invoked.count("hris.submit_leave") == 2
 
 
@@ -404,5 +450,5 @@ async def test_a_token_the_run_is_not_paused_on_cannot_resume_it(
     await store.create_approval(approval(decision="pending"))
     runner, _ = make([])
     with pytest.raises(RunNotPaused):
-        await runner.resume("a1", protocol)
+        await runner.resume("a1", protocol, decider="bob")
     assert (await store.get_approval("a1")).decision == "pending"
