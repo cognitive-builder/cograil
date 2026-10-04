@@ -5,8 +5,17 @@ from typing import Any
 
 import pytest
 
-from cograil.domain import Colleague, Harness, Protocol, Step, TierDefaults, TierModels, Tool
-from cograil.errors import ProviderError
+from cograil.domain import (
+    Colleague,
+    Harness,
+    Protocol,
+    RunStatus,
+    Step,
+    TierDefaults,
+    TierModels,
+    Tool,
+)
+from cograil.errors import ProviderError, ToolNotAllowed
 from cograil.harness import (
     escalation_tier,
     step_effort,
@@ -15,7 +24,7 @@ from cograil.harness import (
     tier_model,
 )
 from cograil.parser import parse_protocol
-from cograil.providers import FakeProvider, OllamaProvider, scripted
+from cograil.providers import FakeProvider, OllamaProvider, PlannedToolCall, scripted
 from cograil.registry import ToolRegistry
 from cograil.runner import Runner
 from cograil.store import InMemoryRunStore
@@ -117,6 +126,50 @@ async def test_a_confident_or_standard_tier_result_does_not_escalate(
     await Runner(provider, ToolRegistry(store), store, HARPER).run("r1", protocol)
     assert [c.model for c in provider.calls] == ["claude-haiku-4-5", "claude-sonnet-5-5"]
     assert not [e for e in await store.list_audit_events("r1") if e.kind == "tier.escalated"]
+
+
+WRITE = Tool(name="hris.submit", kind="python", scope="write", confirm_before_write=True)
+SUBMIT = PlannedToolCall(id="c1", tool="hris.submit", args={"days": 3})
+OTHER = PlannedToolCall(id="c2", tool="hris.other", args={})
+GATED = parse_protocol('Protocol: p\n1. Step "A": Use @hris.submit to book it. (model: small)')
+
+
+@pytest.fixture
+def invoked() -> list[str]:
+    return []
+
+
+def write_registry(store: InMemoryRunStore, invoked: list[str]) -> ToolRegistry:
+    registry = ToolRegistry(store)
+
+    async def invoke(args: dict[str, Any]) -> dict[str, Any]:
+        invoked.append("hris.submit")
+        return {"ok": True}
+
+    registry.register(WRITE, invoke)
+    return registry
+
+
+async def test_a_discarded_small_plan_runs_nothing_and_the_escalated_plan_stays_gated(
+    store: InMemoryRunStore, invoked: list[str]
+) -> None:
+    """The low-confidence plan's write is dropped; the standard plan's write needs approval."""
+    low = scripted("", SUBMIT, done=True, confidence=0.2)
+    provider = FakeProvider([low, scripted("", SUBMIT)])
+    runner = Runner(provider, write_registry(store, invoked), store, HARPER)
+    run = await runner.run("r1", GATED)
+    assert invoked == [] and run.status is RunStatus.awaiting_approval
+    assert [c.model for c in provider.calls] == ["claude-haiku-4-5", "claude-sonnet-5-5"]
+
+
+async def test_the_escalated_plan_is_held_to_the_step_whitelist(
+    store: InMemoryRunStore, invoked: list[str]
+) -> None:
+    provider = FakeProvider([scripted("", done=True, confidence=0.2), scripted("", OTHER)])
+    runner = Runner(provider, write_registry(store, invoked), store, HARPER)
+    with pytest.raises(ToolNotAllowed):
+        await runner.run("r1", GATED)
+    assert invoked == []
 
 
 class StubOllama:
