@@ -198,7 +198,11 @@ async def test_resume_continues_exactly_at_the_paused_step(
 
 
 @pytest.mark.parametrize("decision", ["approved", "declined"])
-@pytest.mark.parametrize("decider", ["bob@example.com", PRINCIPAL], ids=["other", "own"])
+@pytest.mark.parametrize(
+    "decider",
+    ["bob@example.com", PRINCIPAL, " Alice@Example.COM"],
+    ids=["other", "own", "own-respelled"],  # issue #19: a spelling cannot slip past the gate
+)
 async def test_only_the_approver_may_decide_an_approval(
     store: InMemoryRunStore,
     make: Any,
@@ -215,16 +219,18 @@ async def test_only_the_approver_may_decide_an_approval(
     assert (await store.get_approval(token)).decision == "pending"
     assert (provider.calls, tools.invoked) == ([], ["hris.get_balance"])
     refused = (await store.list_audit_events("r1"))[-1]
-    assert (refused.kind, refused.detail["decided_by"]) == ("gate.refused", decider)
+    named = decider.strip().lower()  # issue #19: audited in its normalised spelling
+    assert (refused.kind, refused.detail["decided_by"]) == ("gate.refused", named)
     # Issue #102: the attempted decider is the acting principal, the Run's is in the detail.
-    assert (refused.principal_id, refused.detail["run_principal"]) == (decider, PRINCIPAL)
+    assert (refused.principal_id, refused.detail["run_principal"]) == (named, PRINCIPAL)
 
 
+@pytest.mark.parametrize("contact", [PRINCIPAL, "ALICE@example.com "], ids=["same", "respelled"])
 async def test_an_approver_who_is_the_runs_principal_escalates_at_pause_time(
-    store: InMemoryRunStore, registry: ToolRegistry, protocol: Protocol, tools: Tools
+    store: InMemoryRunStore, registry: ToolRegistry, protocol: Protocol, tools: Tools, contact: str
 ) -> None:
     """Issue #102: nobody may decide such a gate, so the Run escalates now, not at timeout."""
-    own = HARPER.model_copy(update={"escalation_contact": PRINCIPAL})
+    own = HARPER.model_copy(update={"escalation_contact": contact})
     runner = Runner(FakeProvider([*TO_GATE, *AFTER_GATE]), registry, store, own, harness=HARNESS)
     run = await runner.run("r1", protocol)
     assert (run.status, run.cursor) == (RunStatus.escalated, 1)
@@ -234,8 +240,20 @@ async def test_an_approver_who_is_the_runs_principal_escalates_at_pause_time(
     assert "gate.paused" not in await kinds(store)
     last = (await store.list_audit_events("r1"))[-1]
     assert (last.kind, last.principal_id) == ("run.escalated", PRINCIPAL)
-    assert last.detail == {"reason": "approver_is_principal", "contact": PRINCIPAL, "step": 2,
-                           "tool": "hris.submit_leave", "approver": PRINCIPAL}  # fmt: skip
+    assert last.detail == {"reason": "approver_is_principal", "contact": contact, "step": 2,
+                           "tool": "hris.submit_leave", "approver": contact}  # fmt: skip
+
+
+async def test_the_approver_may_decide_in_any_spelling(
+    store: InMemoryRunStore, make: Any, protocol: Protocol
+) -> None:
+    """Issue #19: ids are compared normalised, so the approver is not refused for case."""
+    token = await pause(make, protocol, store)
+    runner, _ = make(AFTER_GATE)
+    run = await runner.resume(token, protocol, decider=" HR-Ops@Example.com")
+    assert run.status == RunStatus.completed
+    resumed = next(e for e in await store.list_audit_events("r1") if e.kind == "gate.resumed")
+    assert resumed.detail["decided_by"] == CONTACT
 
 
 async def test_a_plan_that_ends_its_step_at_a_gate_ends_it_after_the_resume(

@@ -4,7 +4,9 @@ Layout: tools.yaml, colleagues/*.yaml and protocols/*.md are required;
 connections.yaml, audiences.yaml, knowledge.yaml, principals.yaml and decisions/*.yaml are
 optional and default to empty; harness.yaml is optional and defaults to the Harness defaults
 (ADR 0012). Each decision table must be named after its file and pass the checks of
-decisions.py, and each `decision` Tool must name a table that loaded (ADR 0009).
+decisions.py, and each `decision` Tool must name a table that loaded (ADR 0009). No principal
+id or alias may name two principals once normalised (cograil.identity), and no Colleague's
+escalation_contact may be an alias.
 Every failure is a WorkspaceError whose message names the offending file. `check_workspace`
 keeps going after a failure and reports every problem it can find; `load_workspace` raises one
 WorkspaceError carrying all of them, one per line.
@@ -34,6 +36,7 @@ from cograil.domain import (
     Workspace,
 )
 from cograil.errors import DecisionError, ProtocolParseError, WorkspaceError
+from cograil.identity import normalise_principal_id
 from cograil.parser import parse_protocol
 
 
@@ -91,6 +94,8 @@ def check_workspace(path: Path | str) -> WorkspaceReport:
         harness=problems.attempt(_load_harness, root / "harness.yaml") or Harness(),
     )
     problems.found.extend(_unknown_tables(workspace, root / "tools.yaml"))
+    problems.found.extend(_shared_names(workspace, root / "principals.yaml"))
+    problems.found.extend(_alias_contacts(workspace, root / "colleagues"))
     return WorkspaceReport(workspace, problems.found)
 
 
@@ -117,6 +122,27 @@ def _unknown_tables(workspace: Workspace, file: Path) -> list[str]:
         f"{file}: {tool.name} needs decisions/{table_name(tool)}.yaml"
         for tool in workspace.tools
         if tool.kind == "decision" and table_name(tool) not in tables
+    ]
+
+
+def _shared_names(workspace: Workspace, file: Path) -> list[str]:
+    """An id or alias naming two principals would let one sign in as the other."""
+    owners: dict[str, str] = {}
+    shared: list[str] = []
+    for principal in workspace.principals:
+        for name in dict.fromkeys([principal.id, *principal.aliases]):
+            if owners.setdefault(name, principal.id) != principal.id:
+                shared.append(f"{file}: {name} names both {owners[name]} and {principal.id}")
+    return shared
+
+
+def _alias_contacts(workspace: Workspace, folder: Path) -> list[str]:
+    """Gates compare ids, so an escalation_contact must be the principal's id, not an alias."""
+    canonical = {alias: p.id for p in workspace.principals for alias in p.aliases}
+    return [
+        f"{folder}: {c.name} escalation_contact {contact} is an alias; use {canonical[contact]}"
+        for c in workspace.colleagues
+        if (contact := normalise_principal_id(c.escalation_contact)) in canonical
     ]
 
 

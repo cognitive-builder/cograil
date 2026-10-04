@@ -54,7 +54,8 @@ a `Runner`.
    `validate_workspace` reports every problem at once rather than the first.
 3. The Protocol is picked by name, then the Colleague whose `protocols` list names it.
 4. The principal comes from `principals.yaml`. An unknown `--as` still runs, with no groups:
-   the CLI is a local and demo tool and does not authenticate anyone.
+   the CLI is a local and demo tool and does not authenticate anyone. See `docs/auth.md` for
+   how the web service signs people in.
 5. `check_audience` runs before the Run exists. An `AudienceDenied` exits 1: entitlement is
    checked before anything is spent.
 6. The Provider is `FakeProvider` with the plans from `--fake-script`, or
