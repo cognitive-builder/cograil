@@ -3,7 +3,8 @@
 The page has inline CSS and JavaScript, no framework and no build step. It talks to the API of
 cograil.api: POST /chat (server-sent events), GET /runs/{id}, GET and POST /approvals/{token},
 GET /auth/me. The page itself needs no sign-in; the page finds out who is signed in by asking
-/auth/me, and offers /auth/login when the answer is 401.
+/auth/me, and offers /auth/login — carrying its own address as `next`, so an approval link
+survives sign-in — when the answer is 401.
 """
 
 from __future__ import annotations

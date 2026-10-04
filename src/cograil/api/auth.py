@@ -9,7 +9,9 @@ Principal with `Depends(current_principal)`, which answers 401 when nobody is si
   with state and nonce, via authlib); `/auth/callback` exchanges the code, validates the ID
   token (signature, issuer, audience, nonce, expiry) and keeps the Principal in a session
   cookie signed with COGRAIL_SESSION_SECRET (HttpOnly, Secure, SameSite=Lax, 8 hours);
-  `POST /auth/logout` clears it. A sign-in is refused unless the id claim holds an email in
+  `POST /auth/logout` clears it. A `/auth/login?next=<path>` holds a same-site path the
+  callback returns the browser to after sign-in, so a link like `/?approval=<token>` survives
+  it; any other `next` falls back to `/`. A sign-in is refused unless the id claim holds an email in
   one of COGRAIL_OIDC_ALLOWED_DOMAINS, verified by the provider when the claim is `email`.
 - both: `GET /auth/me` returns the signed-in Principal.
 
@@ -38,6 +40,7 @@ from cograil.observability import log_event
 SESSION_COOKIE = "cograil_session"
 SESSION_MAX_AGE = 8 * 60 * 60
 SESSION_KEY = "principal"
+NEXT_KEY = "next"  # where /auth/login was asked to bring the browser back to
 SCOPES = "openid email profile"
 
 type PrincipalResolver = Callable[[Request], Principal]
@@ -120,6 +123,13 @@ def _session_principal(request: Request) -> Principal:
         raise HTTPException(401, "sign in at /auth/login") from None
 
 
+def _same_site_path(value: object) -> str:
+    """A path back into this service only: absolute, and never another origin."""
+    if isinstance(value, str) and value.startswith("/") and not value.startswith(("//", "\\")):
+        return value
+    return "/"
+
+
 def idp_http() -> Any:
     """The HTTP package authlib reaches the identity provider with: httpx2, else httpx."""
     from authlib.integrations.httpx_client._compat import (  # type: ignore[import-untyped]
@@ -149,6 +159,7 @@ def _oidc_router(settings: OidcAuth, workspace: Workspace, client: Any) -> APIRo
 
     @router.get("/login")
     async def login(request: Request) -> Response:
+        request.session[NEXT_KEY] = _same_site_path(request.query_params.get(NEXT_KEY))
         redirect_uri = settings.redirect_url or str(request.url_for("auth_callback"))
         response: Response = await client.authorize_redirect(request, redirect_uri)
         return response
@@ -156,10 +167,11 @@ def _oidc_router(settings: OidcAuth, workspace: Workspace, client: Any) -> APIRo
     @router.get("/callback", name="auth_callback")
     async def callback(request: Request) -> Response:
         principal = await _sign_in(settings, workspace, client, request)
+        back = _same_site_path(request.session.get(NEXT_KEY))
         request.session.clear()
         request.session[SESSION_KEY] = principal.model_dump(mode="json")
         log_event("auth.signed_in", principal_id=principal.id, groups=principal.groups)
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse(back, status_code=303)
 
     @router.post("/logout")
     async def logout(request: Request) -> Response:
