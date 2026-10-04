@@ -27,7 +27,7 @@ from cograil.errors import RunClaimLost
 from cograil.gates import Clock
 from cograil.observability import log_event
 from cograil.providers.base import Usage
-from cograil.redaction import Redactor
+from cograil.redaction import Redactor, redact_patterns
 from cograil.store import RunStore
 
 RunAuditKind = Literal[
@@ -86,13 +86,17 @@ class RunClaims:
 
     def charge_to(self, run: Run) -> Charge:
         """A Charge for model calls made for `run` without it in hand; `settled` shows them.
-        It never raises (`add_call` aside)."""
+        It never raises, not even LoopBudgetExceeded for an unpriced model (`add_call` aside).
+        A call made outside the execution (no claim, or after it ended) is logged, not charged.
+        """
         claim = run.claim or ""
 
         def charge(model: str, usage: Usage) -> None:
-            if claim in self._spent:
-                spent = add_call(self._harness, self._spent[claim], model, usage, aside=True)
-                self._spent[claim] = spent
+            if claim not in self._spent:
+                log_event("cost.dropped", logging.WARNING, run_id=run.id, model=model)
+                return
+            self._spent[claim] = add_call(self._harness, self._spent[claim], model, usage,
+                                          aside=True)  # fmt: skip
 
         return charge
 
@@ -124,7 +128,7 @@ class RunClaims:
         run = await self._store.get_run(run_id)
         if run.claim != claim:
             return
-        message = await self._redactor.redact(str(exc), self.charge_to(run))  # tool error text
+        message = await self._message(run, exc)
         try:
             run = await self.save(run, status=RunStatus.failed)
         except RunClaimLost:
@@ -134,3 +138,12 @@ class RunClaims:
         detail = {"error": type(exc).__name__, "message": message, "cursor": run.cursor}
         await self.audit(run, "run.failed", detail)
         log_event("run.failed", logging.WARNING, error=type(exc).__name__, cursor=run.cursor)
+
+    async def _message(self, run: Run, exc: Exception) -> str:
+        """`exc` redacted for the AuditEvent, as it may carry a tool's error text. Nothing the
+        redaction raises may hide `exc` or keep the Run from failing: the patterns stand then."""
+        try:
+            return await self._redactor.redact(str(exc), self.charge_to(run))
+        except Exception as error:  # the Redactor catches only CograilError from its provider
+            log_event("redaction.failed", logging.WARNING, error=type(error).__name__)
+            return redact_patterns(str(exc))

@@ -79,6 +79,7 @@ class Spend(BaseModel):
 
 
 def spend_of(run: Run) -> Spend:
+    """What `run` shows it has spent."""
     return Spend(cost_usd=run.cost_usd, usage=run_usage(run))
 
 

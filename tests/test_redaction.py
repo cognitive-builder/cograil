@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from cograil.domain import Colleague, Tool, Workspace
-from cograil.errors import ToolExecutionError
+from cograil.errors import ToolExecutionError, ToolNotAllowed
 from cograil.parser import parse_protocol
 from cograil.providers import FakeProvider, PlannedToolCall, scripted
 from cograil.redaction import (
@@ -177,6 +177,28 @@ async def test_a_run_that_fails_closed_audits_the_redacted_message(store: InMemo
     [failed] = [e for e in await store.list_audit_events("r1") if e.kind == "run.failed"]
     assert PII not in failed.detail["message"]
     assert "[REDACTED:email]" in failed.detail["message"]
+
+
+class BrokenProvider(FakeProvider):
+    """A provider that fails with an error that is not a CograilError."""
+
+    async def plan(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("connection reset")
+
+
+async def test_a_redaction_that_raises_neither_hides_the_failure_nor_keeps_the_run_running(
+    store: InMemoryRunStore,
+) -> None:
+    registry = ToolRegistry(store, Redactor(BrokenProvider([])))
+    registry.register(TOOL, _raise)
+    unlisted = scripted("", PlannedToolCall(id="c", tool="hris.other", args={}))
+    with pytest.raises(ToolNotAllowed):
+        await Runner(FakeProvider([unlisted]), registry, store, HARPER).run(
+            "r1", parse_protocol(PROTOCOL)
+        )
+    assert (await store.get_run("r1")).status == "failed"
+    [failed] = [e for e in await store.list_audit_events("r1") if e.kind == "run.failed"]
+    assert "does not list tool 'hris.other'" in failed.detail["message"]
 
 
 async def test_the_step_record_holds_the_redacted_error_while_the_model_saw_the_raw_one(
