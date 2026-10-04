@@ -1,0 +1,144 @@
+"""Issue #104: of two executions of one Run, from `run` and `resume` or from two `run`s, exactly
+one goes on. Against InMemoryRunStore and, when DATABASE_URL is set, Postgres."""
+
+import asyncio
+import uuid
+from collections.abc import AsyncIterator, Sequence
+from datetime import UTC, datetime
+from typing import Any
+
+import pytest
+
+from cograil.domain import Colleague, Principal, Run, RunStatus, Step, Tool, Trigger
+from cograil.errors import GateRequired, RunClaimLost
+from cograil.parser import parse_protocol
+from cograil.providers import FakeProvider, Plan, PlannedToolCall, scripted
+from cograil.providers.base import Message
+from cograil.registry import ToolRegistry
+from cograil.runner import Runner
+from cograil.store import InMemoryRunStore, PostgresRunStore, RunStore
+
+T0 = datetime(2026, 10, 4, 9, 0, tzinfo=UTC)
+CONTACT = "hr-ops@example.com"
+HARPER = Colleague(name="harper", role="HR", escalation_contact=CONTACT, protocols=["demo"])
+PROTOCOL = parse_protocol("""
+Protocol: demo
+1. Step "Submit": Use @hris.submit_leave with the confirmed dates.
+2. Step "Notify": Use @notify.send to tell the requester.
+""")
+TOOLS = [
+    Tool(name="hris.submit_leave", kind="python", scope="write", confirm_before_write=True),
+    Tool(name="notify.send", kind="python", scope="write", confirm_before_write=False),
+]
+SUBMIT = scripted("submit", PlannedToolCall(id="c1", tool="hris.submit_leave", args={}), done=True)
+NOTIFY = [
+    scripted("", PlannedToolCall(id="c2", tool="notify.send", args={})),
+    scripted("told", done=True),
+]
+
+
+class InterleavingStore(InMemoryRunStore):
+    """Yields to the event loop after every read of a Run, as a database round trip does."""
+
+    async def get_run(self, run_id: str) -> Run:
+        run = await super().get_run(run_id)
+        await asyncio.sleep(0)
+        return run
+
+
+class HeldProvider(FakeProvider):
+    """Sets `waiting`, then plans only once `release` is set."""
+
+    def __init__(self, script: Sequence[Plan]) -> None:
+        super().__init__(script)
+        self.waiting, self.release = asyncio.Event(), asyncio.Event()
+
+    async def plan(self, step: Step, context: Sequence[Message], tools: Sequence[Tool]) -> Plan:
+        self.waiting.set()
+        await self.release.wait()
+        return await super().plan(step, context, tools)
+
+
+@pytest.fixture(params=["memory", pytest.param("postgres", marks=pytest.mark.integration)])
+async def store(request: pytest.FixtureRequest) -> AsyncIterator[RunStore]:
+    if request.param == "memory":
+        yield InterleavingStore()
+        return
+    pg_store = PostgresRunStore.from_url(request.getfixturevalue("migrated_url"))
+    yield pg_store
+    await pg_store.dispose()
+
+
+@pytest.fixture
+async def run_id(store: RunStore) -> str:
+    run = Run(id=f"run-{uuid.uuid4().hex}", workspace="example-smb", colleague="harper",
+              protocol="demo", protocol_version=1, principal=Principal(id="alice@example.com"),
+              trigger=Trigger(kind="chat"), created_at=T0, updated_at=T0)  # fmt: skip
+    await store.create_run(run)
+    return run.id
+
+
+@pytest.fixture
+def invoked() -> list[str]:
+    return []
+
+
+@pytest.fixture
+def make(store: RunStore, invoked: list[str]) -> Any:
+    registry = ToolRegistry(store)
+    for tool in TOOLS:
+
+        async def invoke(args: dict[str, Any], name: str = tool.name) -> dict[str, Any]:
+            invoked.append(name)
+            return {"ok": True}
+
+        registry.register(tool, invoke)
+
+    def make(provider: FakeProvider) -> Runner:
+        return Runner(provider, registry, store, HARPER)
+
+    return make
+
+
+async def kinds(store: RunStore, run_id: str) -> list[str]:
+    return [e.kind for e in await store.list_audit_events(run_id)]
+
+
+async def test_two_concurrent_runs_let_exactly_one_proceed(
+    store: RunStore, run_id: str, make: Any
+) -> None:
+    results = await asyncio.gather(
+        make(FakeProvider([SUBMIT])).run(run_id, PROTOCOL),
+        make(FakeProvider([SUBMIT])).run(run_id, PROTOCOL),
+        return_exceptions=True,
+    )
+    went_on = [r for r in results if isinstance(r, Run)]
+    assert [r.status for r in went_on] == [RunStatus.awaiting_approval]  # paused at the gate
+    stopped = [r for r in results if not isinstance(r, Run)]
+    assert len(stopped) == 1 and isinstance(stopped[0], RunClaimLost | GateRequired)
+    assert (await store.get_run(run_id)).status is RunStatus.awaiting_approval
+    assert "run.failed" not in await kinds(store, run_id)
+
+
+async def test_a_run_racing_a_resume_lets_exactly_one_proceed(
+    store: RunStore, run_id: str, make: Any, invoked: list[str]
+) -> None:
+    """The race of issue #104: `run` on a Run that `resume` has just set running."""
+    await make(FakeProvider([SUBMIT])).run(run_id, PROTOCOL)
+    (approval,) = await store.list_approvals(run_id)
+    held = HeldProvider([scripted("told", done=True)])
+    resuming = asyncio.create_task(make(held).resume(approval.token, PROTOCOL, decider=CONTACT))
+    await held.waiting.wait()  # resumed: Step 1 is done and Step 2 is planning
+
+    ran = await make(FakeProvider(NOTIFY)).run(run_id, PROTOCOL)
+    held.release.set()
+    with pytest.raises(RunClaimLost):
+        await resuming
+
+    assert ran.status is RunStatus.completed
+    stored = await store.get_run(run_id)
+    assert (stored.status, stored.claim) == (RunStatus.completed, ran.claim)
+    assert invoked == ["hris.submit_leave", "notify.send"]
+    events = await kinds(store, run_id)
+    assert events.count("run.completed") == 1
+    assert "run.failed" not in events

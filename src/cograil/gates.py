@@ -9,10 +9,11 @@ Where no such Approval exists the runner pauses instead of failing: `Gates.pause
 pending Approval, saves the Step's progress (turn, messages, tool results and the plan
 waiting at the gate) in `Run.context["paused"]`, and sets the Run awaiting_approval.
 `Gates.resume` decides the Approval once, so of two racing resumes only one goes on, and
-saves the Run in the same store transaction, so a crash cannot leave one without the
-other. Only the Approval's approver may decide it, and never the Run's own principal: any
-other decider raises ApprovalNotAllowed and leaves the Run and the Approval as they were
-(principal ids are compared normalised, so a spelling cannot slip past; cograil.identity),
+saves the Run and writes the `gate.resumed` or `run.escalated` AuditEvent in the same store
+transaction, so a crash cannot leave one without the others. Only the Approval's approver
+may decide it, and never the Run's own principal: any other decider raises
+ApprovalNotAllowed and leaves the Run and the Approval as they were (principal ids are
+compared normalised, so a spelling cannot slip past; cograil.identity),
 with a `gate.refused` AuditEvent whose principal is that decider, the Run's principal in its
 detail; the decider is written on the `gate.resumed` or `run.escalated` AuditEvent. A gate
 whose approver would be the Run's own principal, whom nobody else may stand in for, escalates
@@ -242,24 +243,37 @@ class Gates:
         run = run.model_copy(update={"status": status, "updated_at": self._clock()})
         # decide_approval succeeds once per Approval, so only one racing resume gets past it,
         # and it saves the Run in the same transaction, so neither changes without the other.
-        approval = await self._store.decide_approval(
-            approval.token, decision, self._clock(), run=run
-        )
+        # Its AuditEvent is written in that transaction too (product rule 6).
         detail = {**_about(approval), "approver": approval.approver, "decided_by": decider}
-        if not approved:
-            declined = decision == "declined"
-            reason: EscalationReason = "approval_declined" if declined else "approval_expired"
-            await self._announce_escalation(run, reason, detail)
-            return run
-        await self._audit(run, "gate.resumed", detail)
-        log_event("gate.resumed", run_id=run.id, step=approval.step, tool=approval.tool)
+        reason: EscalationReason = (
+            "approval_declined" if decision == "declined" else "approval_expired"
+        )
+        event = (
+            self._event(run, "gate.resumed", detail)
+            if approved
+            else self._escalation(run, reason, detail)
+        )
+        await self._store.decide_approval(
+            approval.token, decision, self._clock(), run=run, events=[event]
+        )
+        if approved:
+            log_event("gate.resumed", run_id=run.id, step=approval.step, tool=approval.tool)
+        else:
+            self._log_escalation(run, reason)
         return run
 
     async def _announce_escalation(
         self, run: Run, reason: EscalationReason, detail: dict[str, Any]
     ) -> None:
+        await self._store.append_audit_event(self._escalation(run, reason, detail))
+        self._log_escalation(run, reason)
+
+    def _escalation(self, run: Run, reason: EscalationReason, detail: dict[str, Any]) -> AuditEvent:
         contact = self._colleague.escalation_contact
-        await self._audit(run, "run.escalated", {"reason": reason, "contact": contact, **detail})
+        return self._event(run, "run.escalated", {"reason": reason, "contact": contact, **detail})
+
+    def _log_escalation(self, run: Run, reason: EscalationReason) -> None:
+        contact = self._colleague.escalation_contact
         log_event("run.escalated", logging.WARNING, run_id=run.id, reason=reason, contact=contact)
 
     async def _save(self, run: Run, **changes: Any) -> Run:
@@ -271,11 +285,15 @@ class Gates:
         self, run: Run, kind: GateAuditKind, detail: dict[str, Any], principal: str | None = None
     ) -> None:
         """`principal` is who acted, when that is not the Run's own principal."""
+        await self._store.append_audit_event(self._event(run, kind, detail, principal))
+
+    def _event(
+        self, run: Run, kind: GateAuditKind, detail: dict[str, Any], principal: str | None = None
+    ) -> AuditEvent:
         acting = run.principal_id if principal is None else principal
-        await self._store.append_audit_event(
-            AuditEvent(run_id=run.id, at=self._clock(), principal_id=acting, kind=kind,
-                       detail=detail)
-        )  # fmt: skip
+        return AuditEvent(
+            run_id=run.id, at=self._clock(), principal_id=acting, kind=kind, detail=detail
+        )
 
 
 def _about(approval: Approval) -> dict[str, Any]:

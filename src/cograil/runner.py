@@ -27,6 +27,9 @@ every provider call the Step is checked against the Harness bounds
 `Gates.bounded`. Each call's tokens count against the Step and its cost against the Run.
 `Runner.run` stamps the harness version on the Run (ADR 0012).
 
+`Runner.run` and `Runner.resume` claim the Run (`RunStore.claim_run`): of two executions only
+the last claim's saves land, and the other stops with RunClaimLost without failing the Run.
+
 What a Step sees is the ContextBuilder's (context.py, ADR 0007): the prior Steps it declares,
 its whitelisted Tools' schemas, and Tool results inside a data block. The Window Ledger of
 that is kept in `Run.context["ledger"]`, saved with the Run.
@@ -36,6 +39,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import secrets
 import typing
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -61,6 +65,7 @@ from cograil.domain import (
 from cograil.errors import (
     GateRequired,
     LoopBudgetExceeded,
+    RunClaimLost,
     RunEnded,
     ToolExecutionError,
     ToolNotAllowed,
@@ -159,15 +164,16 @@ class Runner:
 
         A Run awaiting approval moves on only through `resume`: this raises GateRequired.
         An escalated, failed or completed Run never runs again: this raises RunEnded.
+        Another execution claiming the Run first raises RunClaimLost.
         """
         run = await self._store.get_run(run_id)
         if run.status is RunStatus.awaiting_approval:
             raise GateRequired(f"run {run_id} is awaiting approval; resume it with its token")
         if run.status in _ENDED:
             raise RunEnded(f"run {run_id} is {run.status}; it does not run again")
-        async with self._failing_closed(run_id):
-            version = harness_version(self._harness)
-            run = await self._save(run, status=RunStatus.running, harness_version=version)
+        version = harness_version(self._harness)
+        async with self._failing_closed(run_id) as claim:
+            run = await self._claim(run, claim, harness_version=version)
             detail = {"protocol": protocol.name, "version": protocol.version,
                       "harness_version": version, "cursor": run.cursor}  # fmt: skip
             await self._audit(run, "run.started", detail)
@@ -187,11 +193,13 @@ class Runner:
         or expired, the Run escalates instead. Errors in deciding (ApprovalNotAllowed for a
         decider who is not the approver or is the Run's own principal, RunNotPaused,
         ApprovalAlreadyDecided for a resume that lost a race) leave the Run as it was.
+        RunClaimLost means a `run` claimed the decided Run first and goes on with it.
         """
         run = await self._gates.resume(token, decision, decider)
         if run.status is not RunStatus.running:
             return run
-        async with self._failing_closed(run.id):
+        async with self._failing_closed(run.id) as claim:
+            run = await self._claim(run, claim)
             return await self._execute(run, protocol)
 
     async def expire(self, token: str) -> Run:
@@ -199,12 +207,14 @@ class Runner:
         return await self._gates.expire(token)
 
     @asynccontextmanager
-    async def _failing_closed(self, run_id: str) -> AsyncIterator[None]:
-        token = observability.run_id.set(run_id)
+    async def _failing_closed(self, run_id: str) -> AsyncIterator[str]:
+        token, claim = observability.run_id.set(run_id), secrets.token_hex(16)
         try:
-            yield
+            yield claim
+        except RunClaimLost:
+            raise  # another execution holds the Run; failing it is not this one's to do
         except Exception as exc:
-            await self._fail(run_id, exc)
+            await self._fail(run_id, claim, exc)
             raise
         finally:
             observability.run_id.reset(token)
@@ -235,7 +245,8 @@ class Runner:
             progress = StepProgress(step=step.number, messages=opening.messages)
             context = add_to_ledger(run.context, step.number, opening.tokens, restart=True)
             run = run.model_copy(update={"context": context})
-        run = run.model_copy(update={"context": _without(run.context, "paused")})
+        context = {name: value for name, value in run.context.items() if name != "paused"}
+        run = run.model_copy(update={"context": context})
         while True:
             if not progress.planned:
                 try:
@@ -359,8 +370,19 @@ class Runner:
                   turns=progress.turn, tokens=progress.tokens)  # fmt: skip
         return run
 
-    async def _fail(self, run_id: str, exc: Exception) -> None:
-        run = await self._save(await self._store.get_run(run_id), status=RunStatus.failed)
+    async def _claim(self, run: Run, claim: str, **changes: Any) -> Run:
+        """Take the Run over for this execution, from the Run as it was read."""
+        claimed = run.model_copy(update={**changes, "status": RunStatus.running, "claim": claim,
+                                         "updated_at": self._clock()})  # fmt: skip
+        await self._store.claim_run(claimed, run)
+        return claimed
+
+    async def _fail(self, run_id: str, claim: str, exc: Exception) -> None:
+        """Fail the Run closed, unless this execution no longer holds its claim."""
+        run = await self._store.get_run(run_id)
+        if run.claim != claim:
+            return
+        run = await self._save(run, status=RunStatus.failed)  # RunClaimLost if taken over now
         detail = {"error": type(exc).__name__, "message": str(exc), "cursor": run.cursor}
         await self._audit(run, "run.failed", detail)
         log_event("run.failed", logging.WARNING, error=type(exc).__name__, cursor=run.cursor)
@@ -375,7 +397,3 @@ class Runner:
             run_id=run.id, at=self._clock(), principal_id=run.principal_id, kind=kind, detail=detail
         )
         await self._store.append_audit_event(event)
-
-
-def _without(context: dict[str, Any], key: str) -> dict[str, Any]:
-    return {name: value for name, value in context.items() if name != key}

@@ -7,7 +7,7 @@ one line per AuditEvent and one per completed Step; the CLI prints them as the R
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 
 from cograil.domain import Approval, AuditEvent, Run, ToolCall
@@ -47,6 +47,9 @@ class ProgressStore:
             self._emit(f"step {run.cursor} complete {name}".rstrip())
         self._cursors[run.id] = run.cursor
 
+    async def claim_run(self, run: Run, read: Run) -> None:
+        await self._inner.claim_run(run, read)
+
     async def record_tool_call(self, run_id: str, call: ToolCall) -> None:
         await self._inner.record_tool_call(run_id, call)
 
@@ -60,9 +63,20 @@ class ProgressStore:
         return await self._inner.get_approval(token)
 
     async def decide_approval(
-        self, token: str, decision: ApprovalDecision, decided_at: datetime, *, run: Run
+        self,
+        token: str,
+        decision: ApprovalDecision,
+        decided_at: datetime,
+        *,
+        run: Run,
+        events: Sequence[AuditEvent] = (),
     ) -> Approval:
-        return await self._inner.decide_approval(token, decision, decided_at, run=run)
+        decided = await self._inner.decide_approval(
+            token, decision, decided_at, run=run, events=events
+        )
+        for event in events:
+            self._emit(describe(event))
+        return decided
 
     async def spend_approval(self, token: str, spent_at: datetime) -> Approval:
         return await self._inner.spend_approval(token, spent_at)

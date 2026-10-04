@@ -8,7 +8,7 @@ tokens that work as a CLI argument are issue #113.
 import asyncio
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -16,6 +16,7 @@ from cograil.context import DATA_PREAMBLE
 from cograil.domain import (
     Approval,
     ApprovalSettings,
+    AuditEvent,
     Colleague,
     Harness,
     Protocol,
@@ -483,6 +484,45 @@ async def test_an_approval_spent_by_a_racing_call_raises_gate_required(
         await runner.run("r1", protocol)
     assert tools.invoked == ["hris.get_balance"]
     assert (await raced.get_run("r1")).status == RunStatus.failed
+
+
+class CrashingAuditStore(InMemoryRunStore):
+    """Dies at a separate append of a decision's AuditEvent, as a crash after the decision's
+    commit would."""
+
+    async def append_audit_event(self, event: AuditEvent) -> None:
+        if event.kind in {"gate.resumed", "run.escalated"}:
+            raise RuntimeError("crashed after the decision was committed")
+        await super().append_audit_event(event)
+
+
+@pytest.mark.parametrize(
+    ("decision", "kind"), [("approved", "gate.resumed"), ("declined", "run.escalated")]
+)
+async def test_a_decision_is_never_saved_without_its_audit_event(
+    store: InMemoryRunStore,
+    protocol: Protocol,
+    tools: Tools,
+    decision: Literal["approved", "declined"],
+    kind: str,
+) -> None:
+    """Issue #104: the decision's AuditEvent is written in the decision's own transaction."""
+    crashing = CrashingAuditStore()
+    await crashing.create_run(await store.get_run("r1"))
+    registry, clock = build_registry(crashing, tools), Clock()
+
+    def runner(script: list[Plan]) -> Runner:
+        provider = FakeProvider(script)
+        return Runner(provider, registry, crashing, HARPER, harness=HARNESS, clock=clock)
+
+    await runner(TO_GATE).run("r1", protocol)
+    (paused,) = await crashing.list_approvals("r1")
+    await runner(AFTER_GATE).resume(paused.token, protocol, decider=CONTACT, decision=decision)
+    assert (await crashing.get_approval(paused.token)).decision == decision
+    events = [e for e in await crashing.list_audit_events("r1") if e.kind == kind]
+    assert [(e.detail["token"], e.detail["decided_by"]) for e in events] == [
+        (paused.token, CONTACT)
+    ]
 
 
 async def test_a_token_the_run_is_not_paused_on_cannot_resume_it(

@@ -21,6 +21,7 @@ from cograil.errors import (
     ApprovalNotAllowed,
     ApprovalNotFound,
     CograilError,
+    RunClaimLost,
     RunNotFound,
     RunNotPaused,
     WorkspaceError,
@@ -70,7 +71,7 @@ async def decide_approval(
         raise HTTPException(404, "no such approval") from None
     except ApprovalNotAllowed as exc:
         raise HTTPException(403, str(exc)) from None
-    except (RunNotPaused, ApprovalAlreadyDecided, WorkspaceError) as exc:
+    except (RunNotPaused, ApprovalAlreadyDecided, RunClaimLost, WorkspaceError) as exc:
         raise HTTPException(409, str(exc)) from None
     except CograilError as exc:
         failure = error_body(exc)

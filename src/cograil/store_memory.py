@@ -5,6 +5,7 @@ It follows the RunStore contract in cograil.store, which re-exports it.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 
 from cograil.domain import Approval, ApprovalDecision, AuditEvent, Run, ToolCall
@@ -13,6 +14,7 @@ from cograil.errors import (
     ApprovalNotFound,
     ApprovalNotSpendable,
     DuplicateRecord,
+    RunClaimLost,
     RunNotFound,
 )
 
@@ -47,11 +49,23 @@ class InMemoryRunStore:
         return [r.model_copy(deep=True) for r in newest[:limit]]
 
     async def update_run(self, run: Run) -> None:
+        self._require_claim(run.id, run.claim)
         self._save_run(run)
 
+    async def claim_run(self, run: Run, read: Run) -> None:
+        # No await between the check and the write, so concurrent claims cannot interleave.
+        self._require_claim(run.id, read.claim)
+        if self._runs[run.id].status != read.status:
+            raise RunClaimLost(run.id)
+        self._save_run(run)
+
+    def _require_claim(self, run_id: str, claim: str | None) -> None:
+        self._require_run(run_id)
+        if self._runs[run_id].claim != claim:
+            raise RunClaimLost(run_id)
+
     def _save_run(self, run: Run) -> None:
-        self._require_run(run.id)
-        changes = {name: getattr(run, name) for name in RUN_MUTABLE}
+        changes = {name: getattr(run, name) for name in (*RUN_MUTABLE, "claim")}
         self._runs[run.id] = self._runs[run.id].model_copy(update=changes, deep=True)
 
     async def record_tool_call(self, run_id: str, call: ToolCall) -> None:
@@ -73,16 +87,25 @@ class InMemoryRunStore:
         return self._approvals[token].model_copy(deep=True)
 
     async def decide_approval(
-        self, token: str, decision: ApprovalDecision, decided_at: datetime, *, run: Run
+        self,
+        token: str,
+        decision: ApprovalDecision,
+        decided_at: datetime,
+        *,
+        run: Run,
+        events: Sequence[AuditEvent] = (),
     ) -> Approval:
         # Every check comes before the first write, and no await between them.
         current = await self.get_approval(token)
         if current.decision != "pending":
             raise ApprovalAlreadyDecided(token)
-        self._require_run(run.id)
+        self._require_claim(run.id, run.claim)
+        for event in events:
+            self._require_run(event.run_id)
         decided = current.model_copy(update={"decision": decision, "decided_at": decided_at})
         self._approvals[token] = decided
         self._save_run(run)
+        self._audit.extend(e.model_copy(deep=True) for e in events)
         return decided.model_copy(deep=True)
 
     async def spend_approval(self, token: str, spent_at: datetime) -> Approval:

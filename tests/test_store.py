@@ -17,6 +17,7 @@ from cograil.errors import (
     ApprovalNotFound,
     ApprovalNotSpendable,
     DuplicateRecord,
+    RunClaimLost,
     RunNotFound,
 )
 from cograil.store import InMemoryRunStore, PostgresRunStore, RunStore
@@ -185,6 +186,61 @@ async def test_deciding_an_approval_saves_its_run_with_it(store: RunStore) -> No
     decided = await store.decide_approval(token, "approved", T0, run=resumed)
     assert decided.decision == "approved"
     assert await store.get_run(run.id) == resumed
+
+
+async def test_deciding_an_approval_writes_its_audit_events_with_it(store: RunStore) -> None:
+    """Issue #104: the decision, the Run and its AuditEvents are saved together or not at all."""
+    run = await stored_run(store)
+    token = f"tok-{uuid.uuid4().hex}"
+    await store.create_approval(
+        Approval(token=token, run_id=run.id, step=1, tool="hris.book", args={}, approver="bob")
+    )
+    resumed = run.model_copy(update={"status": RunStatus.running, "updated_at": T0})
+    event = AuditEvent(
+        run_id=run.id, at=T0, principal_id="bob", kind="gate.resumed", detail={"token": token}
+    )
+
+    unwritable = event.model_copy(update={"run_id": "missing"})  # fails the whole decision
+    with pytest.raises(RunNotFound):
+        await store.decide_approval(token, "approved", T0, run=resumed, events=[event, unwritable])
+    stale = resumed.model_copy(update={"claim": "another execution"})
+    with pytest.raises(RunClaimLost):
+        await store.decide_approval(token, "approved", T0, run=stale, events=[event])
+    assert (await store.get_approval(token)).decision == "pending"
+    assert await store.get_run(run.id) == run
+    assert await store.list_audit_events(run.id) == []
+
+    await store.decide_approval(token, "approved", T0, run=resumed, events=[event])
+    assert await store.get_run(run.id) == resumed
+    assert await store.list_audit_events(run.id) == [event]
+
+
+async def test_run_is_claimed_once_even_by_concurrent_claims(store: RunStore) -> None:
+    """Issue #104: of two claims from one read one wins, and the other can no longer save."""
+    run = await stored_run(store)
+    claims = [run.model_copy(update={"status": RunStatus.running, "claim": c}) for c in "ab"]
+    results = await asyncio.gather(
+        *(store.claim_run(claim, run) for claim in claims), return_exceptions=True
+    )
+    assert sorted(type(r).__name__ for r in results) == ["NoneType", "RunClaimLost"]
+    winner, loser = claims if results[0] is None else reversed(claims)
+    assert await store.get_run(run.id) == winner
+
+    with pytest.raises(RunClaimLost):
+        await store.update_run(loser.model_copy(update={"cursor": 1}))
+    with pytest.raises(RunClaimLost):
+        await store.claim_run(loser, run)
+    progressed = winner.model_copy(update={"cursor": 1})
+    await store.update_run(progressed)
+    assert await store.get_run(run.id) == progressed
+
+    paused = progressed.model_copy(update={"status": RunStatus.awaiting_approval})
+    await store.update_run(paused)
+    with pytest.raises(RunClaimLost):  # read running, but it paused before the claim
+        await store.claim_run(loser.model_copy(update={"claim": "c"}), progressed)
+    assert await store.get_run(run.id) == paused
+    with pytest.raises(RunNotFound):
+        await store.claim_run(make_run("missing"), make_run("missing"))
 
 
 async def test_approval_errors(store: RunStore) -> None:
