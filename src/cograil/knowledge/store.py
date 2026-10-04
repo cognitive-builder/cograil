@@ -102,11 +102,23 @@ def _nothing_to_search(groups: Sequence[str], sources: Sequence[str], limit: int
     return not groups or not sources or limit < 1
 
 
+def _embedder_or_default(embedder: Embedder | None) -> Embedder:
+    """The given Embedder, or HashingEmbedder. Both stores write `chunks.embedding`, so any
+    embedder they take must give exactly its width."""
+    chosen = embedder or HashingEmbedder()
+    if chosen.dimensions != EMBEDDING_DIMENSIONS:
+        raise KnowledgeSourceError(
+            f"the embedder gives {chosen.dimensions} dimensions; "
+            f"chunks.embedding holds {EMBEDDING_DIMENSIONS}"
+        )
+    return chosen
+
+
 class InMemoryKnowledgeStore:
     """Dict-backed KnowledgeStore for unit tests and local runs without a database."""
 
     def __init__(self, embedder: Embedder | None = None) -> None:
-        self._embedder = embedder or HashingEmbedder()
+        self._embedder = _embedder_or_default(embedder)
         self._chunks: dict[str, dict[str, tuple[Chunk, list[float]]]] = {}
 
     async def sync_chunks(self, source: str, chunks: Sequence[Chunk]) -> SyncCounts:
@@ -143,12 +155,7 @@ class PostgresKnowledgeStore:
 
     def __init__(self, engine: AsyncEngine, embedder: Embedder | None = None) -> None:
         self._engine = engine
-        self._embedder = embedder or HashingEmbedder()
-        if self._embedder.dimensions != EMBEDDING_DIMENSIONS:
-            raise KnowledgeSourceError(
-                f"the embedder gives {self._embedder.dimensions} dimensions; "
-                f"chunks.embedding holds {EMBEDDING_DIMENSIONS}"
-            )
+        self._embedder = _embedder_or_default(embedder)
 
     @classmethod
     def from_url(cls, url: str, embedder: Embedder | None = None) -> PostgresKnowledgeStore:

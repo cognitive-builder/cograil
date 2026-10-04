@@ -11,8 +11,9 @@ A `decision` Tool also gets a `decision.evaluated` AuditEvent naming the table, 
 the rules that fired (ADR 0009); its ToolCall result is the outcome as plain data.
 
 `build_registry` builds the python, rest, mcp and decision kinds of a Workspace. The knowledge
-and directory kinds register themselves with `register_entitled` from their own modules: their
-invoke also gets the CallContext's groups, the principal's, which the model cannot set.
+kind registers itself from `knowledge/tool.py` with `register_entitled`: its invoke also gets
+the CallContext's groups, the principal's, which the model cannot set. The directory kind is
+not implemented yet.
 """
 
 from __future__ import annotations

@@ -218,9 +218,27 @@ def test_run_refuses_a_workspace_whose_tools_are_not_built_yet(
     assert asyncio.run(shared_store.list_runs()) == []
 
 
-def test_the_example_workspace_builds_every_tool(
-    shared_store: InMemoryRunStore, tmp_path: Path
+def test_run_names_the_database_url_a_knowledge_tool_needs(
+    shared_store: InMemoryRunStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    result = runner.invoke(
+        app,
+        ["run", str(EXAMPLE), "--protocol", "policy_question", "--as", ALICE,
+         "--fake-script", script(tmp_path, "[]")],
+    )  # fmt: skip
+    assert result.exit_code == cograil.cli.EXIT_ERROR
+    assert "knowledge.search (kind knowledge) is not available" in result.output
+    assert "DATABASE_URL" in result.output
+    assert asyncio.run(shared_store.list_runs()) == []
+
+
+def test_the_example_workspace_builds_every_tool(
+    shared_store: InMemoryRunStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The knowledge kind registers only when DATABASE_URL is set. A dummy URL is enough:
+    # open_store is faked above, and engine creation is lazy, so nothing connects.
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:pw@localhost:5432/cograil")
     result = runner.invoke(
         app,
         ["run", str(EXAMPLE), "--protocol", "policy_question", "--as", ALICE,

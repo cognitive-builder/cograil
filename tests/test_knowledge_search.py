@@ -13,6 +13,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from cograil.domain import Chunk, Colleague, KnowledgeSource, Tool, Workspace
+from cograil.errors import ToolArgumentError
 from cograil.knowledge import InMemoryKnowledgeStore, KnowledgeStore, PostgresKnowledgeStore
 from cograil.knowledge.search import search_statement
 from cograil.knowledge.sync import sync_source
@@ -84,6 +85,30 @@ def search_as(store: InMemoryRunStore) -> Search:
         return list(result["results"])
 
     return search
+
+
+# --- Bad arguments are refused before the store is searched ---
+
+
+@pytest.mark.parametrize(
+    ("args", "problem"),
+    [
+        ({}, "query"),
+        ({"query": ""}, "query"),
+        ({"query": "  \t "}, "query"),
+        ({"query": "annual leave", "limit": 0}, "limit"),
+        ({"query": "annual leave", "limit": 21}, "limit"),
+        ({"query": "annual leave", "limit": True}, "limit"),  # a bool is not a whole number
+        ({"query": "annual leave", "limit": 2.5}, "limit"),
+    ],
+)
+async def test_a_bad_query_or_limit_is_refused_before_the_store_is_searched(
+    search_as: Search, args: dict[str, Any], problem: str
+) -> None:
+    kstore = InMemoryKnowledgeStore()
+    source = await held(kstore, ("leave.md", HOLIDAY, ["staff"]))
+    with pytest.raises(ToolArgumentError, match=problem):
+        await search_as(kstore, source, ["staff"], args)
 
 
 # --- The SQL filter on acl_groups is applied before similarity search, never after ---
