@@ -6,8 +6,13 @@ back without a usable confidence, routes to `none`. `none` is answered with a re
 lists what the workspace can do. Classification uses the small tier (ADR 0010): the caller
 builds the Provider on `classification_model(workspace)`.
 
+Audiences are a pre-filter (issue #20, product rule 3): the closed list holds only the pairs
+the principal may start (`cograil.audience`), so a Protocol outside the principal's audiences
+is neither offered to the model nor named in the refusal. Such a request routes to `none`,
+and the refusal gives the Colleagues' escalation contacts instead of raising an error.
+
 Every classification is logged as `orchestrator.classified` with the confidence, so evals
-can replay it. Audience checks are not done here; they have their own issue (#20).
+can replay it.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from cograil.audience import audience_denial
 from cograil.domain import Principal, Step, Tool, Workspace
 from cograil.observability import log_event
 from cograil.providers.base import Message, Provider
@@ -72,24 +78,38 @@ def classification_model(workspace: Workspace) -> str:
     return str(getattr(harness.tiers, harness.defaults.classification_tier))
 
 
-def candidates(workspace: Workspace) -> list[Candidate]:
-    """Every Colleague and Protocol pair, in workspace order; unknown Protocol names are skipped."""
+def candidates(workspace: Workspace, principal: Principal) -> list[Candidate]:
+    """The Colleague and Protocol pairs the principal may start, in workspace order.
+
+    Unknown Protocol names are skipped, and so is every pair the audience check denies.
+    """
     protocols = {p.name: p for p in workspace.protocols}
     return [
         Candidate(colleague=c.name, protocol=name, description=protocols[name].description)
         for c in workspace.colleagues
         for name in c.protocols
-        if name in protocols
+        if name in protocols and audience_denial(workspace, c, protocols[name], principal) is None
     ]
 
 
-def refusal_text(workspace: Workspace) -> str:
-    """A helpful refusal: what the message did not match, and what the workspace can do."""
-    lines = ["I can't help with that here. This is what I can do:"]
-    for c in candidates(workspace):
-        detail = f": {c.description}" if c.description else ""
-        lines.append(f"- {c.colleague} / {c.protocol}{detail}")
-    lines.append("Tell me which of these you need, or rephrase your request.")
+def escalation_contacts(workspace: Workspace) -> list[str]:
+    """Every Colleague's escalation contact, once each, in workspace order."""
+    return list(dict.fromkeys(c.escalation_contact for c in workspace.colleagues))
+
+
+def refusal_text(workspace: Workspace, principal: Principal) -> str:
+    """A helpful refusal: what the principal may ask for instead, and whom to contact."""
+    options = candidates(workspace, principal)
+    if options:
+        lines = ["I can't help with that here. This is what I can do:"]
+        for c in options:
+            detail = f": {c.description}" if c.description else ""
+            lines.append(f"- {c.colleague} / {c.protocol}{detail}")
+        lines.append("Tell me which of these you need, or rephrase your request.")
+    else:
+        lines = ["I can't help with that here: nothing in this workspace is open to you."]
+    if contacts := escalation_contacts(workspace):
+        lines.append(f"For anything else, contact {', '.join(contacts)}.")
     return "\n".join(lines)
 
 
@@ -143,9 +163,10 @@ async def classify_intent(
     workspace: Workspace, principal: Principal, message: str, provider: Provider
 ) -> Routing:
     """Route `message` to a Colleague and Protocol, or refuse when none fits."""
-    options = candidates(workspace)
+    options = candidates(workspace, principal)
     if not options:
-        return _finish(workspace, principal, message, Routing(reason="no protocols"))
+        routing = Routing(reason="no protocols open to the principal")
+        return _finish(workspace, principal, message, routing)
     plan = await provider.plan(
         _step(options), [Message(role="user", content=message)], [_route_tool(options)]
     )
@@ -166,7 +187,7 @@ async def classify_intent(
 
 def _finish(workspace: Workspace, principal: Principal, message: str, routing: Routing) -> Routing:
     if not routing.matched:
-        routing = routing.model_copy(update={"refusal": refusal_text(workspace)})
+        routing = routing.model_copy(update={"refusal": refusal_text(workspace, principal)})
     log_event(
         "orchestrator.classified",
         workspace=workspace.name,

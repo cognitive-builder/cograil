@@ -2,7 +2,7 @@
 
 import pytest
 
-from cograil.audience import check_audience
+from cograil.audience import audience_denial, check_audience
 from cograil.domain import Audience, Colleague, Principal, Protocol, Step, Workspace
 from cograil.errors import AudienceDenied
 
@@ -56,3 +56,12 @@ def test_both_audiences_and_manual_execution_must_allow(
     else:
         with pytest.raises(AudienceDenied):
             check_audience(*args, principal)
+
+
+@pytest.mark.parametrize(("scheduled", "allowed"), [(True, True), (False, False)])
+def test_the_system_actor_needs_scheduled_execution_not_an_audience(
+    scheduled: bool, allowed: bool
+) -> None:
+    system = Principal(id="scheduler", kind="system")
+    gated = protocol("managers", manual=False).model_copy(update={"scheduled_allowed": scheduled})
+    assert (audience_denial(WORKSPACE, colleague("staff"), gated, system) is None) is allowed

@@ -1,4 +1,4 @@
-"""Orchestrator intent classification: one test per acceptance criterion of issue #21.
+"""Orchestrator intent classification (issue #21) and audience pre-filter (issue #20).
 No real model is called."""
 
 import json
@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from cograil.domain import Colleague, Principal, Protocol, Step, Workspace
+from cograil.domain import Audience, Colleague, Principal, Protocol, Step, Workspace
 from cograil.orchestrator import ROUTE_TOOL, classification_model, classify_intent
 from cograil.providers import FakeProvider, PlannedToolCall, scripted
 
@@ -96,3 +96,94 @@ async def test_classification_is_logged_with_confidence(caplog: pytest.LogCaptur
     assert event["principal_id"] == "alice@example.com"
     assert event["message"] == "how many sick days?"
     assert event["model"] == "fake-model"
+
+
+# Audience checks (issue #20): the closed list and the refusal are pre-filtered by audience.
+
+MANAGER = Principal(id="mia@example.com", groups=["staff", "mgr"])
+STAFF = Principal(id="sam@example.com", groups=["staff"])
+OUTSIDER = Principal(id="olly@example.com", groups=["contractors"])
+SCHEDULER = Principal(id="scheduler", kind="system")
+
+
+def gated_workspace() -> Workspace:
+    """harper (staff) runs leave_request (everyone) and approve_leave (managers, scheduled);
+    finn (managers) runs policy_question (everyone)."""
+    return Workspace(
+        name="w",
+        audiences=[
+            Audience(name="staff", groups=["staff"]),
+            Audience(name="managers", groups=["mgr"]),
+        ],
+        colleagues=[
+            Colleague(
+                name="harper",
+                role="HR",
+                escalation_contact="hr@example.com",
+                protocols=["leave_request", "approve_leave"],
+                audiences=["staff"],
+            ),
+            Colleague(
+                name="finn",
+                role="Finance",
+                escalation_contact="finance@example.com",
+                protocols=["policy_question"],
+                audiences=["managers"],
+            ),
+        ],
+        protocols=[
+            Protocol(name="leave_request", description="Request time off.", steps=[STEP]),
+            Protocol(
+                name="approve_leave",
+                description="Approve leave.",
+                steps=[STEP],
+                audiences=["managers"],
+                scheduled_allowed=True,
+            ),
+            Protocol(name="policy_question", description="Answer policy questions.", steps=[STEP]),
+        ],
+        tools=[],
+    )
+
+
+def offered(provider: FakeProvider) -> list[str]:
+    enum: list[str] = provider.calls[0].tools[0].args_schema["properties"]["choice"]["enum"]
+    return enum
+
+
+@pytest.mark.parametrize(
+    ("principal", "labels"),
+    [
+        (MANAGER, ["harper/leave_request", "harper/approve_leave", "finn/policy_question"]),
+        (STAFF, ["harper/leave_request"]),
+        (SCHEDULER, ["harper/approve_leave"]),
+    ],
+    ids=["allowed-manager", "colleague-and-protocol-intersect", "scheduled-system-actor"],
+)
+async def test_the_model_is_offered_only_pairs_both_audiences_allow(
+    principal: Principal, labels: list[str]
+) -> None:
+    provider = route(choice=labels[0], confidence=0.9, reason="fits")
+    routing = await classify_intent(gated_workspace(), principal, "hello", provider)
+    assert offered(provider) == [*labels, "none"]
+    assert f"{routing.colleague}/{routing.protocol}" == labels[0]
+
+
+async def test_a_principal_outside_the_audience_neither_sees_the_protocol_nor_errors() -> None:
+    provider = route(choice="none", confidence=0.8, reason="not on the list")
+    routing = await classify_intent(gated_workspace(), STAFF, "approve Bo's leave", provider)
+    assert "harper/approve_leave" not in offered(provider)
+    assert not routing.matched and routing.refusal is not None
+    assert "approve_leave" not in routing.refusal and "finn" not in routing.refusal
+    assert "harper / leave_request: Request time off." in routing.refusal
+    assert "contact hr@example.com, finance@example.com." in routing.refusal
+
+
+async def test_a_principal_outside_every_audience_gets_a_refusal_without_a_model_call() -> None:
+    provider = FakeProvider([])
+    routing = await classify_intent(gated_workspace(), OUTSIDER, "approve leave", provider)
+    assert provider.calls == []
+    assert routing.refusal is not None
+    assert "nothing in this workspace is open to you" in routing.refusal
+    assert "contact hr@example.com, finance@example.com." in routing.refusal
+    assert "harper" not in routing.refusal and "leave_request" not in routing.refusal
