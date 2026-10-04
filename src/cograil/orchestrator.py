@@ -13,7 +13,8 @@ and the refusal gives the escalation contacts of the Colleagues the principal ma
 instead of raising an error.
 
 Every classification is logged as `orchestrator.classified` with the confidence, so evals
-can replay it.
+can replay it. The message snippet is left out unless the workspace's harness opts in with
+`logging.message_snippets`; then it is redacted first (`cograil.redaction`, issue #78).
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from cograil.audience import audience_denial
 from cograil.domain import Candidate, Principal, Routing, Step, Tool, Workspace
 from cograil.observability import log_event
 from cograil.providers.base import Message, Provider
+from cograil.redaction import Redactor, redact_patterns
 
 NONE = "none"
 ROUTE_TOOL = "route"
@@ -135,20 +137,27 @@ def _pick(
 
 
 async def classify_intent(
-    workspace: Workspace, principal: Principal, message: str, provider: Provider
+    workspace: Workspace,
+    principal: Principal,
+    message: str,
+    provider: Provider,
+    redactor: Redactor | None = None,
 ) -> Routing:
-    """Route `message` to a Colleague and Protocol, or refuse when none fits."""
+    """Route `message` to a Colleague and Protocol, or refuse when none fits.
+
+    `redactor` redacts the logged snippet when the workspace opts in; patterns only if omitted.
+    """
     options = candidates(workspace, principal)
     if not options:
         routing = Routing(reason="no protocols open to the principal")
-        return _finish(workspace, principal, message, routing)
+        return await _finish(workspace, principal, message, routing, redactor)
     plan = await provider.plan(
         _step(options), [Message(role="user", content=message)], [_route_tool(options)]
     )
     calls = [c for c in plan.tool_calls if c.tool == ROUTE_TOOL]
     if not calls:
         routing = Routing(reason="the model did not call route", model=plan.model)
-        return _finish(workspace, principal, message, routing)
+        return await _finish(workspace, principal, message, routing, redactor)
     picked, confidence, reason = _pick(calls[0].args, options)
     routing = Routing(
         colleague=picked.colleague if picked else None,
@@ -157,17 +166,31 @@ async def classify_intent(
         reason=reason,
         model=plan.model,
     )
-    return _finish(workspace, principal, message, routing)
+    return await _finish(workspace, principal, message, routing, redactor)
 
 
-def _finish(workspace: Workspace, principal: Principal, message: str, routing: Routing) -> Routing:
+async def _snippet(workspace: Workspace, message: str, redactor: Redactor | None) -> str | None:
+    """The redacted start of `message` for the log, or None unless the workspace opted in."""
+    if not workspace.harness.logging.message_snippets:
+        return None
+    masked = redact_patterns(message)[:LOGGED_MESSAGE_CHARS]  # mask before cutting mid-token
+    return await (redactor or Redactor()).redact(masked)
+
+
+async def _finish(
+    workspace: Workspace,
+    principal: Principal,
+    message: str,
+    routing: Routing,
+    redactor: Redactor | None,
+) -> Routing:
     if not routing.matched:
         routing = routing.model_copy(update={"refusal": refusal_text(workspace, principal)})
     log_event(
         "orchestrator.classified",
         workspace=workspace.name,
         principal_id=principal.id,
-        message=message[:LOGGED_MESSAGE_CHARS],
+        message=await _snippet(workspace, message, redactor),
         colleague=routing.colleague,
         protocol=routing.protocol,
         confidence=routing.confidence,

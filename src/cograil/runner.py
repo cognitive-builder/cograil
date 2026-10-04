@@ -150,7 +150,7 @@ class Runner:
         self._provider = provider
         self._registry = registry
         self._store = store
-        self._claims = RunClaims(store, clock)
+        self._claims = RunClaims(store, clock, registry.redactor)
         self._harness = harness or Harness()
         self._context = ContextBuilder(self._harness)
         timeout = timedelta(hours=self._harness.approvals.timeout_hours)
@@ -351,8 +351,9 @@ class Runner:
         run = run.model_copy(update={"context": {**run.context, "failures": failures}})
         if failures[call.tool] < threshold.max_failures:
             return run
+        error = await self._registry.redactor.redact(str(exc))  # the audit copy, not the model's
         detail = {"step": ctx.step, "tool": call.tool, "failures": failures[call.tool],
-                  "rule": threshold.rule, "error": str(exc)}  # fmt: skip
+                  "rule": threshold.rule, "error": error}  # fmt: skip
         return await self._gates.escalate(run, "failure_threshold", detail)
 
     def _allowed(self, step: Step, call: PlannedToolCall) -> Tool:

@@ -2,8 +2,10 @@
 
 `invoke` validates arguments against the Tool's args_schema (ToolArgumentError on
 failure), calls the Tool, then records a ToolCall and a `tool.called` AuditEvent through
-the RunStore, whether the call succeeded or not. A scope=write Tool also gets a
-`tool.started` AuditEvent just before it runs, so a crash mid-write still leaves a record.
+the RunStore, whether the call succeeded or not. The error text is redacted before it is
+stored (`cograil.redaction`, issue #78); the exception the caller gets keeps the raw text.
+A scope=write Tool also gets a `tool.started` AuditEvent just before it runs, so a crash
+mid-write still leaves a record.
 Whitelists and gates are the runner's job; the registry only answers "what is this Tool
 and what did it do".
 
@@ -51,6 +53,7 @@ from cograil.errors import (
     ToolNotFound,
 )
 from cograil.observability import log_event
+from cograil.redaction import Redactor
 from cograil.store import RunStore
 from cograil.tool_kinds import EntitledInvoke, Invoke
 from cograil.tool_kinds.mcp import McpClientFactory, McpToolset, default_mcp_client
@@ -88,8 +91,9 @@ class _Entry:
 class ToolRegistry:
     """Tool name to invokable. Use as an async context manager to close MCP clients."""
 
-    def __init__(self, store: RunStore) -> None:
+    def __init__(self, store: RunStore, redactor: Redactor | None = None) -> None:
         self._store = store
+        self.redactor = redactor or Redactor()  # patterns only unless given a small-tier Provider
         self._entries: dict[str, _Entry] = {}
         self._closers: list[Closer] = []
         self.tool_pack_version = UNVERSIONED  # build_registry sets the workspace's
@@ -147,6 +151,8 @@ class ToolRegistry:
     async def _record(
         self, ctx: CallContext, call: ToolCall, result: Any = None, error: str | None = None
     ) -> None:
+        if error is not None:  # redacted before it is stored; the model still gets the raw error
+            error = await self.redactor.redact(error)
         done = call.model_copy(update={"result": result, "error": error, "ended_at": _now()})
         await self._store.record_tool_call(ctx.run_id, done)
         detail = {"tool": call.tool, "step": ctx.step, "error": error}
@@ -193,9 +199,10 @@ async def build_registry(
     *,
     http: httpx.AsyncClient | None = None,
     mcp_client: McpClientFactory = default_mcp_client,
+    redactor: Redactor | None = None,
 ) -> ToolRegistry:
     """Build the python, rest, mcp and decision Tools of a workspace loaded from root."""
-    registry = ToolRegistry(store)
+    registry = ToolRegistry(store, redactor)
     try:
         resolver = PythonResolver(root)
         for tool in workspace.tools:

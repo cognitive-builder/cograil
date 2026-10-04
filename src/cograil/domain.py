@@ -249,6 +249,16 @@ class ApprovalSettings(Entity):
     timeout_hours: float = Field(default=72, gt=0)
 
 
+class LoggingSettings(Entity):
+    """What the runtime may log about user text. Off by default; a workspace opts in (issue #78).
+
+    `message_snippets` logs the first characters of each routed message so evals can replay
+    it, redacted like tool error text (cograil.redaction).
+    """
+
+    message_snippets: bool = False
+
+
 class Price(Entity):
     """What one model costs, in USD per million tokens."""
 
@@ -269,6 +279,7 @@ class Harness(Entity):
     defaults: TierDefaults = Field(default_factory=TierDefaults)
     retry: RetryPolicy = Field(default_factory=RetryPolicy)
     approvals: ApprovalSettings = Field(default_factory=ApprovalSettings)
+    logging: LoggingSettings = Field(default_factory=LoggingSettings)
     pricing: dict[str, Price] = Field(default_factory=dict)
 
     @model_validator(mode="after")

@@ -137,6 +137,15 @@ edits, and a database trigger rejects UPDATE, DELETE and TRUNCATE. The applicati
 `cograil_app` role, which holds only INSERT and SELECT on `audit_events`, so even disabling the
 triggers needs the owner. See `docs/deploy.md`.
 
+Error text from a Tool can carry personal data or secrets, so it is redacted before it is
+saved (issue #78, `redaction.py`). Two passes run in order: patterns for emails, tokens and API
+keys, URL credentials and connection strings, then the small tier (ADR 0010) through the
+`Provider` interface for what the patterns miss. The `ToolCall`, the `tool.called` AuditEvent,
+the `failure_threshold` escalation and the `run.failed` message hold the redacted text. The model
+still sees the raw error during the Run. If the small tier is unavailable or gives no answer, the
+patterns' result is what is saved; the raw text never is. The CLI redacts with patterns only
+under `--fake-script` or without `ANTHROPIC_API_KEY`.
+
 ## Intent classification
 
 `orchestrator.py` decides which Colleague and Protocol a free-text message is for, before any
@@ -147,7 +156,9 @@ name anything else. A choice outside the list, a missing or out-of-range confide
 the principal can do and the escalation contacts of those Colleagues. The classification model
 is the harness's `classification_tier` (`claude-haiku-4-5` by default); build the Provider on
 `classification_model(workspace)`. Each classification is logged as `orchestrator.classified`
-with the confidence, so evals can replay it.
+with the confidence, so evals can replay it. The first 500 characters of the message are left
+out of that log unless the workspace's `harness.yaml` sets `logging: {message_snippets: true}`;
+then the snippet is redacted like Tool error text (issue #78).
 
 Audiences are a pre-filter (issue #20): the enum and the refusal are built from the same
 filtered list, so a Protocol outside the principal's audiences is never offered to the model

@@ -52,6 +52,7 @@ from cograil.knowledge.tool import add_knowledge
 from cograil.progress import ProgressStore
 from cograil.providers import AnthropicProvider, FakeProvider, Provider
 from cograil.providers.fake import load_script
+from cograil.redaction import redactor
 from cograil.registry import ToolRegistry, build_registry
 from cograil.runner import Runner
 from cograil.store import PostgresRunStore, RunStore
@@ -135,9 +136,9 @@ def _provider(protocol: Protocol, colleague: Colleague, script: Path | None) -> 
     return AnthropicProvider.for_protocol(protocol, colleague)
 
 
-async def _registry(workspace: Workspace, store: RunStore, root: Path) -> ToolRegistry:
+async def _registry(workspace: Workspace, store: RunStore, root: Path, live: bool) -> ToolRegistry:
     try:
-        registry = await build_registry(workspace, store, root)
+        registry = await build_registry(workspace, store, root, redactor=redactor(workspace, live))
     except CograilError as exc:
         fail(f"cannot build the tools: {exc}")
     url = os.environ.get("DATABASE_URL")
@@ -220,7 +221,7 @@ async def _run(path: Path, protocol_name: str, principal_id: str, script: Path |
     provider = _provider(protocol, colleague, script)
     async with open_store() as base:
         store = ProgressStore(base, typer.echo)
-        async with await _registry(workspace, store, path) as registry:
+        async with await _registry(workspace, store, path, script is None) as registry:
             _check_tools(workspace, protocol, registry)
             started = _new_run(workspace, path, protocol, colleague, principal)
             await store.create_run(started)
@@ -301,7 +302,7 @@ async def _approve(
             fail(f"protocol {protocol.name} is now version {protocol.version}; the Run has "
                  f"version {paused.protocol_version}")  # fmt: skip
         provider = FakeProvider([]) if decline else _provider(protocol, colleague, script)
-        async with await _registry(workspace, store, where) as registry:
+        async with await _registry(workspace, store, where, script is None) as registry:
             runner = Runner(provider, registry, store, colleague, harness=workspace.harness)
             decision: Literal["approved", "declined"] = "declined" if decline else "approved"
             canonical = resolve_principal(workspace, decider).id

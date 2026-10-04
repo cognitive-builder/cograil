@@ -23,6 +23,7 @@ from cograil.api.services import ProviderFactory, RegistryOpener, Services
 from cograil.channels import web
 from cograil.domain import Workspace
 from cograil.providers.base import Provider
+from cograil.redaction import Redactor
 from cograil.store import RunStore
 
 
@@ -36,11 +37,13 @@ def create_app(
     provider_for: ProviderFactory,
     open_registry: RegistryOpener,
     close: Callable[[], Awaitable[None]] | None = None,
+    redactor: Redactor | None = None,
 ) -> FastAPI:
     """The service for the workspace loaded from `path`.
 
     `classifier` routes chat messages on the small tier, `provider_for` gives the Provider a
-    Protocol's Runs use, and `close` runs at shutdown.
+    Protocol's Runs use, `redactor` redacts the opt-in message snippet log, and `close` runs
+    at shutdown.
     """
 
     @asynccontextmanager
@@ -54,6 +57,7 @@ def create_app(
     services = Services(
         workspace, path, store,
         classifier=classifier, provider_for=provider_for, open_registry=open_registry,
+        redactor=redactor,
     )  # fmt: skip
     app = FastAPI(title="Cograil", version=__version__, lifespan=lifespan)
     app.state.cograil_services = services

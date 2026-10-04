@@ -7,8 +7,22 @@ from typing import Any
 
 import pytest
 
-from cograil.domain import Audience, Colleague, Principal, Protocol, Step, Workspace
-from cograil.orchestrator import ROUTE_TOOL, classification_model, classify_intent
+from cograil.domain import (
+    Audience,
+    Colleague,
+    Harness,
+    LoggingSettings,
+    Principal,
+    Protocol,
+    Step,
+    Workspace,
+)
+from cograil.orchestrator import (
+    LOGGED_MESSAGE_CHARS,
+    ROUTE_TOOL,
+    classification_model,
+    classify_intent,
+)
 from cograil.providers import FakeProvider, PlannedToolCall, scripted
 
 STEP = Step(number=1, name="s", instruction="i")
@@ -125,8 +139,25 @@ async def test_classification_is_logged_with_confidence(caplog: pytest.LogCaptur
     assert event["confidence"] == 0.71
     assert (event["colleague"], event["protocol"]) == ("harper", "policy_question")
     assert event["principal_id"] == "alice@example.com"
-    assert event["message"] == "how many sick days?"
+    assert event["message"] is None  # the snippet log is off unless the workspace opts in
     assert event["model"] == "fake-model"
+
+
+async def test_message_snippet_is_logged_redacted_when_the_workspace_opts_in(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ws = workspace().model_copy(
+        update={"harness": Harness(logging=LoggingSettings(message_snippets=True))}
+    )
+    provider = route(choice="none", confidence=0.4, reason="x")
+    with caplog.at_level(logging.INFO, logger="cograil"):
+        await classify_intent(ws, ALICE, "leave for bob@example.com ok? " + "x" * 600, provider)
+    event = next(
+        e for e in map(json.loads, (r.message for r in caplog.records))
+        if e["event"] == "orchestrator.classified"
+    )  # fmt: skip
+    assert event["message"].startswith("leave for [REDACTED:email] ok? ")
+    assert len(event["message"]) <= LOGGED_MESSAGE_CHARS
 
 
 # Audience checks (issue #20): the closed list and the refusal are pre-filtered by audience.
