@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from cograil.domain import Harness
+from cograil.domain import BudgetSettings, Harness
 from cograil.errors import WorkspaceError
 from cograil.harness import harness_version
 from cograil.workspace import load_workspace
@@ -22,6 +22,7 @@ def test_harness_yaml_is_loaded_per_workspace() -> None:
     harness = load_workspace(EXAMPLE).harness
     assert (harness.loop.max_turns, harness.loop.token_budget_per_step) == (6, 12000)
     assert harness.loop.usd_budget_per_run == 0.50
+    assert (harness.budget.monthly_usd, harness.budget.alert_at) == (50, 0.8)
     assert (harness.tiers.small, harness.tiers.standard) == (
         "claude-haiku-4-5",
         "claude-sonnet-5-5",
@@ -58,6 +59,8 @@ def test_the_version_changes_when_the_file_changes(workspace: Path) -> None:
         pytest.param("  claude-opus-5-5: {", "  claude-opus-4-8: {", id="unpriced-tier-model"),
         pytest.param("  max_turns: 6", "  max_turns: 0", id="max-turns-below-one"),
         pytest.param("loop:", "loops:", id="unknown-key"),
+        pytest.param("  monthly_usd: 50", "  monthly_usd: 0", id="cap-not-positive"),
+        pytest.param("  alert_at: 0.8", "  alert_at: 1.5", id="alert-above-the-cap"),
     ],
 )
 def test_an_invalid_harness_yaml_is_a_workspace_error(workspace: Path, old: str, new: str) -> None:
@@ -73,3 +76,8 @@ def test_message_snippet_logging_is_off_unless_harness_yaml_opts_in(workspace: P
     file = workspace / "harness.yaml"
     file.write_text(file.read_text() + "logging:\n  message_snippets: true\n")
     assert load_workspace(workspace).harness.logging.message_snippets is True
+
+
+def test_a_monthly_cap_needs_a_price_for_every_tier_model() -> None:
+    with pytest.raises(ValueError, match=r"budget\.monthly_usd needs a price"):
+        Harness(budget=BudgetSettings(monthly_usd=10))

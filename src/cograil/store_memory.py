@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 
-from cograil.domain import Approval, ApprovalDecision, AuditEvent, Run, ToolCall
+from cograil.domain import Approval, ApprovalDecision, AuditEvent, MonthUsage, Run, ToolCall
 from cograil.errors import (
     ApprovalAlreadyDecided,
     ApprovalNotFound,
@@ -56,6 +56,16 @@ class InMemoryRunStore:
         found = [r for r in self._runs.values() if principal_id in (None, r.principal_id)]
         newest = sorted(found, key=lambda r: (r.created_at, r.id), reverse=True)
         return [r.model_copy(deep=True) for r in newest[:limit]]
+
+    async def month_usage(self, workspace: str, since: datetime, until: datetime) -> MonthUsage:
+        mine = {r.id: r for r in self._runs.values() if r.workspace == workspace}
+        spend = sum(r.cost_usd for r in mine.values() if since <= r.created_at < until)
+        alerts = sum(
+            1
+            for e in self._audit
+            if e.kind == "budget.alerted" and e.run_id in mine and since <= e.at < until
+        )
+        return MonthUsage(spend_usd=spend, alerts=alerts)
 
     async def update_run(self, run: Run) -> None:
         self._require_claim(run.id, run.claim)

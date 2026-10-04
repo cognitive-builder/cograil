@@ -52,6 +52,7 @@ from typing import Any, Literal, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from cograil.budget import Budget
 from cograil.claims import RunClaims
 from cograil.compression import Compressor, recorded, shown
 from cograil.context import SCREENED_KEY, ContextBuilder, add_to_ledger
@@ -80,10 +81,7 @@ from cograil.gates import (
     require_approval,
     utc_now,
 )
-from cograil.harness import (
-    harness_version,
-    step_tier,
-)
+from cograil.harness import harness_version, step_tier
 from cograil.injection import Screen, kept
 from cograil.observability import log_event
 from cograil.providers.base import Message, PlannedToolCall, Provider
@@ -165,6 +163,7 @@ class Runner:
         self._context = ContextBuilder(self._harness)
         timeout = timedelta(hours=self._harness.approvals.timeout_hours)
         self._gates = Gates(store, colleague, timeout=timeout, clock=clock)
+        self._budget = Budget(store, self._harness.budget, colleague, clock)
         self._turns = Turns(provider, self._harness, self._claims)
         self._compressor = Compressor(provider, self._harness, self._claims)
         self._screen = Screen(provider, self._harness, self._claims)
@@ -187,10 +186,13 @@ class Runner:
         if run.tool_pack_version != UNVERSIONED:  # running again, as after a crash
             versions.require(run)
         version, pack = versions.harness_version, versions.tool_pack_version
+        starting = run.status is RunStatus.received
         async with self._claims.failing_closed(run_id) as claim:
             run = await self._claims.claim(
                 run, claim, harness_version=version, tool_pack_version=pack
             )
+            if starting and (capped := await self._budget.over_cap(run)):
+                return await self._gates.escalate(run, "monthly_cap_reached", capped)
             detail = {"protocol": protocol.name, "version": protocol.version,
                       "harness_version": version, "tool_pack_version": pack,
                       "cursor": run.cursor}  # fmt: skip
@@ -236,10 +238,10 @@ class Runner:
         graph = compile_protocol(protocol, lambda step: self._node(step, protocol))
         final = await graph.ainvoke({"run": run}, {"recursion_limit": len(protocol.steps) + 1})
         run = final["run"]
-        if run.status is not RunStatus.running:  # paused or escalated, already saved
-            return run
-        run = await self._claims.save(run, status=RunStatus.completed)
-        await self._claims.audit(run, "run.completed", {"cursor": run.cursor})
+        if run.status is RunStatus.running:  # else paused or escalated, already saved
+            run = await self._claims.save(run, status=RunStatus.completed)
+            await self._claims.audit(run, "run.completed", {"cursor": run.cursor})
+        await self._budget.alert_if_crossed(run)
         return run
 
     def _node(self, step: Step, protocol: Protocol) -> StepNode:
