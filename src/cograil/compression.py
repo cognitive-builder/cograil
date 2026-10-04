@@ -28,7 +28,6 @@ from cograil.context import (
     dump,
     estimate_tokens,
 )
-from cograil.cost import charge
 from cograil.domain import Harness, Run, Step
 from cograil.errors import ProviderError
 from cograil.gates import StepProgress
@@ -99,7 +98,7 @@ class Compressor:
                 raise ProviderError(f"compression of {call['tool']} returned no summary")
             usage = plan.usage
             progress.tokens += usage.input_tokens + usage.output_tokens
-            run = charge(self._harness, run, plan.model, usage)
+            run = self._claims.charge(run, plan.model, usage)
         compressed = estimate_tokens(dump(compressed_result(summary)))
         detail = {"step": step.number, "tool": call["tool"], "raw_tokens": raw,
                   "compressed_tokens": compressed, "threshold": threshold}  # fmt: skip

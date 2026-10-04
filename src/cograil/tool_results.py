@@ -5,13 +5,15 @@ issue #51), then long ones compressed by the small tier (compression.py), and co
 Window Ledger (context.py, ADR 0007). The Step's recorded `tool_calls` keep the raw results
 with error text redacted (#78). A failed call counts against the Tool's FailureThreshold from
 the Protocol's Error handling and escalates the Run at the limit; without a threshold it fails
-the Run. Nothing here checks or invokes a Tool: that stays in the Runner.
+the Run. Nothing here checks or invokes a Tool: that stays in the Runner. Each redaction's
+model pass is charged to the Run (issue #221).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from cograil.claims import RunClaims
 from cograil.compression import Compressor, recorded, shown
 from cograil.context import SCREENED_KEY, ContextBuilder, add_to_ledger
 from cograil.domain import Protocol, Run, Step
@@ -32,7 +34,9 @@ class ToolResults:
         gates: Gates,
         screen: Screen,
         compressor: Compressor,
+        claims: RunClaims,
     ) -> None:
+        self._claims = claims
         self._registry = registry
         self._context = context
         self._gates = gates
@@ -46,8 +50,8 @@ class ToolResults:
         injected instructions first, then long ones compressed."""
         run, safe = await self._screen.screen(run, step, progress, done)
         run, summaries = await self._compressor.compress(run, step, progress, safe)
-        progress.calls.extend(await self._recorded(recorded(kept(done, safe), summaries)))
-        return self._remember(run, step, progress, shown(safe, summaries))
+        progress.calls.extend(await self._recorded(run, recorded(kept(done, safe), summaries)))
+        return self._claims.settled(self._remember(run, step, progress, shown(safe, summaries)))
 
     async def count_failure(
         self,
@@ -66,19 +70,20 @@ class ToolResults:
         run = run.model_copy(update={"context": {**run.context, "failures": failures}})
         if failures[call.tool] < threshold.max_failures:
             return run
-        error = await self._registry.redactor.redact(str(exc))  # the audit copy, not the model's
+        charge = self._claims.charge_to(run)
+        error = await self._registry.redactor.redact(str(exc), charge)  # the audit copy
         detail = {"step": ctx.step, "tool": call.tool, "failures": failures[call.tool],
                   "rule": threshold.rule, "error": error}  # fmt: skip
-        return await self._gates.escalate(run, "failure_threshold", detail)
+        return await self._gates.escalate(self._claims.settled(run), "failure_threshold", detail)
 
-    async def _recorded(self, done: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    async def _recorded(self, run: Run, done: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """`done` as it is recorded in the Step's `tool_calls`: error text redacted (#78).
 
         The model's own messages are built from `done` as it is, so it still sees the raw error.
         """
-        redact = self._registry.redactor.redact
+        redact, charge = self._registry.redactor.redact, self._claims.charge_to(run)
         return [
-            {**c, **{k: await redact(c[k]) for k in ("error", SCREENED_KEY) if k in c}}
+            {**c, **{k: await redact(c[k], charge) for k in ("error", SCREENED_KEY) if k in c}}
             if "error" in c
             else c
             for c in done

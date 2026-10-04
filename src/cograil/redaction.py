@@ -9,7 +9,8 @@ userinfo and passwords, connection strings), then the small tier (ADR 0010, thro
 Provider interface) for what the patterns miss. The patterns also run over the model's answer,
 so the persisted text never holds more than the patterns alone would leave. When no Provider
 is given or the small tier fails, the patterns' result stands: redaction never raises and
-never stores the raw text.
+never stores the raw text. The model pass is charged to the Run it redacts for through the
+`Charge` the caller passes (issue #221).
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import re
 from collections.abc import Callable
 from re import Match
 
+from cograil.cost import Charge
 from cograil.domain import Step, Tool, Workspace
 from cograil.errors import CograilError
 from cograil.harness import task_tier, tier_model
@@ -109,8 +111,11 @@ class Redactor:
     def __init__(self, provider: Provider | None = None) -> None:
         self._provider = provider
 
-    async def redact(self, text: str) -> str:
-        """The redacted text; empty text is returned as is, with no model call."""
+    async def redact(self, text: str, charge: Charge | None = None) -> str:
+        """The redacted text; empty text is returned as is, with no model call.
+
+        `charge` is given the model pass's model and usage once the provider answered.
+        """
         masked = redact_patterns(text)
         if self._provider is None or not masked.strip():
             return masked
@@ -123,6 +128,8 @@ class Redactor:
         except CograilError as exc:
             log_event("redaction.model_failed", logging.WARNING, error=type(exc).__name__)
             return masked
+        if charge is not None:
+            charge(plan.model, plan.usage)
         for call in plan.tool_calls:
             answer = call.args.get("text")
             if call.tool == REDACT_TOOL and isinstance(answer, str):

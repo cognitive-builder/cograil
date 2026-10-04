@@ -19,7 +19,8 @@ from cograil.api.app import create_app
 from cograil.api.auth_settings import auth_settings
 from cograil.api.wiring import app_from_env, open_registry
 from cograil.audience import resolve_principal
-from cograil.domain import Colleague, Principal, Protocol, Run, RunStatus
+from cograil.cost import RunUsage, run_usage
+from cograil.domain import Colleague, Price, Principal, Protocol, Run, RunStatus
 from cograil.errors import AuthNotConfigured, StoreNotConfigured
 from cograil.orchestrator import ROUTE_TOOL
 from cograil.providers import FakeProvider, PlannedToolCall, scripted
@@ -183,6 +184,22 @@ def test_chat_stores_the_message_and_requester_as_the_run_input(env: Env) -> Non
     done = env.paused_run()
     run = stored(env, done["run"]["id"])
     assert run.context["input"] == {"message": "record 42", "requester": ALICE}
+
+
+def test_the_routing_call_is_charged_to_the_run_it_starts(env: Env) -> None:
+    services = env.app.state.cograil_services
+    harness = services.workspace.harness.model_copy(
+        update={"pricing": {"fake-model": Price(input_per_mtok=1.0, output_per_mtok=1.0)}}
+    )
+    services.workspace = services.workspace.model_copy(update={"harness": harness})
+    args = {"choice": "helper/record_item", "confidence": 0.9, "reason": "test"}
+    route = PlannedToolCall(id="t1", tool=ROUTE_TOOL, args=args)
+    env.classifier._script.append(scripted("", route, input_tokens=1000, output_tokens=200))
+    env.run_scripts.append(env.script(RUN_SCRIPT))
+    run = stored(env, dict(env.chat())["done"]["run"]["id"])
+    # The routing call, then the three turns of RUN_SCRIPT at 10 + 5 tokens each.
+    assert run_usage(run) == RunUsage(input_tokens=1000 + 30, output_tokens=200 + 15)
+    assert run.cost_usd == pytest.approx((1030 + 215) / 1_000_000)
 
 
 def test_the_message_reaches_no_audit_event_and_no_log_line(

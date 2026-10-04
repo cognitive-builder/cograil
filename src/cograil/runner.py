@@ -25,7 +25,8 @@ neither tool calls nor the signal gets a reminder and another turn; a plan with 
 its calls first, and if one of them failed the model gets another turn instead. Before every
 provider call the Step is checked against the Harness bounds (harness.py); a breach raises
 LoopBudgetExceeded, which escalates the Run through `Gates.bounded`. Each call's tokens count
-against the Step and its cost against the Run.
+against the Step and its cost against the Run; the Run's spend is kept by its claim
+(claims.py), so a Run that escalates or fails mid-Step still shows every call (issue #221).
 `Runner.run` stamps the harness version on the Run (ADR 0012), and the registry's tool pack
 version; an approval of a Run whose harness or tool pack has changed since is refused
 (run_versions.py, issue #97), so an approved write runs under what the Run started with.
@@ -111,8 +112,8 @@ class Runner:
         self._registry = registry
         self._store = store
         self._colleague = colleague
-        self._claims = RunClaims(store, clock, registry.redactor)
         self._harness = harness or Harness()
+        self._claims = RunClaims(store, clock, self._harness, registry.redactor)
         self._context = ContextBuilder(self._harness)
         timeout = timedelta(hours=self._harness.approvals.timeout_hours)
         self._gates = Gates(store, colleague, timeout=timeout, clock=clock)
@@ -120,7 +121,9 @@ class Runner:
         self._turns = Turns(provider, self._harness, self._claims)
         screen = Screen(provider, self._harness, self._claims)
         compressor = Compressor(provider, self._harness, self._claims)
-        self._results = ToolResults(registry, self._context, self._gates, screen, compressor)
+        self._results = ToolResults(
+            registry, self._context, self._gates, screen, compressor, self._claims
+        )
 
     async def run(self, run_id: str, protocol: Protocol) -> Run:
         """Run from the Step after Run.cursor until the end, a gate or an escalation.
@@ -208,7 +211,8 @@ class Runner:
 
     async def _run_step(self, step: Step, run: Run, protocol: Protocol) -> Run:
         groups = tuple(run.principal.groups)
-        ctx = CallContext(run.id, step.number, run.principal_id, groups)
+        ctx = CallContext(run.id, step.number, run.principal_id, groups,
+                          self._claims.charge_to(run))  # fmt: skip
         tools = self._context.tools_for(step, self._registry.get)
         progress = paused_progress(run, step.number)
         if progress is None:
@@ -225,7 +229,7 @@ class Runner:
                 try:
                     run, plan = await self._turns.take(run, step, tier, progress, tools, prefix)
                 except LoopBudgetExceeded as exc:
-                    return await self._gates.bounded(run, step.number, exc)
+                    return await self._bounded(run, step, exc)
                 if not plan.tool_calls:
                     if plan.step_complete is not None:
                         return await self._complete(run, step, plan.step_complete.output, progress)
@@ -239,7 +243,7 @@ class Runner:
             try:
                 run = await self._results.absorb(run, step, progress, done)
             except LoopBudgetExceeded as exc:
-                return await self._gates.bounded(run, step.number, exc)
+                return await self._bounded(run, step, exc)
             if progress.completing is not None:
                 if not any("error" in call for call in done):
                     return await self._complete(run, step, progress.completing.output, progress)
@@ -282,6 +286,10 @@ class Runner:
                 continue
             done.append({"tool": call.tool, "args": call.args, "result": result})
         return run, done
+
+    async def _bounded(self, run: Run, step: Step, exc: LoopBudgetExceeded) -> Run:
+        """Escalate on a breached bound with every call charged, those of the turn that raised."""
+        return await self._gates.bounded(self._claims.settled(run), step.number, exc)
 
     def _allowed(self, step: Step, call: PlannedToolCall) -> Tool:
         if call.tool not in step.tools:
