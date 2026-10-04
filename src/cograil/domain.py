@@ -2,7 +2,7 @@
 
 Vocabulary: Workspace, Colleague, Protocol, Step, Tool, Connection, Audience,
 Trigger, Run, Gate, Approval, AuditEvent, KnowledgeSource, Chunk.
-Issue 1 completes this module; the shapes below are the contract.
+The shapes below are the contract; Product Plan section 3 holds the ERD.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Entity(BaseModel):
@@ -81,6 +81,16 @@ class KnowledgeSource(Entity):
     acl_groups: list[str]
     chunk_size: int = 800
     chunk_overlap: int = 120
+
+
+class Chunk(Entity):
+    """A slice of a KnowledgeSource; acl_groups is what retrieval pre-filters on."""
+
+    id: str
+    source: str
+    source_uri: str
+    text: str
+    acl_groups: list[str]
 
 
 class Workspace(Entity):
@@ -156,6 +166,8 @@ class AuditEvent(Entity):
 
 
 class Run(Entity):
+    """One execution of a Protocol. principal_id and trigger_kind mirror the objects."""
+
     id: str
     workspace: str
     colleague: str
@@ -163,10 +175,33 @@ class Run(Entity):
     protocol_version: int
     harness_version: str = "unversioned"
     principal: Principal
+    principal_id: str
     trigger: Trigger
+    trigger_kind: Literal["chat", "schedule", "webhook"]
     status: RunStatus = RunStatus.received
     cursor: int = 0
     context: dict[str, Any] = Field(default_factory=dict)
     cost_usd: float = 0.0
     created_at: datetime
     updated_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def _mirror_identity(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        principal, trigger = data.get("principal"), data.get("trigger")
+        if principal is not None:
+            pid = principal.id if isinstance(principal, Principal) else principal.get("id")
+            data.setdefault("principal_id", pid)
+        if trigger is not None:
+            kind = trigger.kind if isinstance(trigger, Trigger) else trigger.get("kind")
+            data.setdefault("trigger_kind", kind)
+        return data
+
+    @model_validator(mode="after")
+    def _check_mirrored(self) -> Run:
+        if self.principal_id != self.principal.id or self.trigger_kind != self.trigger.kind:
+            raise ValueError("principal_id and trigger_kind must match principal and trigger")
+        return self
