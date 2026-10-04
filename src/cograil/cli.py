@@ -1,4 +1,4 @@
-"""The cograil command line: validate, graph, run, approve, runs, decide and knowledge sync.
+"""The cograil command line: validate, graph, eval, run, approve, runs, decide, knowledge sync.
 
 `run` and `approve` are a local and demo tool. `--as` is taken at face value: nothing here
 authenticates the principal, and the safety comes from needing DATABASE_URL. A principal's
@@ -43,6 +43,7 @@ from cograil.errors import (
     ToolNotFound,
     WorkspaceError,
 )
+from cograil.evals.cli import eval_command
 from cograil.graph_cli import graph
 from cograil.knowledge.cli import knowledge_app
 from cograil.knowledge.store import PostgresKnowledgeStore
@@ -64,6 +65,7 @@ app = typer.Typer(
 )
 app.add_typer(knowledge_app, name="knowledge")
 app.command()(graph)
+app.command(name="eval")(eval_command)
 AsOption = Annotated[
     str, typer.Option("--as", help="The principal acting (for approve, the deciding approver).")
 ]
