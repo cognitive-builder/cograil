@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from cograil.domain import Harness
+from cograil.domain import BudgetSettings, Harness
 from cograil.errors import WorkspaceError
 from cograil.harness import harness_version
 from cograil.workspace import load_workspace
@@ -76,3 +76,8 @@ def test_message_snippet_logging_is_off_unless_harness_yaml_opts_in(workspace: P
     file = workspace / "harness.yaml"
     file.write_text(file.read_text() + "logging:\n  message_snippets: true\n")
     assert load_workspace(workspace).harness.logging.message_snippets is True
+
+
+def test_a_monthly_cap_needs_a_price_for_every_tier_model() -> None:
+    with pytest.raises(ValueError, match=r"budget\.monthly_usd needs a price"):
+        Harness(budget=BudgetSettings(monthly_usd=10))

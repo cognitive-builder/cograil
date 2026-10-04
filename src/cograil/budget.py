@@ -48,7 +48,7 @@ class Budget:
         cap = self._settings.monthly_usd
         if cap is None:
             return None
-        spend = await self._spend(run)
+        spend = await self._spend(run.workspace)
         if spend >= cap:
             return {"workspace": run.workspace, "spend_usd": spend, "monthly_usd": cap}
         return None
@@ -83,6 +83,6 @@ class Budget:
         log_event("budget.alerted", logging.WARNING, run_id=run.id, workspace=run.workspace,
                   contact=contact, spend_usd=usage.spend_usd)  # fmt: skip
 
-    async def _spend(self, run: Run) -> float:
+    async def _spend(self, workspace: str) -> float:
         since, until = month_window(self._clock())
-        return (await self._store.month_usage(run.workspace, since, until)).spend_usd
+        return (await self._store.month_usage(workspace, since, until)).spend_usd

@@ -158,7 +158,8 @@ budget:
 ```
 
 The month's spend is the sum of the recorded `cost_usd` of the workspace's runs created in that
-month. Like `usd_budget_per_run`, a cap needs a `pricing` entry for every tier model.
+month; a run that starts in one month and ends in the next counts toward the month it started
+in. Like `usd_budget_per_run`, a cap needs a `pricing` entry for every tier model.
 
 - A run that would start when the month's spend is already at or over `monthly_usd` is refused.
   It escalates with a `run.escalated` AuditEvent whose reason is `monthly_cap_reached`, which names
