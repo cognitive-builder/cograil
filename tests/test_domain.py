@@ -117,18 +117,20 @@ def test_run_mirrors_principal_and_trigger() -> None:
 
 
 @pytest.mark.parametrize(
-    ("key", "value", "loc"),
+    ("key", "value", "loc", "mirror"),
     [
-        ("principal", {"groups": ["all-employees"]}, ("principal", "id")),
-        ("trigger", {"channel": "web"}, ("trigger", "kind")),
+        ("principal", {"groups": ["all-employees"]}, ("principal", "id"), "principal_id"),
+        ("trigger", {"channel": "web"}, ("trigger", "kind"), "trigger_kind"),
     ],
     ids=["principal-without-id", "trigger-without-kind"],
 )
 def test_run_missing_mirror_key_names_the_field(
-    key: str, value: dict[str, Any], loc: tuple[str, str]
+    key: str, value: dict[str, Any], loc: tuple[str, str], mirror: str
 ) -> None:
+    data = {**RUN.model_dump(), key: value}
+    del data[mirror]
     with pytest.raises(ValidationError) as exc:
-        Run.model_validate({**RUN.model_dump(), key: value})
+        Run.model_validate(data)
     errors = exc.value.errors()
     assert (loc, "missing") in [(e["loc"], e["type"]) for e in errors]
     assert all(e["type"] == "missing" for e in errors)
