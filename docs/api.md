@@ -8,7 +8,7 @@ The web service lets a signed-in person chat with a Colleague, follow a Run, and
 uvicorn --factory cograil.api.wiring:app_from_env
 ```
 
-Settings come only from environment variables.
+Settings come only from environment variables. To run the service in a container on Cloud Run, see `docs/deploy.md`.
 
 | Variable | Meaning |
 | --- | --- |
