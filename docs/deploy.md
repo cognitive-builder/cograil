@@ -32,7 +32,7 @@ The image holds no secrets and no database address. Everything comes from the Cl
 
 | Variable | Where it lives in Cloud Run |
 | --- | --- |
-| `DATABASE_URL` | Secret Manager secret `cograil-database-url` |
+| `DATABASE_URL` | Secret Manager secret `cograil-database-url`. It holds the `cograil_app` URL, not the owner URL (see "Database Roles"). |
 | `ANTHROPIC_API_KEY` | Secret Manager secret `cograil-anthropic-api-key` |
 | `COGRAIL_OIDC_CLIENT_SECRET` | Secret Manager secret `cograil-oidc-client-secret` |
 | `COGRAIL_SESSION_SECRET` | Secret Manager secret `cograil-session-secret` |
@@ -42,19 +42,58 @@ The workflow maps the four secrets on every deploy. It never reads their values,
 
 ### Neon
 
-Create a Neon project and a database, then store its connection string in `cograil-database-url` with the `asyncpg` driver and `ssl=require`:
+Create a Neon project and a database. Neon gives you a connection string for the owner, the role that created the database. Use the `asyncpg` driver and `ssl=require`:
 
 ```
-postgresql+asyncpg://USER:PASSWORD@ep-example-123456.REGION.aws.neon.tech/DBNAME?ssl=require
+postgresql+asyncpg://OWNER:PASSWORD@ep-example-123456.REGION.aws.neon.tech/DBNAME?ssl=require
 ```
 
 asyncpg does not accept `sslmode=` or `channel_binding=`; leave them out. Neon suspends an idle database as well, so the first query after a quiet spell can add a short wait on top of the Cloud Run cold start.
 
-Apply the migrations from a machine that can reach the database, with the image or a checkout. This also installs the `vector` extension:
+Set this up in three steps.
 
-```bash
-docker run --rm -e DATABASE_URL="postgresql+asyncpg://..." cograil alembic upgrade head
-```
+1. Apply the migrations with the owner connection string, from a machine that can reach the database, with the image or a checkout. Alembic reads it from `MIGRATIONS_DATABASE_URL`. This also installs the `vector` extension and creates the `cograil_app` role. The owner needs `CREATEROLE` (or to be a superuser) for that.
+
+   ```bash
+   docker run --rm -e MIGRATIONS_DATABASE_URL="postgresql+asyncpg://OWNER:...@.../DBNAME?ssl=require" cograil alembic upgrade head
+   ```
+
+2. Set the `cograil_app` password once, as the owner, with `psql` or the Neon SQL editor. Nobody can log in as `cograil_app` until you do. The password is a secret. Never commit it.
+
+   ```sql
+   ALTER ROLE cograil_app PASSWORD '...';
+   ```
+
+3. Store the `cograil_app` URL in `cograil-database-url`. Do not store the owner URL there.
+
+   ```
+   postgresql+asyncpg://cograil_app:PASSWORD@ep-example-123456.REGION.aws.neon.tech/DBNAME?ssl=require
+   ```
+
+### Database Roles
+
+Cograil uses two Postgres roles. Each has its own URL.
+
+| Role | Connects as it | Can do |
+| --- | --- | --- |
+| Owner (the role that created the database, such as Neon's default role) | Migrations, through `MIGRATIONS_DATABASE_URL` | Create and alter tables. Never given to the running service. |
+| `cograil_app` | The application, through `DATABASE_URL`: the API server, the `cograil` CLI and `cograil knowledge sync` | Only the grants below. On `audit_events` it can INSERT and SELECT, nothing else. |
+
+The `audit_events` table has triggers that reject UPDATE, DELETE and TRUNCATE. They stop application code, but not the owner, who can run `ALTER TABLE audit_events DISABLE TRIGGER`. The audit trail should not rest on triggers alone, so the application runs as a role that owns nothing and cannot do that.
+
+| Table | What `cograil_app` can do |
+| --- | --- |
+| `runs` | SELECT, INSERT, UPDATE |
+| `tool_calls` | SELECT, INSERT |
+| `approvals` | SELECT, INSERT, UPDATE |
+| `audit_events` | SELECT, INSERT |
+| `chunks` | SELECT, INSERT, UPDATE, DELETE |
+
+It can also use the sequences `tool_calls_id_seq` and `audit_events_id_seq`, and the current schema.
+
+If `MIGRATIONS_DATABASE_URL` is not set, Alembic falls back to `DATABASE_URL`. That is fine for local development with `docker compose` and for CI, where both name the owner `cograil`. When `DATABASE_URL` names `cograil_app`, you must set `MIGRATIONS_DATABASE_URL`, because `cograil_app` cannot create or alter tables.
+
+Roles belong to the whole Postgres cluster, not to one database. The downgrade of the migration revokes the grants, and drops the role only if no other database still grants it anything. A later migration that adds a table must also `GRANT` `cograil_app` what the application needs on it.
 
 ## One-Time Setup
 
