@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from cograil.api.schemas import PendingApproval, RunOutcome, RunSummary
 from cograil.api.sse import Emit
@@ -25,6 +25,7 @@ from cograil.domain import (
     Protocol,
     Routing,
     Run,
+    RunStatus,
     Trigger,
     Workspace,
 )
@@ -140,6 +141,7 @@ class Services:
             pending = [a for a in pending if same_principal(a.approver, approver)]
         return RunOutcome(
             run=RunSummary.of(run),
+            output=_final_output(run),
             awaiting=[
                 PendingApproval(token=a.token, approver=a.approver, tool=a.tool, step=a.step)
                 for a in pending
@@ -168,6 +170,19 @@ class Services:
 
 def _ignore(event: str, data: dict[str, object]) -> None:
     """The Emit of a request that does not stream."""
+
+
+def _final_output(run: Run) -> str | None:
+    """The answer a completed Run ended with: the newest output of its finished Steps. A Run
+    that stopped for a gate, was declined or failed has none yet."""
+    if run.status is not RunStatus.completed:
+        return None
+    steps: dict[str, dict[str, Any]] = run.context.get("steps", {})
+    for number in range(run.cursor, 0, -1):
+        output = steps.get(str(number), {}).get("output")
+        if isinstance(output, str):
+            return output
+    return None
 
 
 def _classified(run: Run, routing: Routing) -> AuditEvent:

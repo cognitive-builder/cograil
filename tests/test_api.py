@@ -318,6 +318,22 @@ def test_approval_post_approves_and_the_run_goes_on_at_the_paused_step(env: Env)
     assert [e.detail["decided_by"] for e in resumed] == [MANAGER]
 
 
+def test_an_approval_answers_with_the_runs_final_output(env: Env) -> None:
+    token = pending_token(env)
+    env.run_scripts.append(env.script(REST_SCRIPT))
+    outcome = env.post(f"/approvals/{token}", {"decision": "approved"}).json()
+    assert outcome["run"]["status"] == "completed"
+    assert outcome["output"] == "Recorded"  # the last Step's answer, not step 1's "Found 42"
+
+
+def test_a_run_that_has_not_completed_has_no_final_output(env: Env) -> None:
+    done = env.paused_run()  # waiting at the gate
+    assert done["output"] is None
+    declined = env.post(f"/approvals/{done['awaiting'][0]['token']}", {"decision": "declined"})
+    assert declined.json()["run"]["status"] == "escalated"
+    assert declined.json()["output"] is None
+
+
 def test_a_decider_is_shown_only_their_own_gates(tmp_path: Path) -> None:
     # Two gates, two approvers: the Run pauses at manager's gate, then at the boss's.
     env = Env(tmp_path, root=TWO_GATES)

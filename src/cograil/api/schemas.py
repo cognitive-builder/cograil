@@ -115,9 +115,13 @@ class PendingApproval(BaseModel):
 
 class RunOutcome(BaseModel):
     """Where a Run stands after a chat or a decision; `awaiting` lists the gates it waits on:
-    every one to the Run's principal, only their own to a deciding approver."""
+    every one to the Run's principal, only their own to a deciding approver. `output` is the
+    Run's final answer once it is completed, null until then."""
 
     run: RunSummary
+    output: str | None = Field(
+        default=None, description="The Run's final output once it is completed; null until then."
+    )
     awaiting: list[PendingApproval]
 
 

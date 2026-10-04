@@ -91,9 +91,13 @@ def client(env: dict[str, str], idp: FakeIdp | None = None) -> TestClient:
     return TestClient(app, base_url="https://testserver")
 
 
-def sign_in(web: TestClient, idp: FakeIdp, claims: dict[str, Any], **query: str) -> Any:
-    """Follow /auth/login to the provider, then come back to the callback with a code."""
-    login = web.get("/auth/login", follow_redirects=False)
+def sign_in(
+    web: TestClient, idp: FakeIdp, claims: dict[str, Any], *, back_to: str = "", **query: str
+) -> Any:
+    """Follow /auth/login to the provider, then come back to the callback with a code.
+    `back_to` is the `next` path the login was asked to return the browser to."""
+    params = {"next": back_to} if back_to else None
+    login = web.get("/auth/login", params=params, follow_redirects=False)
     sent = {k: v[0] for k, v in parse_qs(urlsplit(login.headers["location"]).query).items()}
     idp.claims = {"nonce": sent["nonce"], **claims}
     params = {"code": "the-code", "state": sent["state"], **query}
@@ -163,6 +167,33 @@ def test_oidc_code_flow_keeps_the_principal_in_a_signed_cookie(
     assert (me["id"], me["groups"]) == expected
     assert web.post("/auth/logout", follow_redirects=False).status_code == 303
     assert web.get("/auth/me").status_code == 401
+
+
+@pytest.mark.parametrize(
+    ("back_to", "lands_on"),
+    [
+        ("/?approval=gate-token", "/?approval=gate-token"),
+        ("/", "/"),
+        ("https://evil.test/phish", "/"),
+        ("//evil.test/phish", "/"),
+        ("/\\evil.test/phish", "/"),
+        ("\\evil.test/phish", "/"),
+        ("relative/path", "/"),
+    ],
+    ids=[
+        "approval-card",
+        "home",
+        "other-origin",
+        "protocol-relative",
+        "slash-backslash",
+        "backslash",
+        "relative",
+    ],
+)
+def test_sign_in_returns_to_a_same_site_path(idp: FakeIdp, back_to: str, lands_on: str) -> None:
+    web = client(OIDC_ENV, idp)
+    done = sign_in(web, idp, GOOGLE, back_to=back_to)
+    assert (done.status_code, done.headers["location"]) == (303, lands_on)
 
 
 def test_a_tampered_session_cookie_is_not_a_principal(idp: FakeIdp) -> None:

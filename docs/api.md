@@ -44,7 +44,7 @@ Settings come only from environment variables. To run the service in a container
 | `refusal` | Nothing fits that you may start. `text` says what you can ask. The stream ends. |
 | `run` | The Run exists. `run_id` names it for `/runs/{id}`. |
 | `progress` | One `line` for each AuditEvent and each finished Step, as it is written. |
-| `done` | The Run stopped: completed, awaiting an Approval, or escalated. The body lists any pending Approvals. The stream ends. |
+| `done` | The Run stopped: completed, awaiting an Approval, or escalated. The body carries the Run's `output` (its final answer, once completed) and lists any pending Approvals. The stream ends. |
 | `error` | The request failed. `type` is the error class and `message` says why. The stream ends. |
 
 ```text
@@ -58,7 +58,7 @@ event: progress
 data: {"line": "step 1 complete Look up"}
 
 event: done
-data: {"run": {"id": "3f9c...", "status": "awaiting_approval", ...}, "awaiting": [{"token": "...", "approver": "manager@example.com", "tool": "demo.record", "step": 2}]}
+data: {"run": {"id": "3f9c...", "status": "awaiting_approval", ...}, "output": null, "awaiting": [{"token": "...", "approver": "manager@example.com", "tool": "demo.record", "step": 2}]}
 ```
 
 ## The Web Chat
@@ -67,8 +67,8 @@ Open the service's root (`/`) in a browser. The chat is one HTML file with its o
 
 - **Chat.** You type a message and the page sends it to `POST /chat`. The reply streams in: the Colleague and Protocol it was routed to, then one line per `progress` event.
 - **Tool calls.** Each tool call shows as a collapsed row (`<details>`). Tap it to see the call's arguments and result, which the page reads from `GET /runs/{id}` once the Run stops.
-- **Approval cards.** When a Run stops at a Gate, the page shows a card. If you are the approver, it shows the call and two buttons, Approve and Decline, which `POST /approvals/{token}` with the decision and nothing else. If you are not, it says who the Run waits for. Send the approver a link to `/?approval=<token>` to open the card directly.
-- **Sign-in.** In `oidc` mode the page shows a Sign in link (to `/auth/login`) until you have a session.
+- **Approval cards.** When a Run stops at a Gate, the page shows a card. If you are the approver, it shows the call and two buttons, Approve and Decline, which `POST /approvals/{token}` with the decision and nothing else. If you are not, it says who the Run waits for. Send the approver a link to `/?approval=<token>` to open the card directly; once a decided Run completes, the card shows the Run's final output.
+- **Sign-in.** In `oidc` mode the page shows a Sign in link (to `/auth/login`) until you have a session. Sign-in returns the browser to the page it left, so an approval link keeps working.
 - **Phones.** The layout fits a narrow screen, the buttons are at least 44 pixels tall, and the text field is 16 pixels so iOS does not zoom into it. It follows the light or dark setting of the device.
 
 Limits: a decision answers when the Run next stops, not as a stream, so the card shows "going on…" until then. If the connection drops, the Run still carries on; the page says so and names the Run.

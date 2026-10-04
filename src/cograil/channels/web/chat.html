@@ -106,7 +106,8 @@ function signInNeeded() {
   const who = document.getElementById("who");
   who.textContent = "";
   const link = el("a", "", "Sign in", who);
-  link.href = "/auth/login";
+  // An address like /?approval=<token> must survive sign-in: ask to be brought back here.
+  link.href = "/auth/login?next=" + encodeURIComponent(location.pathname + location.search);
 }
 
 async function api(path, options) {
@@ -200,6 +201,7 @@ async function decide(token, decision, actions, body) {
   const outcome = await response.json();
   actions.remove();
   status.textContent = `${decision === "approved" ? "Approved" : "Declined"}. The Run is ${words(outcome.run.status)}.`;
+  if (outcome.output) el("pre", "", outcome.output, body); // the answer, once the Run completed
   for (const next of outcome.awaiting) await approvalCard(next.token, next.approver, log);
   scroll();
 }
