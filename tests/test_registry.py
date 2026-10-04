@@ -154,13 +154,17 @@ async def test_every_invoke_records_tool_call_and_audit_event(
 
 
 @pytest.mark.parametrize(
-    ("crash", "raised"),
-    [(RuntimeError("hris down"), ToolExecutionError), (asyncio.CancelledError(), None)],
+    ("crash", "raised", "kinds"),
+    [
+        (RuntimeError("hris down"), ToolExecutionError, ["tool.started", "tool.called"]),
+        (asyncio.CancelledError(), None, ["tool.started"]),
+    ],
     ids=["raises", "cancelled"],
 )
 async def test_write_tool_that_crashes_mid_call_leaves_tool_started(
     crash: BaseException,
     raised: type[BaseException] | None,
+    kinds: list[str],
     store: InMemoryRunStore,
     ctx: CallContext,
 ) -> None:
@@ -171,9 +175,9 @@ async def test_write_tool_that_crashes_mid_call_leaves_tool_started(
     registry.register(Tool(name="hris.submit_leave", kind="python", scope="write"), invoke)
     with pytest.raises(raised or type(crash)):
         await registry.invoke("hris.submit_leave", {}, ctx)
-    first, *_ = await store.list_audit_events("r1")
-    assert (first.kind, first.principal_id, first.detail) == (
-        "tool.started",
+    events = await store.list_audit_events("r1")
+    assert [e.kind for e in events] == kinds
+    assert (events[0].principal_id, events[0].detail) == (
         "alice@example.com",
         {"tool": "hris.submit_leave", "step": 2},
     )
