@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,11 +20,21 @@ from cograil.api.app import create_app
 from cograil.api.auth_settings import auth_settings
 from cograil.api.wiring import app_from_env, open_registry
 from cograil.audience import resolve_principal
-from cograil.domain import Colleague, Principal, Protocol, Run, RunStatus
+from cograil.cost import charge
+from cograil.domain import (
+    Colleague,
+    Harness,
+    Price,
+    Principal,
+    Protocol,
+    Run,
+    RunStatus,
+    Trigger,
+)
 from cograil.errors import AuthNotConfigured, StoreNotConfigured
 from cograil.orchestrator import ROUTE_TOOL
 from cograil.providers import FakeProvider, PlannedToolCall, scripted
-from cograil.providers.base import Provider
+from cograil.providers.base import Provider, Usage
 from cograil.providers.fake import load_script
 from cograil.store import InMemoryRunStore, PostgresRunStore, RunStore
 from cograil.workspace import load_workspace
@@ -50,6 +61,8 @@ ON_TO_B_SCRIPT = """
 - {text: Recorded A, done: true}
 - tool_calls: [{tool: demo.record_b, args: {item: "42"}}]
 """
+T0 = datetime(2026, 10, 4, tzinfo=UTC)
+PRICED = Harness(pricing={"m": Price(input_per_mtok=1.0, output_per_mtok=2.0)})
 
 
 class Env:
@@ -302,6 +315,39 @@ def test_each_listed_run_shows_its_tokens_by_category(env: Env) -> None:
         "batch_tokens",
     }
     assert row["cost_usd"] >= 0
+
+
+def test_the_list_and_detail_carry_the_runs_exact_usage_and_cost(env: Env) -> None:
+    # The values behind the shape the test above checks (issue #229): a Run whose tally is
+    # known reports its exact numbers on both endpoints, so a fall to all-zero usage fails.
+    run = Run(id="r-values", workspace="cli-demo", colleague="helper", protocol="record_item",
+              protocol_version=1, principal=Principal(id=ALICE), trigger=Trigger(kind="chat"),
+              status=RunStatus.completed, created_at=T0, updated_at=T0)  # fmt: skip
+    run = charge(
+        PRICED,
+        run,
+        "m",
+        Usage(
+            input_tokens=1_000_000,
+            output_tokens=250_000,
+            cache_read_tokens=500_000,
+            cache_write_tokens=200_000,
+        ),
+    )
+    run = charge(PRICED, run, "m", Usage(input_tokens=100_000))  # summed, not overwritten
+    asyncio.run(env.store.create_run(run))
+    tally = {
+        "input_tokens": 1_100_000,
+        "output_tokens": 250_000,
+        "cache_read_tokens": 500_000,
+        "cache_write_tokens": 200_000,
+        "batch_tokens": 0,
+    }
+    (row,) = env.get("/runs").json()
+    assert row["usage"] == tally
+    assert row["cost_usd"] == pytest.approx(1.9)  # 1.8 with cache at 0.1x/1.25x, then 0.1 fresh
+    detail = env.get(f"/runs/{row['id']}").json()
+    assert detail["usage"] == tally and detail["cost_usd"] == pytest.approx(1.9)
 
 
 def test_run_detail_shows_steps_calls_and_gates(env: Env) -> None:
