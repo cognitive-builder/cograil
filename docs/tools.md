@@ -1,6 +1,6 @@
 # Declaring Tools
 
-The tool registry turns a Tool name into something the runner can call. Before a Tool runs, the registry checks the arguments against the Tool's `args_schema`. This is a JSON Schema. The draft comes from its `$schema` field and defaults to 2020-12. Formats such as `date` are checked. A failed check raises `ToolArgumentError` and the Tool does not run. Every call, successful or not, records a `ToolCall` and a `tool.called` AuditEvent through the RunStore.
+The tool registry turns a Tool name into something the runner can call. Before a Tool runs, the registry checks the arguments against the Tool's `args_schema`. This is a JSON Schema. The draft comes from its `$schema` field and defaults to 2020-12. Formats such as `date` are checked. A failed check raises `ToolArgumentError` and the Tool does not run. Every call, successful or not, records a `ToolCall` and a `tool.called` AuditEvent through the RunStore. A `scope: write` Tool also records a `tool.started` AuditEvent after the check and before it runs, so a write that crashes partway still leaves a record. It names the Tool and the step but not the arguments; those stay in the `ToolCall`.
 
 The registry does not decide who may call a Tool. Whitelists and gates stay with the runner. This page covers the `python`, `rest` and `mcp` kinds. The `knowledge`, `directory` and `decision` kinds register from their own modules.
 
@@ -95,7 +95,9 @@ The registry writes JSON lines on the `cograil` logger: `tool.rest.response`, `t
 
 ## Kind: mcp
 
-One entry names one Model Context Protocol (MCP) server. The server's tools register as `<entry name>.<server tool name>`. Each one takes the server's input schema, plus the entry's `scope` and `confirm_before_write`. An entry named `github` whose server lists `create_issue` gives the Tool `github.create_issue`.
+One entry names one Model Context Protocol (MCP) server. The server's tools register as `<entry name>.<server tool name>`. Each one takes the server's input schema and the entry's `confirm_before_write`. An entry named `github` whose server lists `create_issue` gives the Tool `github.create_issue`.
+
+Server tools do not inherit the entry's `scope`. One server often has both read and write tools, so each server tool is `scope: write` unless `mcp.read_tools` lists it by its server name. Every unlisted tool on a `scope: read` entry pauses for approval, even if the entry sets `confirm_before_write: false`. Only a `scope: write` entry can waive confirmation for its server's tools, because the author has then acknowledged that the server writes. A name in `read_tools` that the server does not list raises `ToolConfigError`, so a typo cannot quietly leave a tool gated or ungated.
 
 ```yaml
 # tools.yaml
@@ -103,7 +105,11 @@ tools:
   - name: files
     kind: mcp
     scope: read
-    mcp: {transport: stdio, command: npx, args: ["-y", "@modelcontextprotocol/server-filesystem", "/data"]}
+    mcp:
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/data"]
+      read_tools: [read_text_file, list_directory, search_files]  # write_file stays gated
   - name: github
     kind: mcp
     scope: write

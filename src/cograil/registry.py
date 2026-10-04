@@ -2,8 +2,10 @@
 
 `invoke` validates arguments against the Tool's args_schema (ToolArgumentError on
 failure), calls the Tool, then records a ToolCall and a `tool.called` AuditEvent through
-the RunStore, whether the call succeeded or not. Whitelists and gates are the runner's
-job; the registry only answers "what is this Tool and what did it do".
+the RunStore, whether the call succeeded or not. A scope=write Tool also gets a
+`tool.started` AuditEvent just before it runs, so a crash mid-write still leaves a record.
+Whitelists and gates are the runner's job; the registry only answers "what is this Tool
+and what did it do".
 
 `build_registry` builds the python, rest and mcp kinds of a Workspace. The knowledge,
 directory and decision kinds register themselves with `register` from their own modules.
@@ -19,7 +21,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
 from jsonschema import Draft202012Validator, SchemaError
@@ -99,6 +101,8 @@ class ToolRegistry:
             if entry is None:
                 raise ToolNotFound(name)
             _validate(entry, args)
+            if entry.tool.scope == "write":
+                await self._audit(ctx, "tool.started", {"tool": name, "step": ctx.step})
             result = await entry.invoke(copy.deepcopy(dict(args)))
         except CograilError as exc:
             await self._record(ctx, call, error=str(exc))
@@ -116,16 +120,21 @@ class ToolRegistry:
         done = call.model_copy(update={"result": result, "error": error, "ended_at": _now()})
         await self._store.record_tool_call(ctx.run_id, done)
         detail = {"tool": call.tool, "step": ctx.step, "error": error}
+        await self._audit(ctx, "tool.called", detail)
+        log_event("tool.called", tool=call.tool, step=ctx.step, ok=error is None)
+
+    async def _audit(
+        self, ctx: CallContext, kind: Literal["tool.started", "tool.called"], detail: dict[str, Any]
+    ) -> None:
         await self._store.append_audit_event(
             AuditEvent(
                 run_id=ctx.run_id,
                 at=_now(),
                 principal_id=ctx.principal_id,
-                kind="tool.called",
+                kind=kind,
                 detail=detail,
             )
         )
-        log_event("tool.called", tool=call.tool, step=ctx.step, ok=error is None)
 
     async def aclose(self) -> None:
         closers, self._closers = self._closers, []
