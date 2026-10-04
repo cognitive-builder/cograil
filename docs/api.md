@@ -13,7 +13,7 @@ Settings come only from environment variables. To run the service in a container
 | Variable | Meaning |
 | --- | --- |
 | `COGRAIL_WORKSPACE` | The Workspace folder. The default is the current directory. |
-| `DATABASE_URL` | Required. The Postgres store, as a SQLAlchemy URL (`postgresql+asyncpg://...`). |
+| `DATABASE_URL` | Required. The Postgres store, as a SQLAlchemy URL (`postgresql+asyncpg://...`). In production it names the `cograil_app` role; migrations use `MIGRATIONS_DATABASE_URL` instead. See "Database Roles" in `docs/deploy.md`. |
 | `ANTHROPIC_API_KEY` | Read by the Anthropic provider. |
 | `COGRAIL_AUTH` | Required. `dev` or `oidc`, with the settings of that mode. See `docs/auth.md`. |
 

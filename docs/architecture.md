@@ -122,7 +122,9 @@ whose version has changed since the Run started is refused.
 
 Every gate, approval, tool call and completion is an `AuditEvent` with the principal. The
 `audit_events` table is append-only: the store offers `append_audit_event` and nothing that
-edits, and a database trigger rejects UPDATE, DELETE and TRUNCATE.
+edits, and a database trigger rejects UPDATE, DELETE and TRUNCATE. The application connects as the
+`cograil_app` role, which holds only INSERT and SELECT on `audit_events`, so even disabling the
+triggers needs the owner. See `docs/deploy.md`.
 
 ## Intent classification
 

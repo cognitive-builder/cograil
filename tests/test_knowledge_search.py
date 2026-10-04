@@ -3,6 +3,7 @@
 cite their source_uri and passage, and a principal never retrieves a Chunk outside its groups."""
 
 import re
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -39,19 +40,26 @@ async def kstore(request: pytest.FixtureRequest) -> AsyncIterator[KnowledgeStore
     if request.param == "memory":
         yield InMemoryKnowledgeStore()
         return
-    pg = PostgresKnowledgeStore.from_url(request.getfixturevalue("migrated_url"))
+    url = "app_role_url" if request.param == "postgres-app" else "migrated_url"
+    pg = PostgresKnowledgeStore.from_url(request.getfixturevalue(url))
     yield pg
     await pg.dispose()
 
 
 every_store = pytest.mark.parametrize(
-    "kstore", ["memory", pytest.param("postgres", marks=pytest.mark.integration)], indirect=True
+    "kstore",
+    [
+        "memory",
+        pytest.param("postgres", marks=pytest.mark.integration),
+        pytest.param("postgres-app", marks=pytest.mark.integration),  # as cograil_app
+    ],
+    indirect=True,
 )
 
 
 async def held(kstore: KnowledgeStore, *chunks: tuple[str, str, list[str]]) -> str:
     """Sync (uri, text, groups) Chunks into a fresh source and return its name."""
-    name = f"src-{id(kstore)}-{len(chunks)}"
+    name = f"src-{uuid.uuid4().hex}"
     await kstore.sync_chunks(name, [
         Chunk(id=f"{name}:{uri}#0", source=name, source_uri=uri, text=body, acl_groups=groups)
         for uri, body, groups in chunks
@@ -176,7 +184,7 @@ async def test_a_sidecar_naming_an_outside_group_does_not_grant_it(
     (tmp_path / "kb").mkdir()
     (tmp_path / "kb" / "pay.md").write_text(SALARY)
     (tmp_path / "kb" / "pay.md.acl.yaml").write_text("acl_groups: [outsiders, hr]\n")
-    name = f"docs-{id(kstore)}"
+    name = f"docs-{uuid.uuid4().hex}"
     await sync_source(tmp_path, KnowledgeSource(name=name, path="kb", acl_groups=["hr"]), kstore)
     assert await search_as(kstore, name, ["outsiders"], {"query": SALARY}) == []
     assert [r["source_uri"] for r in await search_as(kstore, name, ["hr"], {"query": SALARY})] == [

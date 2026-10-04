@@ -36,14 +36,19 @@ async def pg_engine(migrated_url: str) -> AsyncIterator[AsyncEngine]:
 
 
 @pytest.fixture(
-    params=["memory", pytest.param("postgres", marks=pytest.mark.integration)],
+    params=[
+        "memory",
+        pytest.param("postgres", marks=pytest.mark.integration),
+        pytest.param("postgres-app", marks=pytest.mark.integration),  # as cograil_app
+    ],
 )
 async def store(request: pytest.FixtureRequest) -> AsyncIterator[RunStore]:
     if request.param == "memory":
         yield InMemoryRunStore()
         return
     # An async fixture cannot request another async fixture by name, so this one owns its engine.
-    pg_store = PostgresRunStore.from_url(request.getfixturevalue("migrated_url"))
+    url = "app_role_url" if request.param == "postgres-app" else "migrated_url"
+    pg_store = PostgresRunStore.from_url(request.getfixturevalue(url))
     yield pg_store
     await pg_store.dispose()
 
@@ -100,12 +105,12 @@ async def test_run_round_trips_and_update_saves_progress(store: RunStore) -> Non
 
 
 async def test_list_runs_newest_first_up_to_the_limit(store: RunStore) -> None:
-    ids = []
+    ids, alice = [], unique_principal("alice")  # Postgres keeps the other params' Runs
     for minutes in (0, 2, 1):
-        run = make_run().model_copy(update={"created_at": T0 + timedelta(minutes=minutes)})
+        run = run_for(alice).model_copy(update={"created_at": T0 + timedelta(minutes=minutes)})
         await store.create_run(run)
         ids.append(run.id)
-    listed = await store.list_runs(limit=2)
+    listed = await store.list_runs(limit=2, principal_id=alice)
     assert [r.id for r in listed] == [ids[1], ids[2]]
 
 
