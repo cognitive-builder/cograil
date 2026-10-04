@@ -9,8 +9,23 @@ class WorkspaceError(CograilError):
     """A workspace folder is missing or invalid."""
 
 
-class ToolPackChanged(WorkspaceError):
-    """The tool pack is not the one the Run started with, so the Run cannot be resumed."""
+class RunVersionChanged(WorkspaceError):
+    """The workspace is not what the Run started with, so the Run cannot be approved.
+
+    `changes` maps each changed version (`harness_version`, `tool_pack_version`) to the one
+    stamped on the Run and the one the workspace has now."""
+
+    def __init__(self, message: str, changes: dict[str, dict[str, str]]) -> None:
+        super().__init__(message)
+        self.changes = changes
+
+
+class ToolPackChanged(RunVersionChanged):
+    """The tool pack is not the one the Run started with."""
+
+
+class HarnessChanged(RunVersionChanged):
+    """harness.yaml is not the one the Run started with (issue #97)."""
 
 
 class ProtocolParseError(CograilError):

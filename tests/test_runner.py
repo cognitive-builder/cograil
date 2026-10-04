@@ -26,7 +26,7 @@ from cograil.domain import (
     Tiers,
     Tool,
 )
-from cograil.errors import ProviderError, ToolNotAllowed, ToolPackChanged
+from cograil.errors import HarnessChanged, ProviderError, ToolNotAllowed, ToolPackChanged
 from cograil.harness import harness_version
 from cograil.parser import parse_protocol
 from cograil.providers import (
@@ -367,18 +367,34 @@ async def test_the_harness_and_tool_pack_versions_are_stamped_on_the_run(
     assert started.detail["tool_pack_version"] == "pack-1"
 
 
-async def test_running_again_refuses_a_run_stamped_with_another_tool_pack(
-    store: InMemoryRunStore, registry: ToolRegistry, protocol: Protocol, invoked: list[str]
+@pytest.mark.parametrize(
+    ("stamped", "error", "named"),
+    [
+        ({"tool_pack_version": "pack-1"}, ToolPackChanged, "pack-1"),
+        ({"tool_pack_version": "pack-2", "harness_version": "9.9.9+0"}, HarnessChanged, "9.9.9"),
+    ],
+    ids=["tool-pack", "harness"],
+)
+async def test_running_again_refuses_a_run_stamped_with_other_versions(
+    store: InMemoryRunStore,
+    registry: ToolRegistry,
+    protocol: Protocol,
+    invoked: list[str],
+    stamped: dict[str, str],
+    error: type[Exception],
+    named: str,
 ) -> None:
-    """A Run left running, as by a crash after its Approval was decided, keeps its pin."""
+    """A Run left running, as by a crash after its Approval was decided, keeps its versions."""
     stored = await store.get_run("r1")
-    pinned = {"status": RunStatus.running, "cursor": 2, "tool_pack_version": "pack-1"}
+    pinned = {"status": RunStatus.running, "cursor": 2,
+              "harness_version": harness_version(Harness()), **stamped}  # fmt: skip
     await store.update_run(stored.model_copy(update=pinned))
     registry.tool_pack_version = "pack-2"
-    with pytest.raises(ToolPackChanged, match="pack-1"):
+    with pytest.raises(error, match=re.escape(named)):
         await run(store, registry, protocol, NOTIFIED)
     after = await store.get_run("r1")
-    assert (after.status, after.tool_pack_version) == (RunStatus.running, "pack-1")
+    assert after.status is RunStatus.running
+    assert after.model_dump(include=set(stamped)) == stamped
     assert invoked == [] and await store.list_audit_events("r1") == []
 
 

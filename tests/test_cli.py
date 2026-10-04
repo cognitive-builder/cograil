@@ -121,35 +121,63 @@ def test_approve_refuses_anyone_but_the_approver(
     assert len(refused) == (1 if decider.strip() else 0)  # a blank --as never reaches the runner
 
 
-@pytest.mark.parametrize(
-    ("file", "old", "new"),
+# What the Run started with, changed before it is decided (issues #110, #97): a file, the text
+# replaced in it (a missing file is created), and what the refusal names.
+WORKSPACE_CHANGES = pytest.mark.parametrize(
+    ("file", "old", "new", "says"),
     [
-        ("tools.yaml", "Record an item.", "Record any item."),
-        ("tools/demo.py", "def record(", "AUDITED = False\n\n\ndef record("),
+        ("tools.yaml", "Record an item.", "Record any item.", "tool pack"),
+        ("tools/demo.py", "def record(", "AUDITED = False\n\n\ndef record(", "tool pack"),
+        ("harness.yaml", "", "loop: {max_turns: 7}\n", "harness"),
     ],
-    ids=["tools-yaml", "python-module"],
+    ids=["tools-yaml", "python-module", "harness-yaml"],
 )
-@pytest.mark.parametrize("decline", [False, True], ids=["approve", "decline"])
-def test_approve_refuses_a_run_whose_tool_pack_changed(
-    shared_store: InMemoryRunStore, tmp_path: Path, file: str, old: str, new: str, decline: bool
-) -> None:
+
+
+def started_then_changed(tmp_path: Path, file: str, old: str, new: str) -> str:
+    """The token of a Run paused in a copy of the demo workspace, changed after the pause."""
     copy = tmp_path / "ws"
     shutil.copytree(DEMO, copy)
     args = ["run", str(copy), "--protocol", "record_item", "--as", ALICE]
     started = runner.invoke(app, [*args, "--fake-script", script(tmp_path, RUN_SCRIPT)])
-    edited = (copy / file).read_text().replace(old, new, 1)
-    assert edited != (copy / file).read_text()
-    (copy / file).write_text(edited)
+    path = copy / file
+    text = path.read_text() if path.exists() else ""
+    edited = text.replace(old, new, 1)
+    assert edited != text
+    path.write_text(edited)
+    return token_in(started.output)
+
+
+@WORKSPACE_CHANGES
+def test_approve_refuses_a_run_whose_workspace_changed(
+    shared_store: InMemoryRunStore, tmp_path: Path, file: str, old: str, new: str, says: str
+) -> None:
+    token = started_then_changed(tmp_path, file, old, new)
     rest = ["--fake-script", script(tmp_path, REST_SCRIPT, "rest.yaml")]
-    flags = ["--decline", *rest] if decline else rest
-    result = runner.invoke(app, ["approve", token_in(started.output), "--as", MANAGER, *flags])
+    result = runner.invoke(app, ["approve", token, "--as", MANAGER, *rest])
     assert result.exit_code == cograil.cliexit.EXIT_ERROR
-    assert "refused" in result.output and "tool pack" in result.output
+    assert "refused" in result.output and says in result.output
     (run,) = asyncio.run(shared_store.list_runs())
     assert run.status is RunStatus.awaiting_approval
     (approval,) = asyncio.run(shared_store.list_approvals(run.id))
     assert approval.decision == "pending"
     assert asyncio.run(shared_store.list_tool_calls(run.id))[-1].tool == "demo.lookup"
+    refused = asyncio.run(shared_store.list_audit_events(run.id))[-1]
+    assert (refused.kind, refused.principal_id) == ("gate.refused", MANAGER)
+    assert refused.detail["reason"] == "run_version_changed"
+
+
+@WORKSPACE_CHANGES
+def test_decline_escalates_a_run_whose_workspace_changed(
+    shared_store: InMemoryRunStore, tmp_path: Path, file: str, old: str, new: str, says: str
+) -> None:
+    token = started_then_changed(tmp_path, file, old, new)
+    result = runner.invoke(app, ["approve", token, "--as", MANAGER, "--decline"])
+    assert result.exit_code == cograil.cliexit.EXIT_ESCALATED, result.output
+    (run,) = asyncio.run(shared_store.list_runs())
+    assert run.status is RunStatus.escalated
+    escalated = asyncio.run(shared_store.list_audit_events(run.id))[-1]
+    assert (escalated.kind, escalated.detail["decided_by"]) == ("run.escalated", MANAGER)
 
 
 class TakenOverAfterTheDecisionStore(InMemoryRunStore):

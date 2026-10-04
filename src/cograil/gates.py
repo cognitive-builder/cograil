@@ -18,7 +18,10 @@ ApprovalNotAllowed and leaves the Run and the Approval as they were (principal i
 compared normalised, so a spelling cannot slip past; cograil.identity),
 with a `gate.refused` AuditEvent whose principal is that decider, the Run's principal in its
 detail; the decider is written on the `gate.resumed` or `run.escalated` AuditEvent. An empty
-decider is refused with ApprovalNotAllowed before anything is audited. A gate whose
+decider is refused with ApprovalNotAllowed before anything is audited. The approver's
+approval of a Run started under another harness or tool pack (run_versions.py) is refused
+too, with ToolPackChanged or HarnessChanged and a `gate.refused` AuditEvent whose reason is
+`run_version_changed`; the approver may still decline it (issue #97). A gate whose
 approver would be the Run's own principal, whom nobody else may stand in for, escalates at
 pause time instead of waiting out the timeout, with the attempted call's args in its
 `run.escalated` detail and the Step's progress in `Run.context["paused"]` (#107). An
@@ -56,6 +59,7 @@ from cograil.identity import normalise_principal_id, same_principal
 from cograil.observability import log_event
 from cograil.providers.base import Message, PlannedToolCall, StepComplete
 from cograil.registry import CallContext
+from cograil.run_versions import RunVersions
 from cograil.store import RunStore
 
 Clock = Callable[[], datetime]
@@ -69,6 +73,7 @@ EscalationReason = Literal[
     "failure_threshold",
     "loop_budget_exceeded",
 ]
+RefusalReason = Literal["not_approver", "run_version_changed"]
 
 
 def needs_approval(tool: Tool) -> bool:
@@ -197,28 +202,36 @@ class Gates:
             raise GateRequired(f"{approval.tool}: its Approval is already spent") from exc
 
     async def resume(
-        self, token: str, decision: Literal["approved", "declined"], decider: str
+        self,
+        token: str,
+        decision: Literal["approved", "declined"],
+        decider: str,
+        *,
+        versions: RunVersions,
     ) -> Run:
         """Decide the Approval the Run is paused on: running again, or escalated.
 
         Raises ApprovalNotAllowed, leaving the Run and the Approval as they were, unless
         `decider` is the Approval's approver and not the Run's own principal. An empty
         `decider` is refused before anything is read or audited: an AuditEvent needs a
-        principal (product rule 6).
+        principal (product rule 6). An approval of a Run started under other `versions` is
+        refused the same way with ToolPackChanged or HarnessChanged (issue #97); a decline is not.
         """
         decider = normalise_principal_id(decider)  # one spelling in the audit trail
         if not decider:
             raise ApprovalNotAllowed("an Approval is decided by a named principal, not by nobody")
         approval, run = await self._paused_on(token)
-        is_approver = same_principal(decider, approval.approver)
-        if not is_approver or same_principal(decider, run.principal_id):
-            detail = {**_about(approval), "approver": approval.approver, "decided_by": decider,
-                      "run_principal": run.principal_id}  # fmt: skip
-            await self._audit(run, "gate.refused", detail, principal=decider)
-            log_event("gate.refused", logging.WARNING, run_id=run.id, step=approval.step)
+        if not same_principal(decider, approval.approver) or same_principal(
+            decider, run.principal_id
+        ):
+            await self._refuse(run, approval, decider, "not_approver")
             raise ApprovalNotAllowed(f"{decider} may not decide the Approval for {approval.tool}")
         if self._overdue(approval):
             return await self._decide(run, approval, "expired", decider)
+        refusal = versions.refusal(run) if decision == "approved" else None
+        if refusal is not None:  # an approval would run Tool code under changed versions
+            await self._refuse(run, approval, decider, "run_version_changed", refusal.changes)
+            raise refusal
         return await self._decide(run, approval, decision, decider)
 
     async def expire(self, token: str) -> Run:
@@ -251,6 +264,23 @@ class Gates:
 
     def _overdue(self, approval: Approval) -> bool:
         return approval.expires_at is not None and self._clock() >= approval.expires_at
+
+    async def _refuse(
+        self,
+        run: Run,
+        approval: Approval,
+        decider: str,
+        reason: RefusalReason,
+        changes: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Audit a refused decision, with the decider as the acting principal (#102, #182)."""
+        detail = {**_about(approval), "approver": approval.approver, "decided_by": decider,
+                  "run_principal": run.principal_id, "reason": reason}  # fmt: skip
+        if changes is not None:
+            detail["changes"] = dict(changes)
+        await self._audit(run, "gate.refused", detail, principal=decider)
+        log_event("gate.refused", logging.WARNING, run_id=run.id, step=approval.step,
+                  reason=reason)  # fmt: skip
 
     async def _decide(
         self,
