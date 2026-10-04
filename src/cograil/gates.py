@@ -8,12 +8,13 @@ records it. `require_approval` is the fail-closed core and raises GateRequired.
 Where no such Approval exists the runner pauses instead of failing: `Gates.pause` creates a
 pending Approval, saves the Step's progress (turn, messages, tool results and the plan
 waiting at the gate) in `Run.context["paused"]`, and sets the Run awaiting_approval.
-`Gates.resume` decides the Approval once, so of two racing resumes only one goes on. Only
-the Approval's approver may decide it, and never the Run's own principal: any other decider
-raises ApprovalNotAllowed and leaves the Run and the Approval as they were, with a
-`gate.refused` AuditEvent naming them; the decider is written on the `gate.resumed` or
-`run.escalated` AuditEvent. An approved Approval resumes the Run exactly
-at the paused Step; a declined one, or one past its expires_at, escalates the Run to the
+`Gates.resume` decides the Approval once, so of two racing resumes only one goes on, and
+saves the Run in the same store transaction, so a crash cannot leave one without the
+other. Only the Approval's approver may decide it, and never the Run's own principal: any
+other decider raises ApprovalNotAllowed and leaves the Run and the Approval as they were,
+with a `gate.refused` AuditEvent naming them; the decider is written on the `gate.resumed`
+or `run.escalated` AuditEvent. An approved Approval resumes the Run exactly at the paused
+Step; a declined one, or one past its expires_at, escalates the Run to the
 Colleague's escalation_contact, as does a Tool reaching its FailureThreshold
 (`Gates.escalate`) or a Step hitting a loop bound (`Gates.bounded`, ADR 0008). An Approval
 expires after harness.yaml's approvals.timeout_hours.
@@ -181,10 +182,8 @@ class Gates:
 
     async def escalate(self, run: Run, reason: EscalationReason, detail: dict[str, Any]) -> Run:
         """Stop the Run and hand it to the Colleague's escalation_contact."""
-        contact = self._colleague.escalation_contact
         run = await self._save(run, status=RunStatus.escalated)
-        await self._audit(run, "run.escalated", {"reason": reason, "contact": contact, **detail})
-        log_event("run.escalated", logging.WARNING, run_id=run.id, reason=reason, contact=contact)
+        await self._announce_escalation(run, reason, detail)
         return run
 
     async def bounded(self, run: Run, step: int, exc: LoopBudgetExceeded) -> Run:
@@ -213,17 +212,30 @@ class Gates:
         decider: str | None,
     ) -> Run:
         """`decider` is None when the Approval timed out with nobody deciding it."""
-        # decide_approval succeeds once per Approval, so only one racing resume gets past it.
-        approval = await self._store.decide_approval(approval.token, decision, self._clock())
+        approved = decision == "approved"
+        status = RunStatus.running if approved else RunStatus.escalated
+        run = run.model_copy(update={"status": status, "updated_at": self._clock()})
+        # decide_approval succeeds once per Approval, so only one racing resume gets past it,
+        # and it saves the Run in the same transaction, so neither changes without the other.
+        approval = await self._store.decide_approval(
+            approval.token, decision, self._clock(), run=run
+        )
         detail = {**_about(approval), "approver": approval.approver, "decided_by": decider}
-        if decision != "approved":
+        if not approved:
             declined = decision == "declined"
             reason: EscalationReason = "approval_declined" if declined else "approval_expired"
-            return await self.escalate(run, reason, detail)
-        run = await self._save(run, status=RunStatus.running)
+            await self._announce_escalation(run, reason, detail)
+            return run
         await self._audit(run, "gate.resumed", detail)
         log_event("gate.resumed", run_id=run.id, step=approval.step, tool=approval.tool)
         return run
+
+    async def _announce_escalation(
+        self, run: Run, reason: EscalationReason, detail: dict[str, Any]
+    ) -> None:
+        contact = self._colleague.escalation_contact
+        await self._audit(run, "run.escalated", {"reason": reason, "contact": contact, **detail})
+        log_event("run.escalated", logging.WARNING, run_id=run.id, reason=reason, contact=contact)
 
     async def _save(self, run: Run, **changes: Any) -> Run:
         run = run.model_copy(update={**changes, "updated_at": self._clock()})

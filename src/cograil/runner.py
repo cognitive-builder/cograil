@@ -58,7 +58,13 @@ from cograil.domain import (
     Step,
     Tool,
 )
-from cograil.errors import GateRequired, LoopBudgetExceeded, ToolExecutionError, ToolNotAllowed
+from cograil.errors import (
+    GateRequired,
+    LoopBudgetExceeded,
+    RunEnded,
+    ToolExecutionError,
+    ToolNotAllowed,
+)
 from cograil.gates import (
     Clock,
     Gates,
@@ -73,6 +79,7 @@ from cograil.providers.base import Message, Plan, PlannedToolCall, Provider
 from cograil.registry import CallContext, ToolRegistry
 from cograil.store import RunStore
 
+_ENDED = frozenset({RunStatus.escalated, RunStatus.failed, RunStatus.completed})
 NOT_COMPLETE = "The step is not complete until you signal step_complete."
 
 RunAuditKind = Literal["run.started", "run.completed", "run.failed"]
@@ -151,10 +158,13 @@ class Runner:
         """Run from the Step after Run.cursor until the end, a gate or an escalation.
 
         A Run awaiting approval moves on only through `resume`: this raises GateRequired.
+        An escalated, failed or completed Run never runs again: this raises RunEnded.
         """
         run = await self._store.get_run(run_id)
         if run.status is RunStatus.awaiting_approval:
             raise GateRequired(f"run {run_id} is awaiting approval; resume it with its token")
+        if run.status in _ENDED:
+            raise RunEnded(f"run {run_id} is {run.status}; it does not run again")
         async with self._failing_closed(run_id):
             version = harness_version(self._harness)
             run = await self._save(run, status=RunStatus.running, harness_version=version)

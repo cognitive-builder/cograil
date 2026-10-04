@@ -41,6 +41,10 @@ class RunNotPaused(CograilError):
     """The Run is not paused on that Approval, so the Approval cannot resume or expire it."""
 
 
+class RunEnded(CograilError):
+    """The Run has escalated, failed or completed; it does not run again."""
+
+
 class ApprovalNotAllowed(CograilError):
     """The deciding principal is not the Approval's approver, or is the Run's own principal."""
 

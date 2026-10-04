@@ -56,9 +56,10 @@ class RunStore(Protocol):
     async def get_approval(self, token: str) -> Approval: ...
 
     async def decide_approval(
-        self, token: str, decision: ApprovalDecision, decided_at: datetime
+        self, token: str, decision: ApprovalDecision, decided_at: datetime, *, run: Run
     ) -> Approval:
-        """Decide a pending Approval once; a second decision raises ApprovalAlreadyDecided."""
+        """Decide a pending Approval once and save `run` as update_run does, atomically:
+        both change or neither. A second decision raises ApprovalAlreadyDecided."""
         ...
 
     async def spend_approval(self, token: str, spent_at: datetime) -> Approval:
@@ -105,6 +106,9 @@ class InMemoryRunStore:
         return [r.model_copy(deep=True) for r in newest[:limit]]
 
     async def update_run(self, run: Run) -> None:
+        self._save_run(run)
+
+    def _save_run(self, run: Run) -> None:
         self._require_run(run.id)
         changes = {name: getattr(run, name) for name in _RUN_MUTABLE}
         self._runs[run.id] = self._runs[run.id].model_copy(update=changes, deep=True)
@@ -128,13 +132,16 @@ class InMemoryRunStore:
         return self._approvals[token].model_copy(deep=True)
 
     async def decide_approval(
-        self, token: str, decision: ApprovalDecision, decided_at: datetime
+        self, token: str, decision: ApprovalDecision, decided_at: datetime, *, run: Run
     ) -> Approval:
+        # Every check comes before the first write, and no await between them.
         current = await self.get_approval(token)
         if current.decision != "pending":
             raise ApprovalAlreadyDecided(token)
+        self._require_run(run.id)
         decided = current.model_copy(update={"decision": decision, "decided_at": decided_at})
         self._approvals[token] = decided
+        self._save_run(run)
         return decided.model_copy(deep=True)
 
     async def spend_approval(self, token: str, spent_at: datetime) -> Approval:
@@ -248,10 +255,14 @@ class PostgresRunStore:
         return [Run.model_validate(dict(r)) for r in rows]
 
     async def update_run(self, run: Run) -> None:
+        async with self._engine.begin() as conn:
+            await self._update_run(conn, run)
+
+    @staticmethod
+    async def _update_run(conn: AsyncConnection, run: Run) -> None:
         values = _run_values(run)
         changes = {name: values[name] for name in _RUN_MUTABLE}
-        async with self._engine.begin() as conn:
-            result = await conn.execute(update(runs).where(runs.c.id == run.id).values(**changes))
+        result = await conn.execute(update(runs).where(runs.c.id == run.id).values(**changes))
         if result.rowcount == 0:
             raise RunNotFound(run.id)
 
@@ -287,7 +298,7 @@ class PostgresRunStore:
         return Approval.model_validate(dict(row))
 
     async def decide_approval(
-        self, token: str, decision: ApprovalDecision, decided_at: datetime
+        self, token: str, decision: ApprovalDecision, decided_at: datetime, *, run: Run
     ) -> Approval:
         pending = (approvals.c.token == token) & (approvals.c.decision == "pending")
         statement = (
@@ -296,12 +307,14 @@ class PostgresRunStore:
             .values(decision=decision, decided_at=decided_at)
             .returning(approvals)
         )
+        # An error raised inside begin() rolls the decision back with the Run's save.
         async with self._engine.begin() as conn:
             row = (await conn.execute(statement)).mappings().first()
-            if row is not None:
-                return Approval.model_validate(dict(row))
-            await self._get_approval(conn, token)  # raises ApprovalNotFound when absent
-        raise ApprovalAlreadyDecided(token)
+            if row is None:
+                await self._get_approval(conn, token)  # raises ApprovalNotFound when absent
+                raise ApprovalAlreadyDecided(token)
+            await self._update_run(conn, run)
+        return Approval.model_validate(dict(row))
 
     async def spend_approval(self, token: str, spent_at: datetime) -> Approval:
         spendable = (
