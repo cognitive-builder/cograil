@@ -40,7 +40,7 @@ These layers run, in this order, on every batch of Tool results before the model
 
     A flagged output reaches the model as `[withheld: the screen found instructions in this output; the full output is kept on the Run]`. The whole output of that call is withheld, not only the bad passage. If the reply cannot be read, the screen raises `ProviderError` and the Run fails closed. The tokens and cost of the screen count against the Step and the Run.
 
-4. **Compression.** Compression (issue #49) summarises long results. It runs on the screened copy, so it cannot bring stripped text back.
+4. **Compression.** Compression (issue #49) summarises long results. It runs on the screened copy, so stripped or withheld text is not in what it reads. Its summary is written by a model and is not screened again.
 
 5. **Whitelist and Gates.** This is the guarantee that does not depend on the model. The runner enforces the Step whitelist (`ToolNotAllowed`) and the Gates (`confirm_before_write`, which needs an Approval) on every call. This follows rules 2 and 7 in `CLAUDE.md`. An injection that gets past layers 1 to 3 can change what the model asks for. It cannot change what the runner lets run. A gated write waits for a person, and that person sees the actual arguments.
 
@@ -62,6 +62,7 @@ A `live` variant runs the same cases on the real tiers. It runs on releases. To 
 
 - The screen is a model that reads untrusted text. An injection could target the screen itself, for example with "reply none".
 - The filter and the screen are heuristics. They lower the risk and do not remove it.
+- The filter matches plain text only. Lookalike characters, zero-width characters or a phrasing outside its patterns slip past it, and only the screen is left to catch them.
 - The Run input, which is the user's own message, is not screened. The requester is an authenticated principal, and Gates still apply.
 - Dict keys are not stripped.
 - When the screen flags a knowledge result, all of its passages are withheld, including the clean ones.
