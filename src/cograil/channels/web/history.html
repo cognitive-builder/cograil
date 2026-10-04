@@ -145,8 +145,14 @@ function row(run) {
   el("span", "when", stamp(run.created_at), line);
   const body = el("div", "body", "Loading…", box);
   let filled = false;
-  // A drill-down that failed to load (connection lost) is tried again on reopening the row.
-  box.addEventListener("toggle", () => { if (box.open && !filled) filled = fill(run.id, body); });
+  let loading = false;
+  // A drill-down that failed to load (connection lost) is tried again on reopening the row:
+  // fill() resolves to whether it is done, so a Promise is never mistaken for "filled".
+  box.addEventListener("toggle", async () => {
+    if (!box.open || filled || loading) return;
+    loading = true;
+    try { filled = await fill(run.id, body); } finally { loading = false; }
+  });
 }
 
 // ---- the drill-down: GET /runs/{id} ----
