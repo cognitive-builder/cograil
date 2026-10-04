@@ -5,13 +5,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from anthropic.types import Message as SdkMessage
+from anthropic.types import ToolUseBlock
+from anthropic.types import Usage as SdkUsage
 
 from cograil.domain import Approval, Protocol, RunStatus, Tool
 from cograil.errors import GateRequired, LoopBudgetExceeded, ProviderError, ToolNotAllowed
 from cograil.parser import parse_protocol
-from cograil.providers import FakeProvider, Plan, PlannedToolCall, scripted
+from cograil.providers import AnthropicProvider, FakeProvider, Plan, PlannedToolCall, scripted
 from cograil.registry import ToolRegistry
-from cograil.runner import Runner
+from cograil.runner import DATA, Runner
 from cograil.store import InMemoryRunStore
 
 SRC = Path(__file__).parents[1] / "src/cograil"
@@ -109,6 +112,32 @@ async def test_off_whitelist_call_raises_tool_not_allowed_and_fails_closed(
     await assert_failed_closed(store, ToolNotAllowed, cursor=0)
 
 
+class StubAnthropic:
+    """An SDK client that answers every request with one tool_use block."""
+
+    def __init__(self, wire_name: str) -> None:
+        self.messages = self
+        self.wire_name = wire_name
+
+    async def create(self, **kwargs: Any) -> SdkMessage:
+        block = ToolUseBlock(type="tool_use", id="toolu_1", name=self.wire_name, input={})
+        return SdkMessage(id="msg_1", type="message", role="assistant", model="claude-sonnet-5-5",
+                          content=[block], stop_reason="tool_use", stop_sequence=None,
+                          usage=SdkUsage(input_tokens=1, output_tokens=1))  # fmt: skip
+
+
+async def test_anthropic_wire_name_of_an_unoffered_tool_raises_tool_not_allowed(
+    store: InMemoryRunStore, registry: ToolRegistry, protocol: Protocol, invoked: list[str]
+) -> None:
+    """Pairs with the provider passing an unknown wire name through (names.get(b.name, b.name))."""
+    client = StubAnthropic("notify__send")
+    provider = AnthropicProvider("claude-sonnet-5-5", client=client)  # type: ignore[arg-type]
+    with pytest.raises(ToolNotAllowed):
+        await Runner(provider, registry, store).run("r1", protocol)
+    assert invoked == []
+    await assert_failed_closed(store, ToolNotAllowed, cursor=0)
+
+
 async def test_gated_write_without_approval_raises_gate_required(
     store: InMemoryRunStore, registry: ToolRegistry, protocol: Protocol, invoked: list[str]
 ) -> None:
@@ -146,7 +175,8 @@ async def test_context_accumulates_step_outputs(
     # Step 2 sees the previous step by default; step 3 declares steps 1 and 2.
     first_plan_of = {c.step.number: c.context for c in reversed(provider.calls)}
     headings = {n: [m.content.split("\n")[0] for m in ms] for n, ms in first_plan_of.items()}
-    assert headings == {1: [], 2: ["Step 1 output:"], 3: ["Step 1 output:", "Step 2 output:"]}
+    one, two = f"Step 1 output {DATA}:", f"Step 2 output {DATA}:"
+    assert headings == {1: [], 2: [one], 3: [one, two]}
     assert "25 days left" in first_plan_of[2][0].content
 
 
@@ -199,7 +229,11 @@ async def test_a_step_stops_at_max_turns(
 
 
 def test_the_runner_is_the_only_caller_of_registry_invoke() -> None:
-    """ToolRegistry.invoke checks no whitelist or gate, so only the runner may reach it."""
+    """ToolRegistry.invoke checks no whitelist or gate, so only the runner may reach it.
+
+    A static scan for the attribute name: a best-effort guard that a reviewer backs up, since
+    getattr with a string would slip past it.
+    """
     users = set()
     for path in SRC.rglob("*.py"):
         tree = ast.parse(path.read_text())
