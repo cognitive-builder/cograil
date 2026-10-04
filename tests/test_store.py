@@ -151,14 +151,36 @@ async def test_approval_is_decided_once(store: RunStore) -> None:
     assert await store.get_approval(token) == pending
     assert await store.list_approvals(run.id) == [pending]
 
-    decided = await store.decide_approval(token, "approved", T0)
+    decided = await store.decide_approval(token, "approved", T0, run=run)
     assert decided.decision == "approved"
     assert decided.decided_at == T0
     assert await store.get_approval(token) == decided
 
     with pytest.raises(ApprovalAlreadyDecided):
-        await store.decide_approval(token, "declined", T0)
+        await store.decide_approval(token, "declined", T0, run=run)
     assert (await store.get_approval(token)).decision == "approved"
+
+
+async def test_deciding_an_approval_saves_its_run_with_it(store: RunStore) -> None:
+    """Issue #95: the decision and the Run's save happen together, or neither does."""
+    run = await stored_run(store)
+    token = f"tok-{uuid.uuid4().hex}"
+    await store.create_approval(
+        Approval(token=token, run_id=run.id, step=1, tool="hris.book", args={}, approver="bob")
+    )
+    paused = run.model_copy(update={"status": RunStatus.awaiting_approval})
+    await store.update_run(paused)
+    resumed = paused.model_copy(update={"status": RunStatus.running, "updated_at": T0})
+
+    lost = resumed.model_copy(update={"id": "missing"})  # the save fails after the decision
+    with pytest.raises(RunNotFound):
+        await store.decide_approval(token, "approved", T0, run=lost)
+    assert (await store.get_approval(token)).decision == "pending"
+    assert await store.get_run(run.id) == paused
+
+    decided = await store.decide_approval(token, "approved", T0, run=resumed)
+    assert decided.decision == "approved"
+    assert await store.get_run(run.id) == resumed
 
 
 async def test_approval_errors(store: RunStore) -> None:
@@ -172,7 +194,7 @@ async def test_approval_errors(store: RunStore) -> None:
     with pytest.raises(ApprovalNotFound):
         await store.get_approval("missing")
     with pytest.raises(ApprovalNotFound):
-        await store.decide_approval("missing", "approved", T0)
+        await store.decide_approval("missing", "approved", T0, run=run)
     orphan = approval.model_copy(update={"token": "orphan", "run_id": "missing"})
     with pytest.raises(RunNotFound):
         await store.create_approval(orphan)
@@ -186,7 +208,7 @@ async def test_approval_is_spent_once_even_by_concurrent_spends(store: RunStore)
     await store.create_approval(approval)
     with pytest.raises(ApprovalNotSpendable):  # still pending
         await store.spend_approval(token, T0)
-    await store.decide_approval(token, "approved", T0)
+    await store.decide_approval(token, "approved", T0, run=run)
     spends = [store.spend_approval(token, T0 + timedelta(seconds=n)) for n in (1, 2)]
     results = await asyncio.gather(*spends, return_exceptions=True)
     spent = [r for r in results if isinstance(r, Approval)]

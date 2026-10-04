@@ -24,6 +24,7 @@ from cograil.errors import (
     ApprovalAlreadyDecided,
     ApprovalNotAllowed,
     GateRequired,
+    RunEnded,
     RunNotPaused,
     ToolExecutionError,
 )
@@ -420,6 +421,21 @@ async def test_run_of_a_paused_run_raises_gate_required_and_keeps_it_paused(
     with pytest.raises(GateRequired):
         await runner.run("r1", protocol)
     assert (await store.get_run("r1")).status == RunStatus.awaiting_approval
+    assert provider.calls == []
+
+
+@pytest.mark.parametrize("status", [RunStatus.escalated, RunStatus.failed, RunStatus.completed])
+async def test_run_of_an_ended_run_raises_and_changes_nothing(
+    store: InMemoryRunStore, make: Any, protocol: Protocol, status: RunStatus
+) -> None:
+    """Issue #95: a Run escalated by a threshold, failed or completed never restarts."""
+    ended = (await store.get_run("r1")).model_copy(update={"status": status})
+    await store.update_run(ended)
+    runner, provider = make(TO_GATE)
+    with pytest.raises(RunEnded):
+        await runner.run("r1", protocol)
+    assert await store.get_run("r1") == ended
+    assert await store.list_audit_events("r1") == []
     assert provider.calls == []
 
 
