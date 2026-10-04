@@ -1,7 +1,10 @@
 """Shared fixtures: an in-memory RunStore holding one Run, a CallContext inside it, and a
-migrated Postgres (DATABASE_URL) for the tests that need one."""
+migrated Postgres (DATABASE_URL) for the tests that need one, reachable as its owner or as
+the application role (cograil_app)."""
 
+import asyncio
 import os
+import secrets
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -10,6 +13,8 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import make_url, text
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from cograil.domain import Principal, Run, Trigger
 from cograil.registry import CallContext
@@ -17,6 +22,8 @@ from cograil.store import InMemoryRunStore
 
 T0 = datetime(2026, 10, 4, tzinfo=UTC)
 ROOT = Path(__file__).resolve().parents[1]
+APP_ROLE = "cograil_app"
+APP_ROLE_PASSWORD = secrets.token_hex(16)  # one per test session, so modules agree on it
 
 
 @pytest.fixture
@@ -47,3 +54,19 @@ def migrated_url() -> Iterator[str]:
     with ThreadPoolExecutor(max_workers=1) as pool:
         pool.submit(command.upgrade, config, "head").result()
     yield url
+
+
+async def _set_app_role_password(owner_url: str) -> None:
+    engine = create_async_engine(owner_url)
+    async with engine.begin() as conn:  # ALTER ROLE takes no bind parameters; the hex is safe
+        await conn.execute(text(f"ALTER ROLE {APP_ROLE} PASSWORD '{APP_ROLE_PASSWORD}'"))
+    await engine.dispose()
+
+
+@pytest.fixture(scope="module")
+def app_role_url(migrated_url: str) -> str:
+    """The migrated database as the application role, with a password set by its owner."""
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pool.submit(asyncio.run, _set_app_role_password(migrated_url)).result()
+    url = make_url(migrated_url).set(username=APP_ROLE, password=APP_ROLE_PASSWORD)
+    return url.render_as_string(hide_password=False)

@@ -39,13 +39,20 @@ async def kstore(request: pytest.FixtureRequest) -> AsyncIterator[KnowledgeStore
     if request.param == "memory":
         yield InMemoryKnowledgeStore()
         return
-    pg = PostgresKnowledgeStore.from_url(request.getfixturevalue("migrated_url"))
+    url = "app_role_url" if request.param == "postgres-app" else "migrated_url"
+    pg = PostgresKnowledgeStore.from_url(request.getfixturevalue(url))
     yield pg
     await pg.dispose()
 
 
 every_store = pytest.mark.parametrize(
-    "kstore", ["memory", pytest.param("postgres", marks=pytest.mark.integration)], indirect=True
+    "kstore",
+    [
+        "memory",
+        pytest.param("postgres", marks=pytest.mark.integration),
+        pytest.param("postgres-app", marks=pytest.mark.integration),  # as cograil_app
+    ],
+    indirect=True,
 )
 
 
