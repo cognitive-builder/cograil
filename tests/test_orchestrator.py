@@ -85,6 +85,36 @@ async def test_no_route_call_is_a_refusal() -> None:
     assert routing.refusal is not None
 
 
+async def test_a_tool_call_other_than_route_is_ignored() -> None:
+    stray = PlannedToolCall(id="t0", tool="search_knowledge", args={"query": "leave policy"})
+    call = PlannedToolCall(
+        id="t1",
+        tool=ROUTE_TOOL,
+        args={"choice": "harper/leave_request", "confidence": 0.9, "reason": "asks for leave"},
+    )
+    provider = FakeProvider([scripted("", stray, call)])
+    routing = await classify_intent(workspace(), ALICE, "I need next Friday off", provider)
+    assert (routing.colleague, routing.protocol) == ("harper", "leave_request")
+    assert routing.confidence == 0.9 and routing.refusal is None
+
+
+async def test_the_first_of_several_route_calls_wins() -> None:
+    first = PlannedToolCall(
+        id="t1",
+        tool=ROUTE_TOOL,
+        args={"choice": "harper/leave_request", "confidence": 0.9, "reason": "asks for leave"},
+    )
+    second = PlannedToolCall(
+        id="t2",
+        tool=ROUTE_TOOL,
+        args={"choice": "harper/policy_question", "confidence": 0.4, "reason": "policy"},
+    )
+    provider = FakeProvider([scripted("", first, second)])
+    routing = await classify_intent(workspace(), ALICE, "I need next Friday off", provider)
+    assert (routing.colleague, routing.protocol) == ("harper", "leave_request")
+    assert routing.confidence == 0.9
+
+
 async def test_classification_is_logged_with_confidence(caplog: pytest.LogCaptureFixture) -> None:
     provider = route(choice="harper/policy_question", confidence=0.71, reason="policy")
     with caplog.at_level(logging.INFO, logger="cograil"):
@@ -187,3 +217,13 @@ async def test_a_principal_outside_every_audience_gets_a_refusal_without_a_model
     assert routing.refusal is not None
     assert "nothing in this workspace is open to you" in routing.refusal
     assert "harper" not in routing.refusal and "@example.com" not in routing.refusal
+
+
+async def test_an_empty_workspace_is_a_refusal_without_a_model_call() -> None:
+    workspace = Workspace(name="w", colleagues=[], protocols=[], tools=[])
+    provider = FakeProvider([])
+    routing = await classify_intent(workspace, ALICE, "approve leave", provider)
+    assert provider.calls == []
+    assert routing.reason == "no protocols open to the principal"
+    assert not routing.matched and routing.refusal is not None
+    assert "nothing in this workspace is open to you" in routing.refusal

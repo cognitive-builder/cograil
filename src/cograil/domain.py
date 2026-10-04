@@ -322,6 +322,33 @@ class Trigger(Entity):
     cron: str | None = None
 
 
+class Candidate(Entity):
+    """One Colleague and Protocol pair the workspace can run."""
+
+    colleague: str
+    protocol: str
+    description: str = ""
+
+    @property
+    def label(self) -> str:
+        return f"{self.colleague}/{self.protocol}"
+
+
+class Routing(Entity):
+    """The outcome of one classification; `refusal` is set exactly when nothing matched."""
+
+    colleague: str | None = None
+    protocol: str | None = None
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    reason: str = ""
+    model: str = ""
+    refusal: str | None = None
+
+    @property
+    def matched(self) -> bool:
+        return self.protocol is not None
+
+
 class ToolCall(Entity):
     step: int
     tool: str
