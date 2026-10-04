@@ -79,6 +79,8 @@ The command needs `DATABASE_URL`, in the form `postgresql+asyncpg://user:passwor
 alembic upgrade head
 ```
 
+Migrations connect as the owner. Where `DATABASE_URL` names the `cograil_app` role, set `MIGRATIONS_DATABASE_URL` to the owner's URL first (see "Database Roles" in `docs/deploy.md`).
+
 Each Chunk the sync writes is embedded, so search can rank it (see "Embeddings"). Chunks stored before migration `0004` have no embedding. Search skips them. The next sync rewrites them, and they count as `updated`.
 
 The command prints one line for each source, in the order declared in `knowledge.yaml`:

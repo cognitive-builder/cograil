@@ -3,6 +3,7 @@
 
 import asyncio
 import shutil
+import uuid
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from itertools import pairwise
@@ -266,7 +267,7 @@ def chunk(chunk_id: str, text: str = "t", groups: tuple[str, ...] = ("staff",)) 
 
 @every_store
 async def test_sync_chunks_adds_updates_removes_and_leaves_equals(store: KnowledgeStore) -> None:
-    name = f"s-{id(store)}"
+    name = f"s-{uuid.uuid4().hex}"
 
     def make(*items: Chunk) -> list[Chunk]:
         return [c.model_copy(update={"source": name, "id": f"{name}:{c.id}"}) for c in items]
@@ -282,7 +283,7 @@ async def test_sync_chunks_adds_updates_removes_and_leaves_equals(store: Knowled
 
 @every_store
 async def test_sync_chunks_of_one_source_leaves_the_others(store: KnowledgeStore) -> None:
-    one, other = f"one-{id(store)}", f"other-{id(store)}"
+    one, other = f"one-{uuid.uuid4().hex}", f"other-{uuid.uuid4().hex}"
     keep = Chunk(id=f"{other}:x", source=other, source_uri="u", text="t", acl_groups=["a"])
     await store.sync_chunks(other, [keep])
     await store.sync_chunks(one, [])

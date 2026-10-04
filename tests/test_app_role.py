@@ -67,5 +67,5 @@ async def test_the_app_role_cannot_rewrite_the_audit_trail(
     with pytest.raises(DBAPIError) as refused:
         async with app_engine.begin() as conn:
             await conn.execute(text(statement))
-    assert refused.value.orig.__cause__.sqlstate == INSUFFICIENT_PRIVILEGE  # type: ignore[union-attr]
+    assert getattr(refused.value.orig, "sqlstate", None) == INSUFFICIENT_PRIVILEGE
     assert [e.kind for e in await store.list_audit_events(run.id)] == ["run.started"]
