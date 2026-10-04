@@ -22,6 +22,7 @@ def test_harness_yaml_is_loaded_per_workspace() -> None:
     harness = load_workspace(EXAMPLE).harness
     assert (harness.loop.max_turns, harness.loop.token_budget_per_step) == (6, 12000)
     assert harness.loop.usd_budget_per_run == 0.50
+    assert (harness.budget.monthly_usd, harness.budget.alert_at) == (50, 0.8)
     assert (harness.tiers.small, harness.tiers.standard) == (
         "claude-haiku-4-5",
         "claude-sonnet-5-5",
@@ -58,6 +59,8 @@ def test_the_version_changes_when_the_file_changes(workspace: Path) -> None:
         pytest.param("  claude-opus-5-5: {", "  claude-opus-4-8: {", id="unpriced-tier-model"),
         pytest.param("  max_turns: 6", "  max_turns: 0", id="max-turns-below-one"),
         pytest.param("loop:", "loops:", id="unknown-key"),
+        pytest.param("  monthly_usd: 50", "  monthly_usd: 0", id="cap-not-positive"),
+        pytest.param("  alert_at: 0.8", "  alert_at: 1.5", id="alert-above-the-cap"),
     ],
 )
 def test_an_invalid_harness_yaml_is_a_workspace_error(workspace: Path, old: str, new: str) -> None:

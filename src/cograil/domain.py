@@ -279,6 +279,21 @@ class LoggingSettings(Entity):
     message_snippets: bool = False
 
 
+class BudgetSettings(Entity):
+    """A workspace's monthly spending cap (ADR 0013): `monthly_usd`, and `alert_at`, the fraction
+    of it at which one alert goes to the escalation contact. No cap until a workspace sets one."""
+
+    monthly_usd: float | None = Field(default=None, gt=0)
+    alert_at: float = Field(default=0.8, gt=0, le=1)
+
+
+class MonthUsage(Entity):
+    """What a workspace's Runs of one calendar month cost, and how many alerts it has had."""
+
+    spend_usd: float = Field(ge=0)
+    alerts: int = Field(ge=0)
+
+
 class Price(Entity):
     """What one model costs, in USD per million tokens."""
 
@@ -294,6 +309,7 @@ class Harness(Entity):
 
     version: str = Field(default="0.0.0", pattern=r"^\d+\.\d+\.\d+$")
     loop: LoopBounds = Field(default_factory=LoopBounds)
+    budget: BudgetSettings = Field(default_factory=BudgetSettings)
     provider: Literal["anthropic", "ollama"] = "anthropic"
     tiers: Tiers = Field(default_factory=Tiers)  # the anthropic provider's models
     providers: dict[str, TierModels] = Field(default_factory=dict)  # the other providers' models
@@ -317,10 +333,12 @@ class Harness(Entity):
 
     @model_validator(mode="after")
     def _check_pricing(self) -> Harness:
-        if self.loop.usd_budget_per_run is not None:
-            tiers = {self.models.small, self.models.standard, self.models.strong}
-            if unpriced := sorted(tiers - self.pricing.keys()):
-                raise ValueError(f"usd_budget_per_run needs a price for tier models {unpriced}")
+        tiers = {self.models.small, self.models.standard, self.models.strong}
+        unpriced = sorted(tiers - self.pricing.keys())
+        if self.loop.usd_budget_per_run is not None and unpriced:
+            raise ValueError(f"usd_budget_per_run needs a price for tier models {unpriced}")
+        if self.budget.monthly_usd is not None and unpriced:
+            raise ValueError(f"budget.monthly_usd needs a price for tier models {unpriced}")
         return self
 
 
@@ -444,6 +462,7 @@ class AuditEvent(Entity):
         "context.compressed",
         "context.screened",
         "loop.bounded",
+        "budget.alerted",
         "run.escalated",
         "run.completed",
         "run.failed",

@@ -125,6 +125,30 @@ async def test_list_runs_can_be_limited_to_one_principal(store: RunStore) -> Non
     assert await store.list_runs(principal_id=unique_principal("nobody")) == []
 
 
+async def test_month_usage_sums_one_workspaces_runs_and_alerts_in_the_span(
+    store: RunStore,
+) -> None:
+    workspace = f"ws-{uuid.uuid4().hex}"  # Postgres rows outlive a test inside one CI job
+    month = (T0, T0 + timedelta(days=30))
+    ids = {}
+    for name, ws, cost, at in [
+        ("now", workspace, 0.25, T0),
+        ("later", workspace, 0.5, T0 + timedelta(days=29)),
+        ("before", workspace, 9.0, T0 - timedelta(seconds=1)),
+        ("after", workspace, 9.0, T0 + timedelta(days=30)),
+        ("other", f"other-{workspace}", 9.0, T0),
+    ]:
+        run = make_run().model_copy(update={"workspace": ws, "cost_usd": cost, "created_at": at})
+        await store.create_run(run)
+        ids[name] = run.id
+    alert = AuditEvent(run_id=ids["now"], at=T0, principal_id="alice@example.com",
+                       kind="budget.alerted", detail={})  # fmt: skip
+    await store.append_audit_event(alert)
+    await store.append_audit_event(alert.model_copy(update={"run_id": ids["other"]}))
+    usage = await store.month_usage(workspace, *month)
+    assert (usage.spend_usd, usage.alerts) == (pytest.approx(0.75), 1)
+
+
 async def test_run_errors(store: RunStore) -> None:
     run = await stored_run(store)
     with pytest.raises(DuplicateRecord):

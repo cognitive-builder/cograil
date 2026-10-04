@@ -23,7 +23,15 @@ from sqlalchemy import insert, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
-from cograil.domain import Approval, ApprovalDecision, AuditEvent, Run, RunStatus, ToolCall
+from cograil.domain import (
+    Approval,
+    ApprovalDecision,
+    AuditEvent,
+    MonthUsage,
+    Run,
+    RunStatus,
+    ToolCall,
+)
 from cograil.errors import (
     ApprovalAlreadyDecided,
     ApprovalNotFound,
@@ -33,6 +41,7 @@ from cograil.errors import (
     RunClaimLost,
     RunNotFound,
 )
+from cograil.store_budget import month_usage
 from cograil.store_memory import RUN_MUTABLE, InMemoryRunStore
 from cograil.store_rows import (
     approval_values,
@@ -57,6 +66,11 @@ class RunStore(Protocol):
     async def list_runs(self, limit: int = 20, *, principal_id: str | None = None) -> list[Run]:
         """The most recently created Runs first, at most `limit`; with `principal_id`, only
         the Runs that principal started."""
+        ...
+
+    async def month_usage(self, workspace: str, since: datetime, until: datetime) -> MonthUsage:
+        """The cost_usd of the workspace's Runs created in [since, until), and how many
+        `budget.alerted` AuditEvents it wrote in that span (ADR 0013)."""
         ...
 
     async def update_run(self, run: Run) -> None:
@@ -196,6 +210,10 @@ class PostgresRunStore:
         async with self._engine.connect() as conn:
             rows = (await conn.execute(query)).mappings().all()
         return [Run.model_validate(dict(r)) for r in rows]
+
+    async def month_usage(self, workspace: str, since: datetime, until: datetime) -> MonthUsage:
+        async with self._engine.connect() as conn:
+            return await month_usage(conn, workspace, since, until)
 
     async def update_run(self, run: Run) -> None:
         async with self._engine.begin() as conn:

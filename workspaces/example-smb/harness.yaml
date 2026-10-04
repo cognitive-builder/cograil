@@ -3,6 +3,9 @@ loop:
   max_turns: 6
   token_budget_per_step: 12000
   usd_budget_per_run: 0.50
+budget:
+  monthly_usd: 50
+  alert_at: 0.8
 tiers:
   small: claude-haiku-4-5
   standard: claude-sonnet-5-5

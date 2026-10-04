@@ -73,6 +73,7 @@ EscalationReason = Literal[
     "approver_is_principal",
     "failure_threshold",
     "loop_budget_exceeded",
+    "monthly_cap_reached",
 ]
 RefusalReason = Literal["not_approver", "run_version_changed"]
 

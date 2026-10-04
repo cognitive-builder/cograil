@@ -146,6 +146,28 @@ gates instead. A `loop.bounded` AuditEvent names the bound, its limit and what w
 `run.escalated` AuditEvent has the reason `loop_budget_exceeded` and the Colleague's
 `escalation_contact`.
 
+## Monthly spending cap
+
+Each workspace can have its own cap on what its runs cost in a calendar month (UTC), so one client
+cannot spend another's budget (ADR 0013). It is set in `harness.yaml`:
+
+```yaml
+budget:
+  monthly_usd: 50      # no cap while this is unset
+  alert_at: 0.8        # a fraction of the cap; the default is 0.8
+```
+
+The month's spend is the sum of the recorded `cost_usd` of the workspace's runs created in that
+month. Like `usd_budget_per_run`, a cap needs a `pricing` entry for every tier model.
+
+- A run that would start when the month's spend is already at or over `monthly_usd` is refused.
+  It escalates with a `run.escalated` AuditEvent whose reason is `monthly_cap_reached`, which names
+  the Colleague's `escalation_contact` and the spend. A run already under way is never cut off by
+  the cap; the per-run bounds above still apply to it.
+- When a run ends and the month's spend is at or over `alert_at` of the cap, one `budget.alerted`
+  AuditEvent names the `escalation_contact`. The store counts the month's alerts, so later runs
+  send no second one.
+
 ## Step directives
 
 A step line can end with one parenthesised directive, with parts split by `;`, such as
@@ -161,6 +183,7 @@ model thinks (`low`, `medium` or `high`) and `turns` overrides `loop.max_turns`.
 
 - `version`: a semantic version such as `1.0.0`.
 - `loop`: `max_turns`, `token_budget_per_step` and `usd_budget_per_run`.
+- `budget`: `monthly_usd` and `alert_at` (see Monthly spending cap).
 - `tiers`: the Anthropic model names for `small`, `standard` and `strong`.
 - `provider`: `anthropic` (the default) or `ollama`.
 - `providers`: the tier mapping of the other providers, such as `ollama`. All three tiers are
