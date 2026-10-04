@@ -39,8 +39,20 @@ def _messages(context: Sequence[Message]) -> list[dict[str, str]]:
     return messages
 
 
-def _to_plan(response: SdkMessage, tools: Sequence[Tool]) -> Plan:
-    names = {_wire_name(t.name): t.name for t in tools}
+def _wire_names(tools: Sequence[Tool]) -> dict[str, str]:
+    """Map each wire name back to its tool; two tools sharing a wire name would misroute calls."""
+    names: dict[str, str] = {}
+    for tool in tools:
+        wire = _wire_name(tool.name)
+        if wire in names:
+            raise ProviderError(
+                f"Tools {names[wire]!r} and {tool.name!r} share the wire name {wire!r}"
+            )
+        names[wire] = tool.name
+    return names
+
+
+def _to_plan(response: SdkMessage, names: dict[str, str]) -> Plan:
     texts = [b.text for b in response.content if b.type == "text"]
     calls = [
         PlannedToolCall(id=b.id, tool=names.get(b.name, b.name), args=dict(b.input))
@@ -81,6 +93,7 @@ class AnthropicProvider:
         return cls(resolve_model(protocol, colleague), client=client)
 
     async def plan(self, step: Step, context: Sequence[Message], tools: Sequence[Tool]) -> Plan:
+        names = _wire_names(tools)
         kwargs: dict[str, Any] = {
             "model": self.model,
             "max_tokens": self.max_tokens,
@@ -93,4 +106,4 @@ class AnthropicProvider:
             response = await self._client.messages.create(**kwargs)
         except anthropic.APIError as exc:
             raise ProviderError(f"Anthropic call failed: {exc}") from exc
-        return _to_plan(response, tools)
+        return _to_plan(response, names)

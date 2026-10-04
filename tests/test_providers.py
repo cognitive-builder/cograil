@@ -137,6 +137,15 @@ async def test_sdk_errors_become_provider_errors() -> None:
         await anthropic_provider.plan(STEP, [], [])
 
 
+async def test_tools_sharing_a_wire_name_raise_provider_error_before_any_call() -> None:
+    dotted = TOOL.model_copy(update={"name": "a.b"})
+    underscored = TOOL.model_copy(update={"name": "a__b"})
+    anthropic_provider, client = provider(sdk_response())
+    with pytest.raises(ProviderError, match="a__b"):
+        await anthropic_provider.plan(STEP, [], [dotted, underscored])
+    assert client.messages.requests == []
+
+
 async def test_fake_provider_replays_scripted_tool_calls_in_order() -> None:
     fake = FakeProvider([scripted("looking", CALL), scripted("all done")])
     first = await fake.plan(STEP, [], [TOOL])
