@@ -17,12 +17,13 @@ module that implements it.
       |  validate.py validate_workspace · audience.py check_audience
 +---------------------------------------------------------------------------+
 | Entry point                                                               |
-| cli.py: cograil run | approve | runs | validate                           |
+| cli.py: cograil run | approve | runs | validate | graph                   |
 +---------------------------------------------------------------------------+
       |
 +---------------------------------------------------------------------------+
 | Runner                                                       ADR 0011      |
 | runner.py compile_protocol: a LangGraph graph, one node per Step          |
+| graph.py compile_graph: the same shape as data, rendered as Mermaid       |
 |                                                                           |
 |   context.py   what a Step sees; the Window Ledger           ADR 0007     |
 |   harness.py   version, loop bounds, cost                 ADR 0008, 0012  |
@@ -149,3 +150,49 @@ of kind `system`) is allowed exactly when the Protocol allows scheduled executio
 - Approver routing: decision tables exist now, and `approval_routing` returns an approver
   tier. The approver of a gate is still the Colleague's escalation contact until a directory
   lookup maps a tier to a principal.
+
+## Reading a Protocol's graph
+
+`cograil graph <workspace> --protocol <name>` prints the compiled graph of a Protocol as a Mermaid
+flowchart (ADR 0011), so someone who cannot read code can review the shape of the work. It needs
+no Run, model or database.
+
+- A box per Step, labelled with its number, name, model tier and turn bound, and the decision
+  Tool it uses, if any.
+- A hexagon after each Step that whitelists a write Tool with `confirm_before_write`: the gate,
+  which pauses the Run for an Approval. Approved, the Run goes on to the next Step.
+- A rounded `escalated` node, reached by dotted arrows: from a gate that is declined or
+  expired, and from a Step whose Tool has a declared failure threshold (an
+  `@tool fails: retry once, then escalate` bullet).
+- A subgraph per helper Protocol named in `Helpers:`. Nothing connects it to a Step yet: the
+  Runner does not call helpers today, and the graph does not draw a call that does not exist.
+- No decision-table edges: no Decision table routes the Runner yet, so a decision Tool shows only
+  in its Step's label.
+
+The output for the example Protocols is committed under `docs/graphs/`, and
+`tests/test_graph.py` compares the command's output to those files. After a change to a Protocol
+or to `graph.py`, regenerate them:
+
+```bash
+uv run cograil graph workspaces/example-smb --protocol leave_request > docs/graphs/leave_request.mmd
+```
+
+```mermaid
+flowchart TD
+  start((start))
+  done(["completed"])
+  escalated(["escalated"])
+  step_1["1. Check balance<br/>small, max 2 turns"]
+  step_2["2. Confirm dates"]
+  step_3["3. Route and submit<br/>standard<br/>decision: decide.approval_routing"]
+  gate_3{{"gate: approval for hris.submit_leave"}}
+  step_4["4. Notify"]
+  start --> step_1
+  step_1 -.->|"hris.get_balance fails 2x"| escalated
+  step_1 --> step_2
+  step_2 --> step_3
+  step_3 -->|"write"| gate_3
+  gate_3 -.->|"declined or expired"| escalated
+  gate_3 --> step_4
+  step_4 --> done
+```

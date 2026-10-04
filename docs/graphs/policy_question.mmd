@@ -1,0 +1,12 @@
+flowchart TD
+  start((start))
+  done(["completed"])
+  escalated(["escalated"])
+  step_1["1. Search"]
+  step_2["2. Answer"]
+  step_3["3. Escalate if needed"]
+  start --> step_1
+  step_1 -.->|"knowledge.search fails 2x"| escalated
+  step_1 --> step_2
+  step_2 --> step_3
+  step_3 --> done
