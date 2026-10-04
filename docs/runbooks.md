@@ -116,7 +116,9 @@ retrieved passages included, reach the model inside a data block that starts wit
 
 The runner keeps a Window Ledger on the run: estimated tokens by source (`instruction`,
 `prior_steps`, `tools`, `knowledge`) for each step. `cograil runs --ledger` shows it for the
-runs in the database named by `DATABASE_URL`; `cograil runs RUN_ID --ledger` shows one run.
+runs in the database named by `DATABASE_URL`; `cograil runs RUN_ID --ledger` shows one run. When
+a provider has saved context, the ledger also shows the cache read and write tokens it reported
+for each step (see `docs/models.md`).
 
 The bounds come from the workspace's `harness.yaml` and are checked before every model call:
 

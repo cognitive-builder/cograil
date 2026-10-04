@@ -24,8 +24,8 @@ from cograil.providers.base import (
 )
 from cograil.providers.wire import (
     STEP_COMPLETE_SPEC,
+    full_system_prompt,
     messages,
-    system_prompt,
     wire_name,
     wire_names,
 )
@@ -108,10 +108,12 @@ class OllamaProvider:
         *,
         model: str | None = None,
         effort: Effort | None = None,
+        prefix: str = "",
     ) -> Plan:
         names = wire_names(tools)
         chosen = model or self.model
-        history = [{"role": "system", "content": system_prompt(step)}, *messages(context)]
+        history = [{"role": "system", "content": full_system_prompt(step, prefix)},
+                   *messages(context)]  # fmt: skip
         try:
             response = await self._client.chat(
                 model=chosen,

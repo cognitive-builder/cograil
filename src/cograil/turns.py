@@ -10,6 +10,7 @@ records it. Both calls count against the Step's bounds and the Run's cost.
 from __future__ import annotations
 
 from cograil.claims import RunClaims
+from cograil.context import add_cache_usage
 from cograil.domain import Harness, Run, Step, Tier, Tool
 from cograil.gates import StepProgress
 from cograil.harness import call_cost, check_bounds, escalation_tier, step_effort, tier_model
@@ -23,11 +24,20 @@ class Turns:
         self._claims = claims
 
     async def take(
-        self, run: Run, step: Step, tier: Tier, progress: StepProgress, tools: list[Tool]
+        self,
+        run: Run,
+        step: Step,
+        tier: Tier,
+        progress: StepProgress,
+        tools: list[Tool],
+        prefix: str = "",
     ) -> tuple[Run, Plan]:
-        """One turn inside the Step's bounds; raises LoopBudgetExceeded past them."""
+        """One turn inside the Step's bounds; raises LoopBudgetExceeded past them.
+
+        `prefix` is the Run's stable prompt prefix, sent first on every call (ADR 0013).
+        """
         self._check(run, step, progress)
-        run, plan = await self._ask(run, step, tier, progress, tools)
+        run, plan = await self._ask(run, step, tier, progress, tools, prefix)
         confidence = plan.step_complete.confidence if plan.step_complete else None
         higher = escalation_tier(self._harness, tier, confidence)
         if higher is not None:
@@ -35,7 +45,7 @@ class Turns:
                       "confidence": confidence, "reason": "low confidence"}  # fmt: skip
             await self._claims.audit(run, "tier.escalated", detail)
             self._check(run, step, progress)
-            run, plan = await self._ask(run, step, higher, progress, tools)
+            run, plan = await self._ask(run, step, higher, progress, tools, prefix)
         progress.turn += 1
         if plan.text:
             progress.messages.append(Message(role="assistant", content=plan.text))
@@ -46,12 +56,28 @@ class Turns:
                      cost_usd=run.cost_usd)  # fmt: skip
 
     async def _ask(
-        self, run: Run, step: Step, tier: Tier, progress: StepProgress, tools: list[Tool]
+        self,
+        run: Run,
+        step: Step,
+        tier: Tier,
+        progress: StepProgress,
+        tools: list[Tool],
+        prefix: str,
     ) -> tuple[Run, Plan]:
-        """One provider call on `tier`'s model; its tokens count against the Step, cost the Run."""
+        """One provider call on `tier`'s model; its tokens count against the Step, cost the Run.
+
+        The call's cache reads and writes go to the Step's row of the Window Ledger.
+        """
         model, effort = tier_model(self._harness, tier), step_effort(self._harness, step)
-        plan = await self._provider.plan(step, progress.messages, tools, model=model, effort=effort)
+        plan = await self._provider.plan(
+            step, progress.messages, tools, model=model, effort=effort, prefix=prefix
+        )
         usage = plan.usage
-        progress.tokens += usage.input_tokens + usage.output_tokens
-        cost = call_cost(self._harness, plan.model, usage.input_tokens, usage.output_tokens)
-        return run.model_copy(update={"cost_usd": run.cost_usd + cost}), plan
+        cached = usage.cache_read_tokens + usage.cache_write_tokens
+        progress.tokens += usage.input_tokens + usage.output_tokens + cached
+        cost = call_cost(self._harness, plan.model, usage.input_tokens, usage.output_tokens,
+                         usage.cache_read_tokens, usage.cache_write_tokens)  # fmt: skip
+        context = add_cache_usage(
+            run.context, step.number, usage.cache_read_tokens, usage.cache_write_tokens
+        )
+        return run.model_copy(update={"cost_usd": run.cost_usd + cost, "context": context}), plan

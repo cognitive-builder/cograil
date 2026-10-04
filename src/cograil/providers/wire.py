@@ -37,6 +37,11 @@ def system_prompt(step: Step) -> str:
     return f"Step {step.number}: {step.name}\n\n{step.instruction}"
 
 
+def full_system_prompt(step: Step, prefix: str) -> str:
+    """The stable `prefix` first, then the Step's own text, for providers without saved context."""
+    return f"{prefix}\n\n{system_prompt(step)}" if prefix else system_prompt(step)
+
+
 def messages(context: Sequence[Message]) -> list[dict[str, str]]:
     listed = [{"role": m.role, "content": m.content} for m in context]
     if not listed or listed[0]["role"] != "user":

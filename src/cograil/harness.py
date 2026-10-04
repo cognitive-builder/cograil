@@ -95,15 +95,36 @@ def check_bounds(harness: Harness, step: Step, *, turns: int, tokens: int, cost_
             )
 
 
-def call_cost(harness: Harness, model: str, input_tokens: int, output_tokens: int) -> float:
+# What saved context costs against the model's input price (ADR 0013): a cache write is billed
+# above it, a cache read well below it.
+CACHE_WRITE_FACTOR = 1.25
+CACHE_READ_FACTOR = 0.1
+
+
+def call_cost(
+    harness: Harness,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
+) -> float:
     """USD cost of one provider call; 0.0 for an unpriced model when no dollar budget applies.
+
+    Cache reads and writes are billed at their factors of the input price; they are not part
+    of `input_tokens`.
 
     Under usd_budget_per_run an unpriced model raises LoopBudgetExceeded: its spend could
     not be bounded.
     """
     price = harness.pricing.get(model)
     if price is not None:
-        spent = input_tokens * price.input_per_mtok + output_tokens * price.output_per_mtok
+        input_units = (
+            input_tokens
+            + cache_read_tokens * CACHE_READ_FACTOR
+            + cache_write_tokens * CACHE_WRITE_FACTOR
+        )
+        spent = input_units * price.input_per_mtok + output_tokens * price.output_per_mtok
         return spent / 1_000_000
     budget = harness.loop.usd_budget_per_run
     if budget is not None:

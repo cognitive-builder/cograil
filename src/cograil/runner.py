@@ -256,12 +256,13 @@ class Runner:
             context = add_to_ledger(run.context, step.number, opening.tokens, restart=True)
             run = run.model_copy(update={"context": context})
         tier = step_tier(self._colleague, protocol, step)
+        prefix = self._context.prefix(self._colleague, protocol)
         context = {name: value for name, value in run.context.items() if name != "paused"}
         run = run.model_copy(update={"context": context})
         while True:
             if not progress.planned:
                 try:
-                    run, plan = await self._turns.take(run, step, tier, progress, tools)
+                    run, plan = await self._turns.take(run, step, tier, progress, tools, prefix)
                 except LoopBudgetExceeded as exc:
                     return await self._gates.bounded(run, step.number, exc)
                 if not plan.tool_calls:
