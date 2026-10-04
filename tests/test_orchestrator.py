@@ -95,7 +95,8 @@ async def test_a_tool_call_other_than_route_is_ignored() -> None:
     provider = FakeProvider([scripted("", stray, call)])
     routing = await classify_intent(workspace(), ALICE, "I need next Friday off", provider)
     assert (routing.colleague, routing.protocol) == ("harper", "leave_request")
-    assert routing.confidence == 0.9 and routing.refusal is None
+    assert routing.confidence == 0.9
+    assert routing.refusal is None
 
 
 async def test_the_first_of_several_route_calls_wins() -> None:
