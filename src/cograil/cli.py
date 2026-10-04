@@ -21,7 +21,7 @@ from typing import Annotated, Literal, NoReturn
 
 import typer
 
-from cograil.audience import check_audience
+from cograil.audience import check_audience, resolve_principal
 from cograil.context import format_ledger, window_ledger
 from cograil.decisions import parse_inputs, table_for
 from cograil.domain import Colleague, Principal, Protocol, Run, RunStatus, Trigger, Workspace
@@ -219,8 +219,7 @@ def run(
 async def _run(path: Path, protocol_name: str, principal_id: str, script: Path | None) -> None:
     workspace = _load(path)
     protocol, colleague = _pick(workspace, protocol_name)
-    known = next((p for p in workspace.principals if p.id == principal_id), None)
-    principal = known or Principal(id=principal_id)
+    principal = resolve_principal(workspace, principal_id)
     try:
         check_audience(workspace, colleague, protocol, principal)
     except AudienceDenied as exc:
@@ -310,8 +309,9 @@ async def _approve(
         async with await _registry(workspace, store, where) as registry:
             runner = Runner(provider, registry, store, colleague, harness=workspace.harness)
             decision: Literal["approved", "declined"] = "declined" if decline else "approved"
+            canonical = resolve_principal(workspace, decider).id
             ended = await _decide(
-                runner.resume(token, protocol, decider=decider, decision=decision)
+                runner.resume(token, protocol, decider=canonical, decision=decision)
             )
             await _report(store, colleague, ended)
 

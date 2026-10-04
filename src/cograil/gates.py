@@ -11,7 +11,8 @@ waiting at the gate) in `Run.context["paused"]`, and sets the Run awaiting_appro
 `Gates.resume` decides the Approval once, so of two racing resumes only one goes on, and
 saves the Run in the same store transaction, so a crash cannot leave one without the
 other. Only the Approval's approver may decide it, and never the Run's own principal: any
-other decider raises ApprovalNotAllowed and leaves the Run and the Approval as they were,
+other decider raises ApprovalNotAllowed and leaves the Run and the Approval as they were
+(principal ids are compared normalised, so a spelling cannot slip past; cograil.identity),
 with a `gate.refused` AuditEvent whose principal is that decider, the Run's principal in its
 detail; the decider is written on the `gate.resumed` or `run.escalated` AuditEvent. A gate
 whose approver would be the Run's own principal, whom nobody else may stand in for, escalates
@@ -45,6 +46,7 @@ from cograil.errors import (
     LoopBudgetExceeded,
     RunNotPaused,
 )
+from cograil.identity import same_principal
 from cograil.observability import log_event
 from cograil.providers.base import Message, PlannedToolCall, StepComplete
 from cograil.registry import CallContext
@@ -146,7 +148,7 @@ class Gates:
         Approval is created and the Run escalates now.
         """
         approver = self._colleague.escalation_contact
-        if approver == run.principal_id:
+        if same_principal(approver, run.principal_id):
             detail = {"step": progress.step, "tool": tool.name, "approver": approver}
             return await self.escalate(run, "approver_is_principal", detail)
         approval = Approval(
@@ -184,7 +186,8 @@ class Gates:
         `decider` is the Approval's approver and not the Run's own principal.
         """
         approval, run = await self._paused_on(token)
-        if decider != approval.approver or decider == run.principal_id:
+        is_approver = same_principal(decider, approval.approver)
+        if not is_approver or same_principal(decider, run.principal_id):
             detail = {**_about(approval), "approver": approval.approver, "decided_by": decider,
                       "run_principal": run.principal_id}  # fmt: skip
             await self._audit(run, "gate.refused", detail, principal=decider)

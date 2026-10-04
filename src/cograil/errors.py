@@ -53,6 +53,14 @@ class AudienceDenied(CograilError):
     """The principal is outside the Protocol's audience."""
 
 
+class AuthNotConfigured(CograilError):
+    """COGRAIL_AUTH or the settings its mode needs are missing or invalid."""
+
+
+class LoginDenied(CograilError):
+    """The identity provider's answer does not let this person sign in."""
+
+
 class LoopBudgetExceeded(CograilError):
     """A step hit max_turns or a token or dollar budget without signalling step_complete.
 

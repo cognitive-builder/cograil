@@ -13,6 +13,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from cograil.identity import PrincipalId
+
 
 class Entity(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -151,8 +153,12 @@ class Colleague(Entity):
 
 
 class Audience(Entity):
+    """`claims` are identity-provider group claim values that place a signed-in principal in
+    this Audience; such a principal gets the Audience's `groups`."""
+
     name: str
     groups: list[str]
+    claims: list[str] = Field(default_factory=list)
 
 
 class KnowledgeSource(Entity):
@@ -298,7 +304,11 @@ class RunStatus(StrEnum):
 
 
 class Principal(Entity):
-    id: str
+    """`id` and `aliases` are normalised (cograil.identity), so spellings cannot split one
+    principal in two."""
+
+    id: PrincipalId
+    aliases: list[PrincipalId] = Field(default_factory=list)
     groups: list[str] = Field(default_factory=list)
     kind: Literal["user", "system"] = "user"
 
