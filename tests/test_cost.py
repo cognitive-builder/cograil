@@ -11,6 +11,7 @@ import pytest
 from cograil.cost import RunUsage, charge, cost_by_protocol, format_cost_table, run_usage
 from cograil.domain import (
     Colleague,
+    ContextSettings,
     Harness,
     LoopBounds,
     Price,
@@ -21,6 +22,7 @@ from cograil.domain import (
     Trigger,
 )
 from cograil.errors import ToolExecutionError
+from cograil.harness import CACHE_READ_FACTOR, CACHE_WRITE_FACTOR
 from cograil.parser import parse_protocol
 from cograil.providers import FakeProvider, PlannedToolCall, scripted
 from cograil.providers.base import Usage
@@ -194,3 +196,57 @@ async def test_the_dollar_budget_counts_a_runs_redactions(store: InMemoryRunStor
     [bounded] = [e for e in await store.list_audit_events("r1") if e.kind == "loop.bounded"]
     assert bounded.detail["bound"] == "usd_budget_per_run"
     assert (await store.get_run("r1")).cost_usd == pytest.approx(2.0 + 15 * PER_TOKEN)
+
+
+async def test_compression_and_screen_calls_are_charged_to_the_run() -> None:
+    # The two call sites besides a Step's turn (issue #229): the screen's and the compression's
+    # tokens reach the Run's tally, and their cache tokens its dollars. The Steps' own turns
+    # carry no tokens here, so every number below belongs to one of the two calls.
+    raw = "balance: 12 days. " + "history line. " * 200
+    store = InMemoryRunStore()
+    await store.create_run(a_run().model_copy(update={"id": "r1", "protocol": "d"}))
+    registry = ToolRegistry(store)
+
+    async def invoke(args: dict[str, Any]) -> str:
+        return raw
+
+    registry.register(Tool(name="look.up", kind="python", scope="read"), invoke)
+    protocol = parse_protocol(
+        "Protocol: d\n"
+        '1. Step "Look": Use @look.up to read the balance.\n'
+        '2. Step "Tell": Tell the requester. (context: steps 1)\n'
+    )
+    provider = FakeProvider(
+        [
+            scripted(
+                "",
+                PlannedToolCall(id="c1", tool="look.up", args={}),
+                input_tokens=0,
+                output_tokens=0,
+            ),
+            scripted(
+                "The balance is 12 days.",
+                input_tokens=0,
+                output_tokens=1_000_000,
+                cache_write_tokens=1_000_000,
+            ),  # the compression's call
+            scripted("12 days", done=True, input_tokens=0, output_tokens=0),
+            scripted("told", done=True, input_tokens=0, output_tokens=0),
+        ],
+        screens=[
+            scripted("none", input_tokens=1_000_000, output_tokens=0, cache_read_tokens=1_000_000)
+        ],
+    )
+    harness = Harness(
+        context=ContextSettings(compression_threshold_tokens=100),
+        pricing={"fake-model": Price(input_per_mtok=1.0, output_per_mtok=2.0)},
+    )
+    colleague = Colleague(name="c", role="r", escalation_contact="x@example.com", protocols=["d"])
+    run = await Runner(provider, registry, store, colleague, harness=harness).run("r1", protocol)
+    assert run_usage(run) == RunUsage(
+        input_tokens=1_000_000, output_tokens=1_000_000, cache_read_tokens=1_000_000,
+        cache_write_tokens=1_000_000,
+    )  # fmt: skip
+    screen = 1_000_000 + 1_000_000 * CACHE_READ_FACTOR  # its fresh input, and a cache read
+    compression = 1_000_000 * 2.0 + 1_000_000 * CACHE_WRITE_FACTOR  # its output, and a cache write
+    assert run.cost_usd == pytest.approx((screen + compression) / 1_000_000)
