@@ -62,7 +62,8 @@ async def test_submit_leave_keys_idempotency_on_employee_and_request_id(
             employee: await registry.invoke("hris.get_balance", {"employee": employee}, ctx)
             for employee in ("alice", "bob")
         }
-    assert alice["employee"] == "alice" and bob["employee"] == "bob"
+    assert alice["employee"] == "alice"
+    assert bob["employee"] == "bob"
     assert alice["remaining"] == 22 and bob["remaining"] == 17
     assert (balances["alice"]["annual"], balances["bob"]["annual"]) == (22, 17)
 
