@@ -37,3 +37,23 @@ No lint for negated `@ref`s for now. Spotting a negation in free prose is a heur
 case would look like a safety check that passed, which is worse than no check. Validation instead
 passes the workspace's tool names (`known_tools`), so an `@ref` that names no real tool still fails.
 Reopen this if a runbook review finds a real negated `@ref`.
+
+## How a runbook runs
+
+The runner compiles the Protocol to a graph with one node per step, in step order, and runs the
+steps one after another. Inside a step the model is offered only the step's `@ref` tools. Every
+tool call the model plans in a turn is checked before any of them runs:
+
+- A tool the step does not name raises `ToolNotAllowed`. Nothing from that plan runs.
+- A `scope: write` tool with `confirm_before_write` needs an approved Approval for the same run,
+  step, tool and arguments. Each Approval allows one call. Without one, `GateRequired` is raised.
+  Pausing the run to ask for an Approval comes with the gates issue (#11).
+
+Any error fails the run closed. The run's status becomes `failed`, and a `run.failed` AuditEvent
+records the error and the principal. The error is then raised again.
+
+A step is complete when the model answers without calling a tool. Its text and tool results are
+saved in the run's context. Only then does the cursor move to that step. A step sees the outputs of
+the steps it declares with `(context: steps 1, 2)`. Without a declaration it sees only the
+previous step. `(turns: N)` limits a step to N model turns, and the default is 6. A step that is
+not complete after its last turn raises `LoopBudgetExceeded`.
