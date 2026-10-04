@@ -4,6 +4,8 @@
 - DATABASE_URL       the Postgres RunStore, a SQLAlchemy URL (postgresql+asyncpg://...)
 - ANTHROPIC_API_KEY  read by the Anthropic provider
 - COGRAIL_AUTH and the settings of its mode: see cograil.api.auth_settings and docs/auth.md
+- COGRAIL_EMAIL and its settings, COGRAIL_PUBLIC_URL, COGRAIL_APPROVAL_LINK_SECRET: approval
+  emails, see cograil.channels.mail and docs/approvals.md
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from cograil.api.app import create_app
+from cograil.api.approval_mail import ApprovalMail
 from cograil.api.auth_settings import auth_settings
 from cograil.domain import Workspace
 from cograil.errors import StoreNotConfigured
@@ -64,4 +67,5 @@ def app_from_env() -> FastAPI:
         open_registry=open_with_redaction,
         close=store.dispose,
         redactor=redactor,
+        approval_mail=ApprovalMail.from_env(os.environ),
     )

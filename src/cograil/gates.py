@@ -28,8 +28,9 @@ pause time instead of waiting out the timeout, with the attempted call's args in
 approved Approval resumes the Run exactly at the paused Step; a declined one, or one past
 its expires_at, escalates the Run to the Colleague's escalation_contact, as does a Tool
 reaching its FailureThreshold (`Gates.escalate`) or a Step hitting a loop bound
-(`Gates.bounded`, ADR 0008). An Approval expires after harness.yaml's
-approvals.timeout_hours.
+(`Gates.bounded`, ADR 0008). An approver may decide through a signed email link
+(cograil.approval_links, issue #24); `via` then names the channel on the AuditEvent. An
+Approval expires after harness.yaml's approvals.timeout_hours.
 
 Interim rules until their issues land: the approver is the Colleague's escalation_contact
 (approver routing from decision tables still needs a directory lookup from tier to
@@ -208,6 +209,7 @@ class Gates:
         decider: str,
         *,
         versions: RunVersions,
+        via: str | None = None,
     ) -> Run:
         """Decide the Approval the Run is paused on: running again, or escalated.
 
@@ -216,6 +218,8 @@ class Gates:
         `decider` is refused before anything is read or audited: an AuditEvent needs a
         principal (product rule 6). An approval of a Run started under other `versions` is
         refused the same way with ToolPackChanged or HarnessChanged (issue #97); a decline is not.
+        `via` names the channel the decision came through (`email_link`), written on the
+        `gate.resumed` or `run.escalated` AuditEvent beside the decider (issue #24).
         """
         decider = normalise_principal_id(decider)  # one spelling in the audit trail
         if not decider:
@@ -227,12 +231,12 @@ class Gates:
             await self._refuse(run, approval, decider, "not_approver")
             raise ApprovalNotAllowed(f"{decider} may not decide the Approval for {approval.tool}")
         if self._overdue(approval):
-            return await self._decide(run, approval, "expired", decider)
+            return await self._decide(run, approval, "expired", decider, via)
         refusal = versions.refusal(run) if decision == "approved" else None
         if refusal is not None:  # an approval would run Tool code under changed versions
             await self._refuse(run, approval, decider, "run_version_changed", refusal.changes)
             raise refusal
-        return await self._decide(run, approval, decision, decider)
+        return await self._decide(run, approval, decision, decider, via)
 
     async def expire(self, token: str) -> Run:
         """Escalate the Run if its Approval is past expires_at; otherwise change nothing."""
@@ -288,6 +292,7 @@ class Gates:
         approval: Approval,
         decision: Literal["approved", "declined", "expired"],
         decider: str | None,
+        via: str | None = None,
     ) -> Run:
         """`decider` is None when the Approval timed out with nobody deciding it."""
         approved = decision == "approved"
@@ -297,6 +302,8 @@ class Gates:
         # and it saves the Run in the same transaction, so neither changes without the other.
         # Its AuditEvent is written in that transaction too (product rule 6).
         detail = {**_about(approval), "approver": approval.approver, "decided_by": decider}
+        if via is not None:
+            detail["via"] = via
         reason: EscalationReason = (
             "approval_declined" if decision == "declined" else "approval_expired"
         )

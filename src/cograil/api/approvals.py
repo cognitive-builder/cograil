@@ -10,6 +10,9 @@ A POST goes on to run the rest of the Run, and answers when the Run next stops.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from cograil.api.auth import current_principal
@@ -65,8 +68,15 @@ async def decide_approval(
     token: str, body: DecisionRequest, principal: CurrentPrincipal, services: ServicesDep
 ) -> RunOutcome:
     """Approve or decline; approved, the Run goes on at the paused Step."""
-    try:
+    async with decision_failures():
         return await services.decide(token, principal, body.decision)
+
+
+@asynccontextmanager
+async def decision_failures() -> AsyncIterator[None]:
+    """Turn the errors of deciding an Approval into the HTTP answers both decide routes give."""
+    try:
+        yield
     except (ApprovalNotFound, RunNotFound):
         raise HTTPException(404, "no such approval") from None
     except ApprovalNotAllowed as exc:

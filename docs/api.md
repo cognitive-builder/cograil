@@ -78,6 +78,7 @@ Limits: a decision answers when the Run next stops, not as a stream, so the card
 - A Run is visible only to its Principal. Another person's Run answers 404, the same as one that does not exist.
 - Only the Approval's approver can view or decide it. Anyone else gets 403.
 - The decider is always the signed-in Principal. The POST body carries only `decision`. Any other field gives 422, so a client cannot name someone else.
+- An approver can also decide from the signed link in an email, with no sign-in (`GET` and `POST /approvals/link/{token}`; see `docs/approvals.md`). The link works once and expires with the Approval.
 - The Runner refuses a decider who is not the approver, or who started the Run. It writes a `gate.refused` AuditEvent naming whoever tried.
 - A POST to an Approval runs the rest of the Run before it answers. The answer is the Run's state when it next stops; its `awaiting` lists only gates that wait on you. A Run's own chat shows every pending gate to the Principal who started it.
 - A missing `DATABASE_URL` stops the service at startup with `StoreNotConfigured`; sign-in problems are the only `AuthNotConfigured` ones.

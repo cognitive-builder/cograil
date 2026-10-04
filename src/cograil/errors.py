@@ -139,3 +139,15 @@ class ApprovalRunMismatch(StoreError):
 
 class RunClaimLost(StoreError):
     """Another execution claimed the Run since this one read it; this one must stop."""
+
+
+class ApprovalLinkInvalid(CograilError):
+    """An approval link is malformed, forged or not for this Approval."""
+
+
+class EmailNotConfigured(CograilError):
+    """COGRAIL_EMAIL or the settings its mode needs are missing or invalid."""
+
+
+class EmailDeliveryError(CograilError):
+    """The mail provider refused or could not take an email."""

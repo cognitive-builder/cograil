@@ -191,6 +191,7 @@ class Runner:
         *,
         decider: str,
         decision: Literal["approved", "declined"] = "approved",
+        via: str | None = None,
     ) -> Run:
         """Decide the Approval a Run is paused on, then go on exactly at the paused Step.
 
@@ -201,8 +202,9 @@ class Runner:
         RunClaimLost means a `run` claimed the decided Run first and goes on with it.
         An approval of a Run started with another tool pack or harness raises ToolPackChanged
         or HarnessChanged and leaves it as it was too; a decline still escalates it (#97).
+        `via` names the channel the decision came through, for the AuditEvent (issue #24).
         """
-        run = await self._gates.resume(token, decision, decider, versions=self._versions())
+        run = await self._gates.resume(token, decision, decider, versions=self._versions(), via=via)
         if run.status is not RunStatus.running:
             return run
         async with self._claims.failing_closed(run.id) as claim:
