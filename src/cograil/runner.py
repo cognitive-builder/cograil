@@ -171,11 +171,11 @@ class Runner:
         decider: str,
         decision: Literal["approved", "declined"] = "approved",
     ) -> Run:
-        """Decide, as principal `decider`, the Approval a Run is paused on, then go on
-        exactly at the paused Step.
+        """Decide the Approval a Run is paused on, then go on exactly at the paused Step.
 
-        Declined or expired, the Run escalates instead. Errors in deciding (ApprovalNotAllowed
-        for a decider who is not the approver or is the Run's own principal, RunNotPaused,
+        `decider` is the principal deciding it, who must be the Approval's approver. Declined
+        or expired, the Run escalates instead. Errors in deciding (ApprovalNotAllowed for a
+        decider who is not the approver or is the Run's own principal, RunNotPaused,
         ApprovalAlreadyDecided for a resume that lost a race) leave the Run as it was.
         """
         run = await self._gates.resume(token, decision, decider)

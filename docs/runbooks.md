@@ -75,7 +75,8 @@ tool call the model plans in a turn is checked before any of them runs:
 - `Runner.resume(token, protocol, decider=...)` approves and continues exactly at the paused step.
   The saved plan runs without asking the model again, then the step goes on. Only the Approval's
   approver may decide it, and never the run's own principal, so a run cannot approve its own
-  write. Anyone else gets `ApprovalNotAllowed` and the run stays paused. The decider is recorded
+  write. Anyone else gets `ApprovalNotAllowed`, the run stays paused, and a `gate.refused`
+  AuditEvent records the attempt. The decider is recorded
   as `decided_by` on the `gate.resumed` or `run.escalated` AuditEvent. The
   `cograil approve <token>` command that calls it comes with the CLI issue (#13). An Approval is
   decided once, so of two racing resumes only one goes on.

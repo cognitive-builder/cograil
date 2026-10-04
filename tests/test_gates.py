@@ -211,7 +211,8 @@ async def test_only_the_approver_may_decide_an_approval(
     assert (await store.get_run("r1")).status == RunStatus.awaiting_approval
     assert (await store.get_approval(token)).decision == "pending"
     assert (provider.calls, tools.invoked) == ([], ["hris.get_balance"])
-    assert (await kinds(store))[-1] == "gate.paused"
+    refused = (await store.list_audit_events("r1"))[-1]
+    assert (refused.kind, refused.detail["decided_by"]) == ("gate.refused", decider)
 
 
 async def test_a_run_cannot_approve_its_own_gated_write(
