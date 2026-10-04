@@ -39,3 +39,23 @@ class DecisionError(CograilError):
 
 class ProviderError(CograilError):
     """A model provider call failed, or a FakeProvider script ran out."""
+
+
+class StoreError(CograilError):
+    """A RunStore operation failed."""
+
+
+class RunNotFound(StoreError):
+    """No Run with that id exists in the store."""
+
+
+class ApprovalNotFound(StoreError):
+    """No Approval with that token exists in the store."""
+
+
+class DuplicateRecord(StoreError):
+    """A Run or Approval with that id or token already exists."""
+
+
+class ApprovalAlreadyDecided(StoreError):
+    """An Approval can be decided once; it is no longer pending."""

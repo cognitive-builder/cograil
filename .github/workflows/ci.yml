@@ -42,6 +42,8 @@ jobs:
       # pytest exits 5 when no tests match; that is fine until those tests exist.
       - name: Unit tests
         run: uv run pytest --maxfail=0
+      - name: Migrations
+        run: uv run alembic upgrade head
       - name: Integration tests
         run: uv run pytest -m integration --maxfail=0 || [ $? -eq 5 ]
       - name: End-to-end tests
