@@ -1,6 +1,6 @@
 # ADR 0001: Protocols Are Markdown
 
-Status: Proposed · Date: 2026-10-03
+Status: Accepted 2026-10-04 · Date: 2026-10-03
 
 ## Context
 

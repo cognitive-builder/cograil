@@ -1,6 +1,6 @@
 # ADR 0003: Postgres Is The Only State Store In v0.1; Temporal Is An Optional Backend Later
 
-Status: Proposed · Date: 2026-10-03
+Status: Accepted 2026-10-04 · Date: 2026-10-03
 
 ## Context
 

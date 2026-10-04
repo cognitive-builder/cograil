@@ -4,10 +4,10 @@ One file per decision, numbered, never edited after acceptance except to change 
 
 | ADR | Title | Discipline | Status |
 | --- | --- | --- | --- |
-| 0001 | Protocols Are Markdown | | Proposed |
-| 0002 | Gates Are Tool Metadata Enforced By The Runner | | Proposed |
-| 0003 | Postgres First, Temporal Optional | | Proposed |
-| 0004 | Workspace Packs Are Data | | Proposed |
+| 0001 | Protocols Are Markdown | | Accepted |
+| 0002 | Gates Are Tool Metadata Enforced By The Runner | | Accepted |
+| 0003 | Postgres First, Temporal Optional | | Accepted |
+| 0004 | Workspace Packs Are Data | | Accepted |
 | 0005 | One Provider Interface, Anthropic Default | | Proposed |
 | 0006 | Static HTML Web Chat | | Proposed |
 | 0007 | Context Is Declared Per Step | Context Engineering | Proposed |
