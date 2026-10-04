@@ -54,7 +54,7 @@ tool_calls = Table(
     Column("step", Integer, nullable=False),
     Column("tool", Text, nullable=False),
     Column("args", JSONB, nullable=False),
-    Column("result", JSONB(none_as_null=True)),
+    Column("result", JSONB),
     Column("error", Text),
     Column("started_at", DateTime(timezone=True), nullable=False),
     Column("ended_at", DateTime(timezone=True)),
