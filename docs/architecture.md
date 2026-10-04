@@ -26,6 +26,7 @@ module that implements it.
 | graph.py compile_graph: the same shape as data, rendered as Mermaid       |
 |                                                                           |
 |   context.py   what a Step sees; the Window Ledger           ADR 0007     |
+|   compression.py long Tool results, small tier               ADR 0007     |
 |   harness.py   version, loop bounds, cost                 ADR 0008, 0012  |
 |   gates.py     Approvals, escalation                        ADR 0002     |
 |   providers/   one Provider interface; Anthropic default    ADR 0005     |

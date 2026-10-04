@@ -34,8 +34,20 @@ Some work defaults to the small tier: classification (routing), extraction, reda
 compression. They use `defaults.classification_tier`, which is `small` by default. All other work
 uses `defaults.judgment_tier`.
 
-Today, routing and redaction call the small tier. Extraction and compression have no call site in
+Today, routing, redaction and compression call the small tier. Extraction has no call site in
 the runtime yet, so the setting is ready but nothing uses it.
+
+### Compression of long Tool results
+
+A Tool result longer than `context.compression_threshold_tokens` (2000 by default, estimated at
+four characters a token) is summarised by the compression tier before the model sees it. The
+Step's own instruction guides the summary, so it keeps what the Step may still need. The raw
+result stays in the Step's `tool_calls` on the Run, with the summary beside it as `compressed`,
+for audit and the run history. A later Step that declares this Step's output sees the summary
+too. Each compression writes a `context.compressed` AuditEvent, and its tokens and cost count
+against the Step and the Run. If the compression fails, the Run fails closed; the raw result is
+never passed on instead. `cograil runs <id> --ledger` adds `raw_tokens` and `compressed` columns
+when a Run compressed anything; the source columns count what the model was given.
 
 ## Effort
 

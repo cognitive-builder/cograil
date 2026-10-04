@@ -35,7 +35,9 @@ failing the Run.
 
 What a Step sees is the ContextBuilder's (context.py, ADR 0007): the prior Steps it declares,
 its whitelisted Tools' schemas, and Tool results inside a data block. The Window Ledger of
-that is kept in `Run.context["ledger"]`, saved with the Run.
+that is kept in `Run.context["ledger"]`, saved with the Run. A Tool result over the harness's
+compression threshold reaches the model as the small tier's summary (compression.py); the raw
+result stays in the Step's recorded `tool_calls`.
 """
 
 from __future__ import annotations
@@ -50,6 +52,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from cograil.claims import RunClaims
+from cograil.compression import Compressor, recorded, shown
 from cograil.context import ContextBuilder, add_to_ledger
 from cograil.domain import (
     Approval,
@@ -161,6 +164,7 @@ class Runner:
         timeout = timedelta(hours=self._harness.approvals.timeout_hours)
         self._gates = Gates(store, colleague, timeout=timeout, clock=clock)
         self._turns = Turns(provider, self._harness, self._claims)
+        self._compressor = Compressor(provider, self._harness, self._claims)
 
     async def run(self, run_id: str, protocol: Protocol) -> Run:
         """Run from the Step after Run.cursor until the end, a gate or an escalation.
@@ -270,8 +274,10 @@ class Runner:
             if run.status is not RunStatus.running:
                 return run
             progress.planned = []
-            progress.calls.extend(await self._recorded(done))
-            run = self._remember(run, step, progress, done)
+            try:
+                run = await self._absorb(run, step, progress, done)
+            except LoopBudgetExceeded as exc:
+                return await self._gates.bounded(run, step.number, exc)
             if progress.completing is not None:
                 if not any("error" in call for call in done):
                     return await self._complete(run, step, progress.completing.output, progress)
@@ -284,6 +290,14 @@ class Runner:
         """
         redact = self._registry.redactor.redact
         return [{**c, "error": await redact(c["error"])} if "error" in c else c for c in done]
+
+    async def _absorb(
+        self, run: Run, step: Step, progress: StepProgress, done: list[dict[str, Any]]
+    ) -> Run:
+        """Record the calls on the Step and give the model their results, long ones compressed."""
+        run, summaries = await self._compressor.compress(run, step, progress, done)
+        progress.calls.extend(await self._recorded(recorded(done, summaries)))
+        return self._remember(run, step, progress, shown(done, summaries))
 
     def _remember(
         self, run: Run, step: Step, progress: StepProgress, done: list[dict[str, Any]]
