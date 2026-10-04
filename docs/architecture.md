@@ -108,13 +108,21 @@ edits, and a database trigger rejects UPDATE, DELETE and TRUNCATE.
 
 `orchestrator.py` decides which Colleague and Protocol a free-text message is for, before any
 Run exists. `classify_intent` offers the model one read tool, `route`, whose `choice` is an
-enum of the workspace's `colleague/protocol` pairs plus `none`; the model cannot name anything
-else. A choice outside the list, a missing or out-of-range confidence, or no `route` call at
-all routes to `none`. `none` returns a refusal (`Routing.refusal`) listing what the workspace
-can do. The classification model is the harness's `classification_tier` (`claude-haiku-4-5` by
-default); build the Provider on `classification_model(workspace)`. Each classification is
-logged as `orchestrator.classified` with the confidence, so evals can replay it. Audience
-checks are not part of it yet (issue #20).
+enum of the `colleague/protocol` pairs the principal may start, plus `none`; the model cannot
+name anything else. A choice outside the list, a missing or out-of-range confidence, or no
+`route` call at all routes to `none`. `none` returns a refusal (`Routing.refusal`) listing what
+the principal can do and the escalation contacts of those Colleagues. The classification model
+is the harness's `classification_tier` (`claude-haiku-4-5` by default); build the Provider on
+`classification_model(workspace)`. Each classification is logged as `orchestrator.classified`
+with the confidence, so evals can replay it.
+
+Audiences are a pre-filter (issue #20): the enum and the refusal are built from the same
+filtered list, so a Protocol outside the principal's audiences is never offered to the model
+nor named in the refusal, and asking for it ends in a refusal, not an error. The rule lives in
+`audience.py` (`audience_denial`, and `check_audience` which raises `AudienceDenied`), shared
+with `cograil run`: for a user, the Colleague's and the Protocol's audiences must both allow
+the principal and the Protocol must allow manual execution; the system actor (a `Principal`
+of kind `system`) is allowed exactly when the Protocol allows scheduled execution.
 
 ## Not built yet
 
