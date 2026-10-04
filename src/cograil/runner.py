@@ -378,7 +378,7 @@ class Runner:
         return claimed
 
     async def _fail(self, run_id: str, claim: str, exc: Exception) -> None:
-        """Fail the Run closed, unless this execution no longer holds its claim."""
+        """Fail the Run closed if this execution holds its claim; otherwise leave it as is."""
         run = await self._store.get_run(run_id)
         if run.claim != claim:
             return

@@ -105,7 +105,10 @@ compares the claim and status the caller read and sets a fresh claim, and every 
 the Run is conditional on that claim. Of two executions started from the same read, exactly
 one goes on and the other raises `RunClaimLost`. A Run left `running` by a killed process can
 still be run again; its new claim takes the Run over, and an execution whose claim was taken
-over stops at its next save without failing the Run.
+over stops at its next save without failing the Run. The claim fences Run saves only: until
+that next save, the execution that was taken over may still make provider and tool calls, as
+a process killed mid-Step would have. A gated write still needs an Approval, and each
+Approval lets one call through.
 Approved, the Run continues exactly at the paused Step and runs the plan that was waiting.
 Declined or past its expiry, it escalates to the Colleague's escalation contact. A Protocol
 whose version has changed since the Run started is refused.
