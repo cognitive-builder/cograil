@@ -26,14 +26,14 @@ module that implements it.
 |                                                                           |
 |   context.py   what a Step sees; the Window Ledger           ADR 0007     |
 |   harness.py   version, loop bounds, cost                 ADR 0008, 0012  |
-|   gates.py     Approvals, escalation, failure thresholds     ADR 0002     |
+|   gates.py     Approvals, escalation                        ADR 0002     |
 |   providers/   one Provider interface; Anthropic default    ADR 0005     |
 |   registry.py  Tool kinds: python, rest, mcp (tool_kinds/)                |
 +---------------------------------------------------------------------------+
       |
 +---------------------------------------------------------------------------+
 | State                                                        ADR 0003      |
-| store.py RunStore -> PostgresRunStore over store_tables.py                |
+| store.py RunStore -> PostgresRunStore (default), InMemoryRunStore (tests) |
 | runs, tool_calls, approvals, audit_events (append-only)                   |
 +---------------------------------------------------------------------------+
 ```
@@ -60,7 +60,7 @@ a `Runner`.
 6. The Provider is `FakeProvider` with the plans from `--fake-script`, or
    `AnthropicProvider.for_protocol` (which needs `ANTHROPIC_API_KEY`).
 7. `open_store` opens the `PostgresRunStore` named by `DATABASE_URL`, wrapped in a
-   `ProgressStore` that echoes every AuditEvent as a line of progress.
+   `ProgressStore` that echoes every AuditEvent and every finished Step as a line of progress.
 8. `build_registry` builds the `python`, `rest` and `mcp` kinds. A Step that names a Tool
    nothing implements refuses to start: the Run never begins with a whitelist it cannot honour.
 9. The Run is created — `Trigger` kind `chat`, channel `cli` — and saved.
