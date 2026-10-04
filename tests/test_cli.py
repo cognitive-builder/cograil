@@ -8,6 +8,7 @@ import secrets
 import shutil
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -17,8 +18,10 @@ from typer.testing import CliRunner
 import cograil.cli
 import cograil.cliexit
 from cograil.cli import app
-from cograil.domain import Run, RunStatus
+from cograil.cost import charge
+from cograil.domain import Harness, Price, Principal, Run, RunStatus, Trigger
 from cograil.errors import ProviderError
+from cograil.providers.base import Usage
 from cograil.providers.fake import load_script
 from cograil.store import InMemoryRunStore, RunStore
 
@@ -435,3 +438,58 @@ def test_runs_cost_prints_a_table_by_protocol(
     assert result.exit_code == 0
     assert "cost/resolved" in header and "batch" in header
     assert row.split()[:3] == ["record_item", "1", "0"] and row.split()[-1] == "-"
+
+
+T0 = datetime(2026, 10, 4, tzinfo=UTC)
+PRICED = Harness(pricing={"m": Price(input_per_mtok=1.0, output_per_mtok=2.0)})
+
+
+def spent(run_id: str, protocol: str, status: RunStatus, minutes: int, usage: Usage) -> Run:
+    """A Run of `protocol` from `minutes` after T0, holding one priced call's tally and cost."""
+    at = T0 + timedelta(minutes=minutes)
+    run = Run(id=run_id, workspace="cli-demo", colleague="helper", protocol=protocol,
+              protocol_version=1, principal=Principal(id=ALICE), trigger=Trigger(kind="chat"),
+              status=status, created_at=at, updated_at=at)  # fmt: skip
+    return charge(PRICED, run, "m", usage)
+
+
+def test_cost_counts_the_newest_limit_runs_across_all_protocols(
+    shared_store: InMemoryRunStore,
+) -> None:
+    # The window of --cost is the newest --limit Runs across all Protocols (issue #229): the
+    # two oldest never reach the table, and neither Protocol gets the limit to itself.
+    runs = [
+        spent(
+            "old-leave", "leave_request", RunStatus.escalated, 1, Usage(input_tokens=300_000)
+        ),  # outside the window, never counted
+        spent(
+            "old-record", "record_item", RunStatus.completed, 2, Usage(input_tokens=20_000)
+        ),  # outside the window, never counted
+        spent(
+            "new-leave-1",
+            "leave_request",
+            RunStatus.completed,
+            3,
+            Usage(input_tokens=100_000, output_tokens=50_000),
+        ),
+        spent(
+            "new-record-1",
+            "record_item",
+            RunStatus.escalated,
+            4,
+            Usage(input_tokens=30_000, cache_read_tokens=100_000),
+        ),
+        spent("new-leave-2", "leave_request", RunStatus.completed, 5, Usage(input_tokens=10_000)),
+        spent("new-record-2", "record_item", RunStatus.escalated, 6, Usage(input_tokens=5_000)),
+    ]
+    for run in runs:
+        asyncio.run(shared_store.create_run(run))
+    result = runner.invoke(app, ["runs", "--cost", "--limit", "4"])
+    assert result.exit_code == 0, result.output
+    record, leave = (line.split() for line in result.output.splitlines()[1:])
+    assert record == [
+        "record_item", "2", "0", "35000", "0", "100000", "0", "0", "$0.0450", "-",
+    ]  # fmt: skip
+    assert leave == [
+        "leave_request", "2", "2", "110000", "50000", "0", "0", "0", "$0.2100", "$0.1050",
+    ]  # fmt: skip
