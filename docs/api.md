@@ -19,15 +19,16 @@ Settings come only from environment variables. To run the service in a container
 
 ## Endpoints
 
-"Signed in" means any Principal with a valid session. Every endpoint needs one, and answers 401 without it, except `/`, `/health`, `/auth/*`, `/docs` and `/openapi.json`.
+"Signed in" means any Principal with a valid session. Every endpoint needs one, and answers 401 without it, except `/`, `/history`, `/health`, `/auth/*`, `/docs` and `/openapi.json`.
 
 | Endpoint | What it does | Who may call it |
 | --- | --- | --- |
 | `GET /` | The web chat page (see below). | Anyone; the page asks `/auth/me` who is signed in. |
+| `GET /history` | The run history page (see below). | Anyone; the page asks `/auth/me` who is signed in. |
 | `GET /health` | Says the service is up. | Anyone. |
 | `/auth/*` | Sign-in routes. | Anyone (see `docs/auth.md`). |
 | `POST /chat` | Routes a message to a Protocol and streams the Run as SSE. | Signed in. |
-| `GET /runs` | Lists your Runs, newest first; an auditor's list is every Run. `limit` is 1 to 100, default 20. | Signed in. |
+| `GET /runs` | Lists your Runs, newest first, each with the `principal_id` that started it, its `status`, `protocol` and `cost_usd`; an auditor's list is every Run. `limit` is 1 to 100, default 20. | Signed in. |
 | `GET /runs/{id}` | One Run with its Steps, tool calls and Gates. `protocol_changed` is true when the Workspace no longer has the Protocol at the version the Run began with; then `steps` is empty and the rest of the Run is still shown. | The Principal who started it. An auditor lists every Run but does not open another's. |
 | `GET /approvals/{token}` | Shows the call a Gate holds, and who asked. | The Approval's approver. |
 | `POST /approvals/{token}` | Approves or declines. Body: `{"decision": "approved"}` or `"declined"`. | The Approval's approver. |
@@ -72,6 +73,14 @@ Open the service's root (`/`) in a browser. The chat is one HTML file with its o
 - **Phones.** The layout fits a narrow screen, the buttons are at least 44 pixels tall, and the text field is 16 pixels so iOS does not zoom into it. It follows the light or dark setting of the device.
 
 Limits: a decision answers when the Run next stops, not as a stream, so the card shows "going on…" until then. If the connection drops, the Run still carries on; the page says so and names the Run.
+
+## The Run History Page
+
+Open `/history` in a browser (the chat page's header links to it). It is one HTML file the same way the chat is (ADR 0006): no framework, no build step, no request to any other site. The source is `src/cograil/channels/web/history.html`.
+
+- **The list.** The page reads `GET /runs` and shows one row per Run: its status, Colleague and Protocol, the Principal who started it, its cost so far, and when it began. Your own Runs, or — for a Principal in the workspace's `auditors` group — everyone's.
+- **The drill-down.** Opening a row reads `GET /runs/{id}` and shows the Run's Steps with their state and output, every tool call with its arguments and result, its Gates with their decision, approver and expiry, and the timings: when the Run started and stopped and how long it took, and how long each call took. When the Workspace has moved on and the Run's Steps can no longer be shown, the page says so instead of showing a list.
+- **Read-only.** The page only ever makes GET requests. Nothing on it can start, decide or change a Run; Refresh reads the list again.
 
 ## Rules
 

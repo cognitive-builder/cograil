@@ -33,9 +33,12 @@ class DecisionRequest(Request):
 
 
 class RunSummary(BaseModel):
+    """One Run as a row: who started it, where it stands, and what it cost so far."""
+
     id: str
     colleague: str
     protocol: str
+    principal_id: str = Field(description="The Principal who started the Run.")
     status: RunStatus
     cost_usd: float
     created_at: datetime
@@ -46,6 +49,7 @@ class RunSummary(BaseModel):
         return cls(
             id=run.id,
             colleague=run.colleague,
+            principal_id=run.principal_id,
             protocol=run.protocol,
             status=run.status,
             cost_usd=run.cost_usd,

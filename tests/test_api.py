@@ -257,6 +257,17 @@ def test_an_auditor_lists_every_run_but_opens_only_their_own(env: Env) -> None:
     assert env.get("/runs/nope", as_=AUDITOR).status_code == 404
 
 
+def test_each_listed_run_names_who_started_it(env: Env) -> None:
+    # The history page lists runs with status, protocol, principal and cost (#26); an auditor's
+    # rows are everyone's, so each one has to name its own principal.
+    run_id = env.paused_run()["run"]["id"]
+    assert [(r["id"], r["principal_id"]) for r in env.get("/runs").json()] == [(run_id, ALICE)]
+    with_auditor(env)
+    assert [(r["id"], r["principal_id"]) for r in env.get("/runs", as_=AUDITOR).json()] == [
+        (run_id, ALICE)
+    ]
+
+
 def test_run_detail_shows_steps_calls_and_gates(env: Env) -> None:
     run_id = env.paused_run()["run"]["id"]
     detail = env.get(f"/runs/{run_id}").json()
@@ -270,6 +281,15 @@ def test_run_detail_shows_steps_calls_and_gates(env: Env) -> None:
     assert (gate["tool"], gate["approver"], gate["decision"]) == ("demo.record", MANAGER, "pending")
     assert "token" not in gate
     assert detail["protocol_changed"] is False
+
+
+def test_run_detail_carries_the_timings_the_history_page_shows(env: Env) -> None:
+    run_id = env.paused_run()["run"]["id"]
+    detail = env.get(f"/runs/{run_id}").json()
+    assert detail["created_at"] <= detail["updated_at"]  # ISO 8601, both UTC
+    (call,) = detail["calls"]
+    assert call["started_at"] <= call["ended_at"]
+    assert detail["gates"][0]["expires_at"] is not None  # a pending gate says when it expires
 
 
 @pytest.mark.parametrize("moved_on", ["new-version", "gone"])
