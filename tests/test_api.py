@@ -6,6 +6,7 @@ FakeProvider. Who is calling comes from the X-User header, which replaces the si
 
 import asyncio
 import json
+import logging
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -176,6 +177,28 @@ def test_chat_audits_the_classification_with_the_principal(env: Env) -> None:
     ]
     assert event.principal_id == ALICE
     assert event.detail["protocol"] == "record_item" and event.detail["confidence"] == 0.9
+
+
+def test_chat_stores_the_message_and_requester_as_the_run_input(env: Env) -> None:
+    done = env.paused_run()
+    run = stored(env, done["run"]["id"])
+    assert run.context["input"] == {"message": "record 42", "requester": ALICE}
+
+
+def test_the_message_reaches_no_audit_event_and_no_log_line(
+    env: Env, caplog: pytest.LogCaptureFixture
+) -> None:
+    pii = "record 42 for Jane Roe, SSN 078-05-1120, jane.roe@example.org"
+    env.route_to("helper/record_item")
+    env.run_scripts.append(env.script(RUN_SCRIPT))
+    with caplog.at_level(logging.DEBUG):
+        done = dict(env.chat(message=pii))["done"]
+    run_id = done["run"]["id"]
+    assert stored(env, run_id).context["input"]["message"] == pii
+    events = asyncio.run(env.store.list_audit_events(run_id))
+    assert events and all("078-05-1120" not in e.model_dump_json() for e in events)
+    assert caplog.records and all("078-05-1120" not in r.getMessage() for r in caplog.records)
+    assert all("Jane Roe" not in r.getMessage() for r in caplog.records)
 
 
 def test_chat_refuses_what_fits_no_protocol_and_starts_no_run(env: Env) -> None:

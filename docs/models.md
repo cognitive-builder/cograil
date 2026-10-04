@@ -152,7 +152,7 @@ Ollama runs models on your own machine. These steps were not run in CI.
 5. Run a Protocol:
 
    ```bash
-   uv run cograil run workspaces/example-smb --protocol leave_request --as alice@example.com
+   uv run cograil run workspaces/example-smb --protocol leave_request --as alice@example.com --message "Annual leave from 2026-11-02 to 2026-11-04, please"
    ```
 
 A laptop usually fits only the small and perhaps the standard model. Use `(model: ...)` directives

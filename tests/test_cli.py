@@ -26,6 +26,7 @@ ROOT = Path(__file__).parents[1]
 EXAMPLE = ROOT / "workspaces/example-smb"
 DEMO = Path(__file__).parent / "fixtures/workspaces/cli-demo"
 ALICE, MANAGER = "alice@example.com", "manager@example.com"
+ASK = ["--message", "Please record the answer"]
 
 # Step 1 looks a value up; step 2 plans a gated write, so the Run pauses there.
 RUN_SCRIPT = """
@@ -61,7 +62,7 @@ def script(tmp_path: Path, text: str, name: str = "script.yaml") -> str:
 
 
 def start(tmp_path: Path, as_: str = ALICE, text: str = RUN_SCRIPT) -> "tuple[int, str]":
-    args = ["run", str(DEMO), "--protocol", "record_item", "--as", as_]
+    args = ["run", str(DEMO), "--protocol", "record_item", "--as", as_, *ASK]
     result = runner.invoke(app, [*args, "--fake-script", script(tmp_path, text)])
     return result.exit_code, result.output
 
@@ -82,6 +83,25 @@ def test_run_streams_step_progress_and_stops_at_the_gate(
     positions = [next(i for i, line in enumerate(lines) if want in line) for want in order]
     assert positions == sorted(positions)
     assert f"cograil approve {token_in(output)} --as {MANAGER}" in output
+
+
+def test_run_stores_the_message_and_requester_as_the_run_input(
+    shared_store: InMemoryRunStore, tmp_path: Path
+) -> None:
+    start(tmp_path)
+    (run,) = asyncio.run(shared_store.list_runs())
+    assert run.context["input"] == {"message": "Please record the answer", "requester": ALICE}
+
+
+@pytest.mark.parametrize("ask", [[], ["--message", "  "]], ids=["missing", "blank"])
+def test_run_without_a_message_is_a_usage_error(
+    shared_store: InMemoryRunStore, tmp_path: Path, ask: list[str]
+) -> None:
+    args = ["run", str(DEMO), "--protocol", "record_item", "--as", ALICE, *ask]
+    result = runner.invoke(app, [*args, "--fake-script", script(tmp_path, RUN_SCRIPT)])
+    assert result.exit_code == 2
+    assert "--message" in result.output
+    assert asyncio.run(shared_store.list_runs()) == []
 
 
 def test_approve_resumes_exactly_at_the_paused_step(
@@ -138,7 +158,7 @@ def started_then_changed(tmp_path: Path, file: str, old: str, new: str) -> str:
     """The token of a Run paused in a copy of the demo workspace, changed after the pause."""
     copy = tmp_path / "ws"
     shutil.copytree(DEMO, copy)
-    args = ["run", str(copy), "--protocol", "record_item", "--as", ALICE]
+    args = ["run", str(copy), "--protocol", "record_item", "--as", ALICE, *ASK]
     started = runner.invoke(app, [*args, "--fake-script", script(tmp_path, RUN_SCRIPT)])
     path = copy / file
     text = path.read_text() if path.exists() else ""
@@ -271,7 +291,7 @@ def test_run_refuses_a_workspace_whose_tools_are_not_built_yet(
     (copy / "tools.yaml").write_text(unbuilt)
     result = runner.invoke(
         app,
-        ["run", str(copy), "--protocol", "record_item", "--as", ALICE,
+        ["run", str(copy), "--protocol", "record_item", "--as", ALICE, *ASK,
          "--fake-script", script(tmp_path, "[]")],
     )  # fmt: skip
     assert result.exit_code == cograil.cliexit.EXIT_ERROR
@@ -285,7 +305,7 @@ def test_run_names_the_database_url_a_knowledge_tool_needs(
     monkeypatch.delenv("DATABASE_URL", raising=False)
     result = runner.invoke(
         app,
-        ["run", str(EXAMPLE), "--protocol", "policy_question", "--as", ALICE,
+        ["run", str(EXAMPLE), "--protocol", "policy_question", "--as", ALICE, *ASK,
          "--fake-script", script(tmp_path, "[]")],
     )  # fmt: skip
     assert result.exit_code == cograil.cliexit.EXIT_ERROR
@@ -302,7 +322,7 @@ def test_the_example_workspace_builds_every_tool(
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:pw@localhost:5432/cograil")
     result = runner.invoke(
         app,
-        ["run", str(EXAMPLE), "--protocol", "policy_question", "--as", ALICE,
+        ["run", str(EXAMPLE), "--protocol", "policy_question", "--as", ALICE, *ASK,
          "--fake-script", script(tmp_path, "[]")],
     )  # fmt: skip
     assert "is not available" not in result.output
@@ -314,7 +334,7 @@ def test_the_example_workspace_builds_every_tool(
 def test_run_needs_a_database_and_an_api_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    args = ["run", str(DEMO), "--protocol", "record_item", "--as", ALICE]
+    args = ["run", str(DEMO), "--protocol", "record_item", "--as", ALICE, *ASK]
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     assert "ANTHROPIC_API_KEY" in runner.invoke(app, args).output
     monkeypatch.delenv("DATABASE_URL", raising=False)

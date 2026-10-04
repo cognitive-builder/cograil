@@ -11,10 +11,8 @@ from __future__ import annotations
 
 import json
 import os
-import uuid
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -30,7 +28,7 @@ from cograil.cliexit import (
 )
 from cograil.context import cache_ledger, compression_ledger, format_ledger, window_ledger
 from cograil.decisions import parse_inputs, table_for
-from cograil.domain import Colleague, Principal, Protocol, Run, RunStatus, Trigger, Workspace
+from cograil.domain import Colleague, Protocol, Run, RunStatus, Workspace
 from cograil.errors import (
     ApprovalAlreadyDecided,
     ApprovalNotAllowed,
@@ -54,6 +52,7 @@ from cograil.providers import FakeProvider, Provider, make_provider, provider_re
 from cograil.providers.fake import load_script
 from cograil.redaction import redactor
 from cograil.registry import ToolRegistry, build_registry
+from cograil.run_input import received_run
 from cograil.runner import Runner
 from cograil.store import PostgresRunStore, RunStore
 from cograil.validate import validate_workspace
@@ -170,36 +169,15 @@ def _check_tools(workspace: Workspace, protocol: Protocol, registry: ToolRegistr
                 fail(f"step {step.number}: tool {name} (kind {kinds[name]}) is not available{hint}")
 
 
-def _new_run(
-    workspace: Workspace, path: Path, protocol: Protocol, colleague: Colleague, principal: Principal
-) -> Run:
-    """A received Run. Trigger.kind has no "cli": a CLI Run is a chat on the channel "cli"."""
-    now = datetime.now(UTC)
-    trigger = Trigger(kind="chat", channel="cli")
-    return Run(
-        id=uuid.uuid4().hex,
-        workspace=workspace.name,
-        colleague=colleague.name,
-        protocol=protocol.name,
-        protocol_version=protocol.version,
-        principal=principal,
-        principal_id=principal.id,
-        trigger=trigger,
-        trigger_kind=trigger.kind,
-        created_at=now,
-        updated_at=now,
-        context={"workspace_path": str(path.resolve())},
-    )
-
-
 @app.command()
 def run(
     path: Annotated[Path, typer.Argument(help="Workspace folder.")],
     protocol: Annotated[str, typer.Option(help="Name of the Protocol to run.")],
     as_: AsOption,
+    message: Annotated[str, typer.Option(help="What the requester asks; every Step sees it.")],
     fake_script: FakeScript = None,
 ) -> None:
-    """Start a Run of a Protocol and stream its progress.
+    """Start a Run of a Protocol with the requester's message and stream its progress.
 
     Prints one line per AuditEvent and per finished Step. A Run that pauses at a gate prints
     the `cograil approve` command that continues it. Uses Anthropic (ANTHROPIC_API_KEY)
@@ -211,10 +189,14 @@ def run(
     DATABASE_URL or ANTHROPIC_API_KEY, tool not available, database unreachable); 2 usage
     error; 3 awaiting approval; 4 escalated; 5 failed.
     """
-    await_command(_run(path, protocol, _principal_id(as_), fake_script))
+    if not message.strip():
+        raise typer.BadParameter("say what the Run is asked to do", param_hint="--message")
+    await_command(_run(path, protocol, _principal_id(as_), message, fake_script))
 
 
-async def _run(path: Path, protocol_name: str, principal_id: str, script: Path | None) -> None:
+async def _run(
+    path: Path, protocol_name: str, principal_id: str, message: str, script: Path | None
+) -> None:
     workspace = _load(path)
     protocol, colleague = _pick(workspace, protocol_name)
     principal = resolve_principal(workspace, principal_id)
@@ -227,7 +209,10 @@ async def _run(path: Path, protocol_name: str, principal_id: str, script: Path |
         store = ProgressStore(base, typer.echo)
         async with await _registry(workspace, store, path, script is None) as registry:
             _check_tools(workspace, protocol, registry)
-            started = _new_run(workspace, path, protocol, colleague, principal)
+            # Trigger.kind has no "cli": a CLI Run is a chat on the channel "cli".
+            started = received_run(
+                workspace.name, path, protocol, colleague, principal, channel="cli", message=message
+            )
             await store.create_run(started)
             typer.echo(f"run {started.id} ({protocol.name} as {principal.id})")
             runner = Runner(provider, registry, store, colleague, harness=workspace.harness)

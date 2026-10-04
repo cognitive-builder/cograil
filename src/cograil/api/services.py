@@ -8,7 +8,6 @@ the signed-in Principal (`decide`); nothing a client sends can name another.
 from __future__ import annotations
 
 import asyncio
-import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -27,7 +26,6 @@ from cograil.domain import (
     Routing,
     Run,
     RunStatus,
-    Trigger,
     Workspace,
 )
 from cograil.errors import ToolNotFound, WorkspaceError
@@ -37,6 +35,7 @@ from cograil.progress import ProgressStore
 from cograil.providers.base import Provider
 from cograil.redaction import Redactor
 from cograil.registry import ToolRegistry
+from cograil.run_input import received_run
 from cograil.runner import Runner
 from cograil.store import RunStore
 
@@ -115,7 +114,8 @@ class Services:
         protocol, colleague = self.pick(routing.protocol, routing.colleague)
         check_audience(self.workspace, colleague, protocol, principal)
         async with self.runner(protocol, colleague, emit) as (runner, store):
-            run = self._new_run(protocol, colleague, principal)
+            run = received_run(self.workspace.name, self.path, protocol, colleague, principal,
+                               channel=CHANNEL, message=message)  # fmt: skip
             await store.create_run(run)
             emit("run", {"run_id": run.id})
             await store.append_audit_event(_classified(run, routing))
@@ -190,25 +190,6 @@ class Services:
                 PendingApproval(token=a.token, approver=a.approver, tool=a.tool, step=a.step)
                 for a in pending
             ],
-        )
-
-    def _new_run(self, protocol: Protocol, colleague: Colleague, principal: Principal) -> Run:
-        """A received Run; its workspace folder is recorded so `cograil approve` can resume it."""
-        now = datetime.now(UTC)
-        trigger = Trigger(kind="chat", channel=CHANNEL)
-        return Run(
-            id=uuid.uuid4().hex,
-            workspace=self.workspace.name,
-            colleague=colleague.name,
-            protocol=protocol.name,
-            protocol_version=protocol.version,
-            principal=principal,
-            principal_id=principal.id,
-            trigger=trigger,
-            trigger_kind=trigger.kind,
-            created_at=now,
-            updated_at=now,
-            context={"workspace_path": str(self.path.resolve())},
         )
 
 
