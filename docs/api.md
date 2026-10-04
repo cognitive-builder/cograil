@@ -28,10 +28,10 @@ Settings come only from environment variables. To run the service in a container
 | `/auth/*` | Sign-in routes. | Anyone (see `docs/auth.md`). |
 | `POST /chat` | Routes a message to a Protocol and streams the Run as SSE. | Signed in. |
 | `GET /runs` | Lists your Runs, newest first; an auditor's list is every Run. `limit` is 1 to 100, default 20. | Signed in. |
-| `GET /runs/{id}` | One Run with its Steps, tool calls and Gates. `protocol_changed` is true when the Workspace no longer has the Protocol at the version the Run began with; then `steps` is empty and the rest of the Run is still shown. | The Principal who started it, or an auditor. |
+| `GET /runs/{id}` | One Run with its Steps, tool calls and Gates. `protocol_changed` is true when the Workspace no longer has the Protocol at the version the Run began with; then `steps` is empty and the rest of the Run is still shown. | The Principal who started it. An auditor lists every Run but does not open another's. |
 | `GET /approvals/{token}` | Shows the call a Gate holds, and who asked. | The Approval's approver. |
 | `POST /approvals/{token}` | Approves or declines. Body: `{"decision": "approved"}` or `"declined"`. | The Approval's approver. |
-| `GET /audit` | Lists AuditEvents, oldest first. | Signed in, for your own Runs. |
+| `GET /audit` | Lists AuditEvents, oldest first. | Signed in. You read the events of your own Runs; an auditor reads every Run's. |
 | `/docs`, `/openapi.json` | Interactive docs and the OpenAPI document. | Anyone. |
 
 ## The Chat Stream

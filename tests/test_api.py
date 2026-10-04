@@ -244,11 +244,11 @@ def test_runs_lists_only_the_principals_own(env: Env) -> None:
     assert env.client.get("/runs").status_code == 401
 
 
-def test_an_auditor_lists_and_opens_every_run_and_others_do_not(env: Env) -> None:
+def test_an_auditor_lists_every_run_but_opens_only_their_own(env: Env) -> None:
     with_auditor(env)
     run_id = env.paused_run()["run"]["id"]
     assert [r["id"] for r in env.get("/runs", as_=AUDITOR).json()] == [run_id]
-    assert env.get(f"/runs/{run_id}", as_=AUDITOR).status_code == 200
+    assert env.get(f"/runs/{run_id}", as_=AUDITOR).status_code == 404  # detail is the starter's
     for caller in (MANAGER, MALLORY):
         assert env.get("/runs", as_=caller).json() == []
         assert env.get(f"/runs/{run_id}", as_=caller).status_code == 404

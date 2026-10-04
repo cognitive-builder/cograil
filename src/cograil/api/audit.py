@@ -2,9 +2,8 @@
 
 The log is the principal's own: events of Runs they started, oldest first. A principal in the
 workspace's `auditors` group (principals.yaml, issue #138) reads every Run's events instead.
-`run_id` narrows it to one Run and
-`principal` to the events a given principal acted in: the Run's principal on most, and on a
-refused decision the principal that tried to decide.
+`run_id` narrows it to one Run and `principal` to the events a given principal acted in: the
+Run's principal on most, and on a refused decision the principal that tried to decide.
 """
 
 from __future__ import annotations

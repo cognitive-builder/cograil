@@ -1,8 +1,8 @@
 """GET /runs and /runs/{run_id}: the signed-in principal's Runs, and one Run in detail.
 
-A Run is visible to the principal that started it and to the workspace's `auditors` group
-(principals.yaml, issue #138); for anyone else another principal's Run answers 404, as one
-that does not exist.
+A Run is in the list of the principal that started it and, for the workspace's `auditors`
+group (principals.yaml, issue #138), of everyone's. Its detail is the starter's alone: another
+principal's Run, an auditor's included, answers 404, as one that does not exist.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ async def get_run(run_id: str, principal: CurrentPrincipal, services: ServicesDe
         run = await services.store.get_run(run_id)
     except RunNotFound:
         raise HTTPException(404, "no such run") from None
-    if run.principal_id != principal.id and not is_auditor(services.workspace, principal):
+    if run.principal_id != principal.id:
         raise HTTPException(404, "no such run")
     protocol = services.protocol(run.protocol)
     changed = (

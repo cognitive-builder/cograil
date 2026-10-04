@@ -444,6 +444,10 @@ async def test_audit_events_page_by_owner_run_and_acting_principal(store: RunSto
     assert numbers(by_actor) == [2]
     assert numbers(await store.page_audit_events(owner_id=owner, run_id=other.id)) == []
     assert numbers(await store.page_audit_events(owner_id=bob, run_id=other.id)) == [1]
+    # no owner (an auditor's read): every Run's events; the shared database may hold more
+    everyone = await store.page_audit_events(owner_id=None, limit=200)
+    assert numbers([e for e in everyone if e.run_id in (mine.id, other.id)]) == [0, 1, 2, 3]
+    assert numbers(await store.page_audit_events(owner_id=None, run_id=other.id)) == [1]
 
 
 @pytest.mark.parametrize("cls", [RunStore, InMemoryRunStore, PostgresRunStore])
