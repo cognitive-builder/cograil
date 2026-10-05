@@ -112,11 +112,11 @@ def run(
 
 
 async def _run(
-    path: Path, protocol_name: str, principal_id: str, message: str, script: Path | None
+    path: Path, protocol_name: str, as_id: str, message: str, script: Path | None
 ) -> None:
     workspace = load_or_fail(path)
     protocol, colleague = pick_protocol(workspace, protocol_name)
-    principal = resolve_principal(workspace, principal_id)
+    principal = resolve_principal(workspace, as_id)
     try:
         check_audience(workspace, colleague, protocol, principal)
     except AudienceDenied as exc:

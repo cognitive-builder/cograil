@@ -1,4 +1,4 @@
-"""Helpers shared by the `run`, `approve`, `runs` and `decide` commands in `cograil.cli`."""
+"""Helpers shared by the `run`, `approve` and `decide` commands in `cograil.cli`."""
 
 from __future__ import annotations
 
