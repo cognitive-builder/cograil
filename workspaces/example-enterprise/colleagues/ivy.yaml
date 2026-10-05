@@ -3,4 +3,4 @@ role: IT Service Desk Assistant
 escalation_contact: it-servicedesk@example.com
 default_tier: standard
 audiences: [all-employees]
-protocols: [it_ticket]
+protocols: [it_ticket, it_access_request]
