@@ -14,6 +14,7 @@ APPROVE_ACTION = "cograil_approve"
 DECLINE_ACTION = "cograil_decline"
 MAX_TEXT = 3000  # a section block holds at most 3000 characters
 MAX_ARGS = 1000  # as the approval email clips the arguments
+CLIPPED_POINTER = "The rest is on the approval page; approve it there, where all of it is shown."
 
 
 def clip(text: str) -> str:
@@ -34,10 +35,10 @@ def _escape_within(text: str, limit: int) -> str:
     return "".join(kept)
 
 
-def args_text(args: Mapping[str, Any]) -> str:
+def args_text(args: Mapping[str, Any]) -> tuple[str, bool]:
     """The call's arguments as the approval page shows them, clipped so that even escaped
-    (`&` becomes `&amp;`) they stay within MAX_ARGS characters, with a pointer to the page for
-    the rest."""
+    (`&` becomes `&amp;`) they stay within MAX_ARGS characters, and whether they were clipped.
+    Clipped arguments point to the page, the only place they can be approved."""
     shown = json.dumps(args, indent=2, sort_keys=True, default=str)
     escaped = escape(shown)
     body = escaped if len(escaped) <= MAX_ARGS else _escape_within(shown, MAX_ARGS)
@@ -45,25 +46,24 @@ def args_text(args: Mapping[str, Any]) -> str:
     # A code fence inside the arguments must not close ours and let the rest format as text.
     body = body.replace("```", "``​`")
     tail = "\n…" if clipped else ""
-    pointer = "\nThe rest is on the approval page." if clipped else ""
-    return f"```{body}{tail}```{pointer}"
+    pointer = f"\n{CLIPPED_POINTER}" if clipped else ""
+    return f"```{body}{tail}```{pointer}", clipped
 
 
 def approval_blocks(approval: Approval, requester: str) -> list[dict[str, Any]]:
     """The prompt for one gate, posted to its approver: who asked, the Tool, the Step and the
     call's arguments. The buttons carry the Approval token and nothing else: the decider is
-    whoever clicks, mapped to a Principal, and the Runner refuses anyone but the approver."""
+    whoever clicks, mapped to a Principal, and the Runner refuses anyone but the approver.
+    When the arguments are clipped there is no Approve button: padding in one argument must
+    not push another out of sight of the person approving it (docs/threat-model.md)."""
+    shown, clipped = args_text(approval.args)
     text = f"*Approval needed.* {requester} asked for a call to `{escape(approval.tool)}` "
-    text += f"(step {approval.step}) with:\n{args_text(approval.args)}"
+    text += f"(step {approval.step}) with:\n{shown}"
+    buttons = [] if clipped else [_button("Approve", APPROVE_ACTION, approval.token, "primary")]
+    buttons.append(_button("Decline", DECLINE_ACTION, approval.token, "danger"))
     return [
         {"type": "section", "text": {"type": "mrkdwn", "text": text}},
-        {
-            "type": "actions",
-            "elements": [
-                _button("Approve", APPROVE_ACTION, approval.token, "primary"),
-                _button("Decline", DECLINE_ACTION, approval.token, "danger"),
-            ],
-        },
+        {"type": "actions", "elements": buttons},
     ]
 
 

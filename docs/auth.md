@@ -58,7 +58,7 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 
 ## The Session
 
-The session cookie is `cograil_session`. It is signed with `COGRAIL_SESSION_SECRET` (itsdangerous, through Starlette's `SessionMiddleware`). It is HttpOnly, Secure and SameSite=Lax, and it lasts 8 hours.
+The session cookie is `cograil_session`. It is signed with `COGRAIL_SESSION_SECRET` (itsdangerous, through Starlette's `SessionMiddleware`). It is HttpOnly, Secure and SameSite=Lax, and it lasts 8 hours from sign-in. The session holds its sign-in time, and the service refuses a session older than 8 hours even when the cookie itself was signed again later (visiting `/auth/login` does that).
 
 - Groups are fixed at sign-in. They do not change until the session ends.
 - A tampered cookie is ignored, and the request gets a 401.

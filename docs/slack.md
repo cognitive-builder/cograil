@@ -48,8 +48,10 @@ id and starts nothing.
   stops at a gate, whether it started in Slack, in the web chat or on a Schedule, the bot opens a
   direct message with the approver (the approver's `slack_id` in `principals.yaml`, the same map
   reversed) and posts the prompt there: who asked, the Tool, the Step, the call's arguments as
-  the approval page shows them (clipped to 1000 characters after escaping, with a pointer to the
-  page for the rest), and **Approve** and **Decline** buttons. The Run's thread gets a line,
+  the approval page shows them, and **Approve** and **Decline** buttons. Arguments longer than
+  1000 characters after escaping are clipped, with a pointer to the page for the rest, and then
+  the prompt has a **Decline** button only: a clipped call is approved on the approval page or by
+  the email link, where it is shown whole (`docs/threat-model.md`). The Run's thread gets a line,
   "Waiting for <approver> to approve.", and no buttons. A message in the thread asking again
   repeats that line; it does not send the approver the prompt a second time.
 - An approver with no `slack_id` (or one Slack will not deliver the prompt to, for example
