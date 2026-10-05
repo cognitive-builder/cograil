@@ -4,8 +4,10 @@ The graph is compiled in graph.py (`compile_protocol`); this module supplies its
 
 Inside a Step the model plans through the injected Provider and is offered only the Step's
 whitelisted Tools. Every call of a plan is checked before any of them runs: a Tool the Step does not
-list raises ToolNotAllowed, and a gated write needs an approved Approval (gates.py). Only then does
-the call go to `ToolRegistry.invoke`, which checks neither; this module is its only caller.
+list raises ToolNotAllowed, arguments over the registry's size cap raise ToolArgumentError before
+any Gate is created (issue #286), and a gated write needs an approved Approval (gates.py). Only
+then does the call go to `ToolRegistry.invoke`, which checks neither the whitelist nor the Gate;
+this module is its only caller.
 
 A gated write without an Approval pauses the Run awaiting_approval with the Step's progress
 saved, and nothing from that plan runs; `Runner.resume` with the Approval's token, decided
@@ -261,6 +263,8 @@ class Runner:
         A gated call without an Approval pauses the Run instead of raising.
         """
         tools = [self._allowed(step, call) for call in progress.planned]
+        for call in progress.planned:  # before any Gate is created (issue #286)
+            await self._registry.refuse_oversized(call.tool, call.args, ctx)
         claimed: list[Approval] = []
         for tool, call in zip(tools, progress.planned, strict=True):
             try:

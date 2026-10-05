@@ -104,6 +104,7 @@ The model proposes every Tool call, arguments included. Injected text that gets 
 7. **The Gate binds the exact call.** A write with `confirm_before_write` needs an Approval for the same Run, Step, Tool and arguments. The approver is shown the full arguments. On approval, the saved plan is replayed with no model turn in between, so nothing can change between what was approved and what runs. Each Approval is spent atomically before the write and authorises one call. The approver can never be the Run's own principal.
 8. **Approvers see the whole call.** The approval page and the email link page show every argument. A Slack prompt clips arguments at 1000 characters. A clipped prompt has no Approve button: padding in one argument cannot push another out of sight.
 9. **Audit.** Every call writes an AuditEvent with the principal. A write Tool writes `tool.started` before it runs.
+10. **Size cap.** Arguments over 64 KiB as JSON (`MAX_TOOL_ARGS_BYTES` in `registry.py`) are refused with `ToolArgumentError` before any Gate is created and before the Tool runs. The refusal writes a `tool.called` AuditEvent without the arguments, and the Run fails closed. The cap is in code, so a workspace cannot raise it.
 
 ### Known Limits
 
@@ -111,7 +112,7 @@ The model proposes every Tool call, arguments included. Injected text that gets 
 - **Unknown keys reach REST Tools.** An `args_schema` that does not set `additionalProperties: false` lets extra keys through into the query string or body. Pack authors should close their schemas. Tracked in #273.
 - **REST Tools act as the service account.** On-behalf-of calls are not supported yet. A free-form query Tool sees whatever the service account sees.
 - **MCP arguments are checked against the server's own schema,** as listed by the server. An MCP tool the pack does not list is write scope and gated.
-- **Argument size is bounded only by the provider's output limit.** A cap is tracked in #286.
+- **One argument size cap for every Tool.** The 64 KiB cap is not set per Tool or per workspace. A Tool that needs larger arguments cannot have them. It bounds one call, not how many calls a Run makes; loop bounds and budgets do that (ADR 0008).
 - **An ungated write is a way out.** A write Tool with `confirm_before_write: false` and a free recipient can send data anywhere if the model is steered. The example pack's `notify.send` is a mock. Gate real ones.
 
 ## Approval Link Replay
@@ -242,5 +243,5 @@ No finding was high severity. None bypasses the Step whitelist, a Gate, or the k
 | An email link is a bearer credential | Medium | Documented above |
 | Successful Tool output is stored raw | Medium | Documented above, by design |
 | Sign-out does not revoke a copied cookie | Low | Documented above |
-| No argument size cap | Low | Issue #286 |
+| No argument size cap | Low | Fixed: arguments over 64 KiB as JSON are refused before any Gate (#286) |
 | `http://` base URLs; placeholder secrets pass the length check; public OpenAPI docs | Info | Documented above |

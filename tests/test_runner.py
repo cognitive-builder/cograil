@@ -26,7 +26,13 @@ from cograil.domain import (
     Tiers,
     Tool,
 )
-from cograil.errors import HarnessChanged, ProviderError, ToolNotAllowed, ToolPackChanged
+from cograil.errors import (
+    HarnessChanged,
+    ProviderError,
+    ToolArgumentError,
+    ToolNotAllowed,
+    ToolPackChanged,
+)
 from cograil.harness import harness_version
 from cograil.parser import parse_protocol
 from cograil.providers import (
@@ -37,7 +43,7 @@ from cograil.providers import (
     PlannedToolCall,
     scripted,
 )
-from cograil.registry import ToolRegistry
+from cograil.registry import MAX_TOOL_ARGS_BYTES, ToolRegistry
 from cograil.runner import NOT_COMPLETE, Runner
 from cograil.store import InMemoryRunStore
 
@@ -414,3 +420,23 @@ def test_the_runner_is_the_only_caller_of_registry_invoke() -> None:
                         users.add((path.relative_to(SRC).as_posix(), func.name))
     # registry.py's own use is the Tool's Invoke inside ToolRegistry.invoke.
     assert users == {("registry.py", "invoke"), ("runner.py", "_invoke")}
+
+
+@pytest.mark.parametrize(
+    ("cursor", "tool"),
+    [(1, "hris.submit_leave"), (0, "hris.get_balance")],
+    ids=["gated-write", "read"],
+)
+async def test_arguments_over_the_size_cap_are_refused_before_any_gate(
+    store: InMemoryRunStore, registry: ToolRegistry, protocol: Protocol, invoked: list[str],
+    cursor: int, tool: str,
+) -> None:  # fmt: skip
+    """Issue #286: no Approval is created, the Tool never runs, and the refusal is audited."""
+    await start_at(store, cursor)
+    oversized = call(tool, employee="x" * MAX_TOOL_ARGS_BYTES)
+    with pytest.raises(ToolArgumentError, match="cap"):
+        await run(store, registry, protocol, [scripted("", oversized)])
+    assert invoked == [] and await store.list_approvals("r1") == []
+    refused = [e for e in await store.list_audit_events("r1") if e.kind == "tool.called"]
+    assert [(e.detail["tool"], e.principal_id) for e in refused] == [(tool, "alice@example.com")]
+    await assert_failed_closed(store, ToolArgumentError, cursor=cursor)
