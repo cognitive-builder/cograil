@@ -35,7 +35,7 @@ from cograil.errors import (
     ToolExecutionError,
     ToolPackChanged,
 )
-from cograil.gates import new_approval_token, require_approval
+from cograil.gates import Gates, new_approval_token, require_approval
 from cograil.parser import parse_protocol
 from cograil.providers import FakeProvider, Plan, PlannedToolCall, scripted
 from cograil.registry import CallContext, ToolRegistry
@@ -468,6 +468,40 @@ async def test_expire_before_the_deadline_changes_nothing(
     runner, _ = make([])
     assert (await runner.expire(token)).status == RunStatus.awaiting_approval
     assert (await store.get_approval(token)).decision == "pending"
+
+
+# An Approval no channel could deliver closes now, not at its expiry (issue #263)
+
+
+async def test_an_undeliverable_approval_escalates_the_run_without_waiting_for_its_expiry(
+    store: InMemoryRunStore, make: Any, protocol: Protocol, tools: Tools, clock: Clock
+) -> None:
+    token = await pause(make, protocol, store)
+    run = await Gates(store, HARPER, timeout=TIMEOUT, clock=clock).undeliverable(token)
+    assert clock.now == T0  # the deadline is an hour away; nobody would have decided it
+    stored = await store.get_run("r1")
+    assert run.status is stored.status is RunStatus.escalated
+    assert (await store.get_approval(token)).decision == "expired"  # nobody can decide it later
+    assert tools.invoked == ["hris.get_balance"]  # nothing ran
+    last = (await store.list_audit_events("r1"))[-1]
+    assert (last.kind, last.principal_id) == ("run.escalated", PRINCIPAL)
+    assert last.detail == {"reason": "approval_undeliverable", "contact": CONTACT, "step": 2,
+                           "tool": "hris.submit_leave", "token": token, "approver": CONTACT,
+                           "decided_by": None}  # fmt: skip
+
+
+@pytest.mark.parametrize("decision", ["approved", "declined"])
+async def test_undeliverable_of_a_decided_approval_raises_run_not_paused(
+    store: InMemoryRunStore, make: Any, protocol: Protocol, decision: str
+) -> None:
+    token = await pause(make, protocol, store)
+    runner, _ = make(AFTER_GATE if decision == "approved" else [])
+    ended = await runner.resume(token, protocol, decider=CONTACT, decision=decision)
+    gates = Gates(store, HARPER, timeout=TIMEOUT, clock=Clock())
+    with pytest.raises(RunNotPaused):
+        await gates.undeliverable(token)
+    assert (await store.get_run("r1")).status is ended.status
+    assert (await store.get_approval(token)).decision == decision
 
 
 async def test_failure_threshold_stops_the_run_and_escalates(
