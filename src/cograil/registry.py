@@ -137,7 +137,7 @@ class ToolRegistry:
     async def invoke(self, name: str, args: Mapping[str, Any], ctx: CallContext) -> Any:
         """Validate, call and record; raises ToolNotFound, ToolArgumentError or
         ToolExecutionError (or a typed error the Tool raised itself)."""
-        await self.refuse_oversized(name, args, ctx)
+        await self.refuse_oversized(name, args, ctx)  # again here, for any caller but the runner
         call = ToolCall(step=ctx.step, tool=name, args=dict(args), started_at=_now())
         try:
             entry = self._entries.get(name)
@@ -165,14 +165,14 @@ class ToolRegistry:
         """Raise ToolArgumentError if the arguments as JSON exceed MAX_TOOL_ARGS_BYTES, after
         recording the refusal: a ToolCall without the arguments and a `tool.called` AuditEvent."""
         text = json.dumps(dict(args), separators=(",", ":"), ensure_ascii=False, default=str)
-        size = len(text.encode())
+        size = len(text.encode(errors="surrogatepass"))  # a lone surrogate is counted, not raised
         if size <= MAX_TOOL_ARGS_BYTES:
             return
         error = ToolArgumentError(
             f"{name}: arguments are {size} bytes as JSON, over the {MAX_TOOL_ARGS_BYTES}-byte cap"
         )
-        await self._record(ctx, ToolCall(step=ctx.step, tool=name, args={}, started_at=_now()),
-                           error=str(error))  # fmt: skip
+        refused = ToolCall(step=ctx.step, tool=name, args={}, started_at=_now())
+        await self._record(ctx, refused, error=str(error))
         raise error
 
     async def _record(

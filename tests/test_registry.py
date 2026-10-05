@@ -259,3 +259,11 @@ async def test_arguments_over_the_size_cap_are_refused_and_audited(
     [event] = await store.list_audit_events("r1")
     assert (event.kind, event.principal_id) == ("tool.called", "alice@example.com")
     assert "cap" in event.detail["error"]
+
+
+async def test_a_lone_surrogate_is_counted_not_raised(
+    store: InMemoryRunStore, ctx: CallContext
+) -> None:
+    """A model can send "\\ud800"; the size check must count it, not raise UnicodeEncodeError."""
+    await ToolRegistry(store).refuse_oversized("hris.get_balance", {"employee": "\ud800"}, ctx)
+    assert await store.list_audit_events("r1") == []
