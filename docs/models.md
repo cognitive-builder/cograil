@@ -76,14 +76,17 @@ Run's tally, which `GET /runs` and `GET /runs/{id}` show as `usage`. That is a S
 compression, an injection screen, the small tier's redaction of error text, and the routing call
 that started the Run from a chat message. A refused message starts no Run, so its routing call is
 charged to none. A Run that fails or escalates in the middle of a Step keeps the spend of every
-call made before it stopped, and `usd_budget_per_run` counts all of these calls. The tally keeps four kinds apart, because they are billed at different rates: fresh
-`input_tokens` and `output_tokens`, `cache_read_tokens` and `cache_write_tokens`, and
-`batch_tokens` (all the tokens of a call that went through the provider's batch path).
+call made before it stopped, and `usd_budget_per_run` counts all of these calls. The tally keeps
+four kinds apart, because they are billed at different rates: fresh `input_tokens` and
+`output_tokens`, `cache_read_tokens` and `cache_write_tokens`, and `batch_tokens` (all the tokens
+of a call that went through the provider's batch path).
 
 `cograil runs --cost` prints one row per Protocol over the newest `--limit` Runs (default 20):
 the Runs, how many resolved, the tokens by kind, the cost, and the headline number of ADR 0013,
-cost per resolved run: the total cost of the Runs that completed without escalation, divided by
-their count (`-` when none did). A Run that escalated still counts in the cost column.
+cost per resolved run: the total cost of the Runs that ended `completed`, divided by their count
+(`-` when none did). A Run is resolved whenever it ends `completed`, including one that completed
+after handing off to a human inside its Protocol. A Run that ended `escalated` or `failed` still
+counts in the cost column.
 
 ## Effort
 

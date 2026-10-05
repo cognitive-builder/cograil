@@ -338,7 +338,14 @@ def runs(
     run_id: Annotated[str | None, typer.Argument(help="Show only this Run.")] = None,
     ledger: Annotated[bool, typer.Option("--ledger", help="Show the Window Ledger.")] = False,
     cost: Annotated[bool, typer.Option("--cost", help="Cost by Protocol, not Runs.")] = False,
-    limit: Annotated[int, typer.Option(help="How many of the newest Runs to show.", min=1)] = 20,
+    limit: Annotated[
+        int,
+        typer.Option(
+            help="How many of the newest Runs to show; --cost aggregates over exactly these Runs, "
+            "across all Protocols.",
+            min=1,
+        ),
+    ] = 20,
 ) -> None:
     """List Runs, newest first; with --ledger, the tokens by source of each Step.
     With --cost, a table by Protocol: tokens by category, cost, cost per resolved run.
