@@ -24,6 +24,8 @@ from cograil.orchestrator import (
     classify_intent,
 )
 from cograil.providers import FakeProvider, PlannedToolCall, scripted
+from cograil.providers.base import Usage
+from cograil.redaction import REDACT_TOOL, Redactor
 
 STEP = Step(number=1, name="s", instruction="i")
 ALICE = Principal(id="alice@example.com", groups=["staff"])
@@ -158,6 +160,30 @@ async def test_message_snippet_is_logged_redacted_when_the_workspace_opts_in(
     )  # fmt: skip
     assert event["message"].startswith("leave for [REDACTED:email] ok? ")
     assert len(event["message"]) <= LOGGED_MESSAGE_CHARS
+
+
+async def test_the_routing_and_its_snippet_redaction_are_both_charged() -> None:
+    # Issue #241: both model calls of a routing reach `charge`: the classification and, when the
+    # workspace opts in, the small tier's redaction of the logged snippet.
+    ws = workspace().model_copy(
+        update={"harness": Harness(logging=LoggingSettings(message_snippets=True))}
+    )
+    args = {"choice": "none", "confidence": 0.4, "reason": "x"}
+    routing_call = scripted(
+        "",
+        PlannedToolCall(id="t1", tool=ROUTE_TOOL, args=args),
+        input_tokens=1000,
+        output_tokens=200,
+    )
+    classifier = FakeProvider([routing_call])
+    answer = PlannedToolCall(id="r", tool=REDACT_TOOL, args={"text": "[REDACTED:email]"})
+    redactor = Redactor(FakeProvider([scripted("", answer, input_tokens=300, output_tokens=40)]))
+    charged: list[tuple[str, Usage]] = []
+    await classify_intent(
+        ws, ALICE, "leave for bob@example.com ok?", classifier, redactor,
+        lambda model, usage: charged.append((model, usage)),
+    )  # fmt: skip
+    assert sorted((u.input_tokens, u.output_tokens) for _, u in charged) == [(300, 40), (1000, 200)]
 
 
 # Audience checks (issue #20): the closed list and the refusal are pre-filtered by audience.
