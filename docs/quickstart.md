@@ -85,8 +85,10 @@ Save this as `leave-rest.yaml`. It covers what happens after the Approval.
 - {text: "Alice has been told.", done: true}
 ```
 
-The example Harness prices the FakeProvider's model, `fake-model`, at zero. Without a price a Run
-under `usd_budget_per_run` is refused, because its cost cannot be bounded (see [Models](models.md)).
+With `--fake-script`, `cograil run` and `cograil approve` price the FakeProvider's model,
+`fake-model`, at zero, so your Harness needs no price entry for it. A real model without a price
+is still refused under `usd_budget_per_run`, because its cost cannot be bounded (see
+[Models](models.md)).
 
 If a script runs out of plans, the Run fails with a "script exhausted" error. If a Run behaves oddly, check that your plans match the Steps in `workspaces/example-smb/protocols/leave_request.md`.
 

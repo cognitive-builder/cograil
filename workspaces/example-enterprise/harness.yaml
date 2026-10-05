@@ -14,7 +14,6 @@ pricing:  # USD per million tokens; a dollar budget needs a price for every tier
   claude-haiku-4-5: {input_per_mtok: 1.00, output_per_mtok: 5.00}
   claude-sonnet-5-5: {input_per_mtok: 2.00, output_per_mtok: 10.00}
   claude-opus-5-5: {input_per_mtok: 4.00, output_per_mtok: 20.00}
-  fake-model: {input_per_mtok: 0, output_per_mtok: 0}  # what the FakeProvider names; free, so a demo run under usd_budget_per_run is not refused
 context:
   default_prior_steps: 1
   compression_threshold_tokens: 2000

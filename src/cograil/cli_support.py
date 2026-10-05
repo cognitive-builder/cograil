@@ -10,7 +10,7 @@ from typing import Annotated
 import typer
 
 from cograil.cliexit import EXIT_BY_STATUS, EXIT_FAILED, fail
-from cograil.domain import Colleague, Protocol, Run, RunStatus, Workspace
+from cograil.domain import Colleague, Harness, Protocol, Run, RunStatus, Workspace
 from cograil.errors import (
     ApprovalAlreadyDecided,
     ApprovalNotAllowed,
@@ -24,7 +24,7 @@ from cograil.errors import (
 from cograil.knowledge.store import PostgresKnowledgeStore
 from cograil.knowledge.tool import add_knowledge
 from cograil.providers import FakeProvider, Provider, make_provider, provider_ready
-from cograil.providers.fake import load_script
+from cograil.providers.fake import fake_priced, load_script
 from cograil.redaction import redactor
 from cograil.registry import ToolRegistry, build_registry
 from cograil.store import RunStore
@@ -64,6 +64,11 @@ def pick_protocol(workspace: Workspace, name: str) -> tuple[Protocol, Colleague]
     if colleague is None:
         fail(f"no colleague runs protocol {protocol.name!r}")
     return protocol, colleague
+
+
+def run_harness(workspace: Workspace, script: Path | None) -> Harness:
+    """The harness the Runner gets: the Workspace's, with the fake model free for --fake-script."""
+    return workspace.harness if script is None else fake_priced(workspace.harness)
 
 
 def make_run_provider(workspace: Workspace, script: Path | None) -> Provider:

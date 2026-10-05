@@ -31,6 +31,7 @@ from cograil.cli_support import (
     pick_protocol,
     principal_id,
     report_run,
+    run_harness,
 )
 from cograil.cliexit import EXIT_CODES, await_command, fail
 from cograil.context import cache_ledger, compression_ledger, format_ledger, window_ledger
@@ -132,7 +133,9 @@ async def _run(
             )
             await store.create_run(started)
             typer.echo(f"run {started.id} ({protocol.name} as {principal.id})")
-            runner = Runner(provider, registry, store, colleague, harness=workspace.harness)
+            runner = Runner(
+                provider, registry, store, colleague, harness=run_harness(workspace, script)
+            )
             ended = await guarded_run(runner.run(started.id, protocol))
             await report_run(store, colleague, ended)
 
@@ -185,7 +188,9 @@ async def _approve(
                  f"version {paused.protocol_version}")  # fmt: skip
         provider = FakeProvider([]) if decline else make_run_provider(workspace, script)
         async with await build_tools(workspace, store, where, script is None) as registry:
-            runner = Runner(provider, registry, store, colleague, harness=workspace.harness)
+            runner = Runner(
+                provider, registry, store, colleague, harness=run_harness(workspace, script)
+            )
             decision: Literal["approved", "declined"] = "declined" if decline else "approved"
             canonical = resolve_principal(workspace, decider).id
             ended = await guarded_decision(

@@ -29,7 +29,6 @@ from cograil.domain import (
     Colleague,
     Effort,
     Harness,
-    Price,
     Protocol,
     RunStatus,
     Step,
@@ -44,13 +43,13 @@ from cograil.knowledge.store import InMemoryKnowledgeStore, KnowledgeStore
 from cograil.knowledge.sync import sync_workspace
 from cograil.knowledge.tool import add_knowledge
 from cograil.providers.base import Message, Plan, Provider, Usage
+from cograil.providers.fake import fake_priced
 from cograil.redaction import redactor
 from cograil.registry import ToolRegistry, build_registry
 from cograil.run_input import received_run
 from cograil.runner import Runner
 from cograil.store import InMemoryRunStore, RunStore
 
-FAKE_MODEL = "fake-model"  # what FakeProvider names on its Plans
 BATCH_ISSUE = 55
 
 
@@ -111,8 +110,7 @@ def level_harness(harness: Harness, level: Level) -> Harness:
     """The harness a level runs under: the fake model priced at $0 on fake, every tier on the
     small tier's model on smoke, and the workspace's own on full."""
     if level is Level.fake:
-        free = Price(input_per_mtok=0, output_per_mtok=0)
-        return harness.model_copy(update={"pricing": {**harness.pricing, FAKE_MODEL: free}})
+        return fake_priced(harness)
     if level is Level.full:
         return harness
     small = harness.models.small

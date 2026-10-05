@@ -6,7 +6,7 @@ from typing import Any
 
 import yaml
 
-from cograil.domain import Effort, Step, Tool
+from cograil.domain import Effort, Harness, Price, Step, Tool
 from cograil.errors import ProviderError
 from cograil.providers.base import (
     SCREEN_STEP,
@@ -16,6 +16,15 @@ from cograil.providers.base import (
     StepComplete,
     Usage,
 )
+
+FAKE_MODEL = "fake-model"  # what FakeProvider names on its Plans
+
+
+def fake_priced(harness: Harness) -> Harness:
+    """The harness with FAKE_MODEL priced at $0, so a fake Run under usd_budget_per_run is not
+    refused as unboundable; a Workspace needs no price entry for a model that costs nothing."""
+    free = Price(input_per_mtok=0, output_per_mtok=0)
+    return harness.model_copy(update={"pricing": {**harness.pricing, FAKE_MODEL: free}})
 
 
 class FakeCall:
@@ -47,7 +56,7 @@ class FakeProvider:
     """
 
     def __init__(
-        self, script: Sequence[Plan], model: str = "fake-model", screens: Sequence[Plan] = ()
+        self, script: Sequence[Plan], model: str = FAKE_MODEL, screens: Sequence[Plan] = ()
     ) -> None:
         self._script = list(script)
         self._screens = list(screens)
@@ -101,7 +110,7 @@ def scripted(
             cache_read_tokens=cache_read_tokens,
             cache_write_tokens=cache_write_tokens,
         ),
-        model="fake-model",
+        model=FAKE_MODEL,
         stop_reason="tool_use" if tool_calls else "end_turn",
     )
 
