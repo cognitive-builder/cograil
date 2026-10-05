@@ -8,7 +8,8 @@ the approver, through the same Runner rules as the signed-in route (the Run's ow
 still cannot be the approver) and records `via: email_link` on the AuditEvent. An Approval is
 decided once, so a used link answers 409. A link past its expiry, or whose Approval is already
 recorded as expired, answers 410 on both; the Run is escalated to the escalation contact by the
-sweep (cograil.approval_sweep), or at once by a POST that finds it still pending.
+sweep (cograil.approval_sweep), or at once by a POST that finds it still pending. A POST that
+loses that race to the sweep or to a decision answers 409, as the decide routes do.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from cograil.api.approvals import decision_failures
 from cograil.api.deps import ServicesDep
 from cograil.api.schemas import DecisionRequest
 from cograil.domain import Approval, RunStatus
-from cograil.errors import ApprovalLinkInvalid, ApprovalNotFound, RunNotFound, RunNotPaused
+from cograil.errors import ApprovalLinkInvalid, ApprovalNotFound
 
 router = APIRouter(prefix="/approvals/link", tags=["approvals"])
 
@@ -70,10 +71,8 @@ async def _open_approval(
     if mail.links.expired(exp, datetime.now(UTC)):
         if not expire:
             raise HTTPException(410, "this link has expired")
-        try:
-            await services.expire(token)
-        except (RunNotPaused, RunNotFound):
-            raise HTTPException(409, "this approval was already decided") from None
+        async with decision_failures():  # the sweep, or a decision, may win the race
+            await services.expire(token, via="email_link")
         raise HTTPException(410, "this link has expired; the request was escalated")
     return approval
 

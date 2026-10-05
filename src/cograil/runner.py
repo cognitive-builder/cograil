@@ -187,9 +187,9 @@ class Runner:
         """The harness and tool pack versions a Run runs under with this Runner."""
         return RunVersions(harness_version(self._harness), self._registry.tool_pack_version)
 
-    async def expire(self, token: str) -> Run:
+    async def expire(self, token: str, *, via: str | None = None) -> Run:
         """Escalate the Run paused on this Approval if it timed out; for a scheduler."""
-        return await self._gates.expire(token)
+        return await self._gates.expire(token, via=via)
 
     async def undeliverable(self, token: str) -> Run:
         """Escalate the Run paused on this Approval, which nothing could tell its approver of."""

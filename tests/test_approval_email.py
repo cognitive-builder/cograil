@@ -1,6 +1,8 @@
 """Approval by email link (issue #24): the email, the single-use link, expiry and the audit."""
 
 import asyncio
+import json
+import logging
 import re
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
@@ -20,8 +22,17 @@ from test_api import (
 
 from cograil.api.approval_mail import ApprovalMail
 from cograil.approval_links import ApprovalLinks
+from cograil.approval_sweep import sweep_forever
 from cograil.domain import RunStatus
-from cograil.errors import EmailDeliveryError
+from cograil.errors import (
+    ApprovalAlreadyDecided,
+    CograilError,
+    EmailDeliveryError,
+    RunClaimLost,
+    RunNotPaused,
+    WorkspaceError,
+)
+from cograil.gates import Gates
 
 
 class Outbox:
@@ -224,7 +235,9 @@ def test_the_app_sweeps_at_startup_and_stops_the_sweep_at_shutdown(env: Env) -> 
     async def start_and_stop() -> Any:
         async with env.app.router.lifespan_context(env.app):
             sweeper = env.app.state.cograil_sweeper
-            await asyncio.sleep(0.2)  # the first sweep runs as the app starts
+            async with asyncio.timeout(5):  # the first sweep runs as the app starts
+                while (await env.store.get_run(run_id)).status is not RunStatus.escalated:
+                    await asyncio.sleep(0.01)
             assert not sweeper.done()
         return sweeper
 
@@ -266,3 +279,128 @@ def test_the_link_cannot_approve_a_run_started_under_another_harness(
     assert response.status_code == 409
     assert stored(env, run_id).status is RunStatus.awaiting_approval
     assert audit(env, run_id, "gate.refused")[0].detail["reason"] == "run_version_changed"
+
+
+def logged(caplog: pytest.LogCaptureFixture, event: str) -> list[dict[str, Any]]:
+    lines = [json.loads(r.message) for r in caplog.records if r.name == "cograil"]
+    return [line for line in lines if line["event"] == event]
+
+
+@pytest.mark.parametrize("gone", [{"protocol_version": "0.0.0-removed"}, {"protocol": "removed"}])
+def test_the_sweep_expires_an_overdue_approval_of_a_protocol_the_workspace_no_longer_has(
+    env: Env, gone: dict[str, str]
+) -> None:
+    run_id, _ = overdue_link(env)
+    token = next(iter(env.store._approvals))  # type: ignore[attr-defined]
+    env.store._runs[run_id] = stored(env, run_id).model_copy(update=gone)  # type: ignore[attr-defined]
+    assert asyncio.run(env.app.state.cograil_services.sweep_overdue_approvals()) == [token]
+    assert stored(env, run_id).status is RunStatus.escalated
+    (event,) = audit(env, run_id, "run.escalated")
+    assert event.detail["reason"] == "approval_expired"
+
+
+def test_a_sweeps_escalation_says_it_was_the_sweep(env: Env) -> None:
+    run_id, _ = overdue_link(env)
+    asyncio.run(env.app.state.cograil_services.sweep_overdue_approvals())
+    (event,) = audit(env, run_id, "run.escalated")
+    assert (event.detail["decided_by"], event.detail["via"]) == (None, "sweep")
+
+
+def test_a_posted_expired_links_escalation_says_it_came_by_the_link(env: Env) -> None:
+    run_id, url = overdue_link(env)
+    assert env.client.post(url, json={"decision": "approved"}).status_code == 410
+    (event,) = audit(env, run_id, "run.escalated")
+    assert (event.detail["decided_by"], event.detail["via"]) == (None, "email_link")
+
+
+def test_the_sweep_skips_and_logs_an_approval_whose_colleague_is_gone(
+    env: Env, caplog: pytest.LogCaptureFixture
+) -> None:
+    run_id, _ = overdue_link(env)
+    token = next(iter(env.store._approvals))  # type: ignore[attr-defined]
+    env.store._runs[run_id] = stored(env, run_id).model_copy(update={"colleague": "removed"})  # type: ignore[attr-defined]
+    with caplog.at_level(logging.INFO, logger="cograil"):
+        assert asyncio.run(env.app.state.cograil_services.sweep_overdue_approvals()) == []
+    (skipped,) = logged(caplog, "approval.sweep_skipped")
+    assert (skipped["run_id"], skipped["token"]) == (run_id, token)
+    assert "WorkspaceError" in skipped["error"]
+    assert stored(env, run_id).status is RunStatus.awaiting_approval
+
+
+async def test_a_sweep_that_raises_is_logged_and_the_next_tick_runs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ticks: list[int] = []
+
+    async def flaky() -> list[str]:
+        ticks.append(len(ticks))
+        if len(ticks) == 1:
+            raise RuntimeError("store down")
+        return ["a", "b"]
+
+    with caplog.at_level(logging.INFO, logger="cograil"):
+        sweeper = asyncio.ensure_future(sweep_forever(flaky, interval=0.01))
+        try:
+            async with asyncio.timeout(5):
+                while len(ticks) < 2:
+                    await asyncio.sleep(0.01)
+        finally:
+            sweeper.cancel()
+    (failed,) = logged(caplog, "approval.sweep_failed")
+    assert failed["error"] == "RuntimeError: store down"
+    assert [e["count"] for e in logged(caplog, "approval.sweep_expired")] == [2]
+
+
+@pytest.mark.parametrize(
+    "loser", [ApprovalAlreadyDecided, RunClaimLost, RunNotPaused, WorkspaceError]
+)
+def test_a_posted_expired_link_that_loses_a_race_answers_409(
+    env: Env, monkeypatch: pytest.MonkeyPatch, loser: type[CograilError]
+) -> None:
+    run_id, url = overdue_link(env)
+
+    async def lost(self: Gates, token: str, *, via: str | None = None) -> Any:
+        raise loser("another execution decided it first")
+
+    monkeypatch.setattr(Gates, "expire", lost)
+    assert env.client.post(url, json={"decision": "approved"}).status_code == 409
+    assert stored(env, run_id).status is RunStatus.awaiting_approval
+
+
+def test_a_posted_expired_link_answers_409_when_the_sweep_expires_it_first(env: Env) -> None:
+    run_id, url = overdue_link(env)
+    services = env.app.state.cograil_services
+    expire = services.expire
+
+    async def sweep_first(token: str, *, via: str) -> Any:
+        await expire(token, via="sweep")
+        return await expire(token, via=via)  # the Run has moved on: RunNotPaused
+
+    services.expire = sweep_first
+    assert env.client.post(url, json={"decision": "approved"}).status_code == 409
+    assert len(audit(env, run_id, "run.escalated")) == 1
+
+
+@pytest.mark.parametrize("racer", ["sweep", "decision"])
+def test_two_executions_at_the_deadline_escalate_the_run_once(env: Env, racer: str) -> None:
+    run_id, _ = overdue_link(env)
+    services = env.app.state.cograil_services
+    token = next(iter(env.store._approvals))  # type: ignore[attr-defined]
+    other = (
+        services.sweep_overdue_approvals()
+        if racer == "sweep"
+        else services.decide_by_link(token, "approved")  # past its deadline, a decision expires
+    )
+
+    async def race() -> list[Any]:
+        return await asyncio.gather(
+            services.sweep_overdue_approvals(), other, return_exceptions=True
+        )
+
+    results = asyncio.run(race())
+    assert [
+        r for r in results if isinstance(r, BaseException) and not isinstance(r, CograilError)
+    ] == []
+    assert stored(env, run_id).status is RunStatus.escalated
+    assert asyncio.run(env.store.get_approval(token)).decision == "expired"
+    assert len(audit(env, run_id, "run.escalated")) == 1
