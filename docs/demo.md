@@ -127,7 +127,7 @@ The approver the card names is Harper's escalation contact: whichever tier the d
 returns, the Gate waits on that contact today (see [Quickstart](quickstart.md)).
 
 **Say:** "Alice asks in the chat. Harper checks her balance in the HR system, confirms the
-dates, and stops at the Gate before submitting anything. Alice cannot approve her own request."
+dates, and stops at the Gate before submitting anything. Three days goes to the default tier, and today every Gate waits on Harper's escalation contact. Alice cannot approve her own request."
 
 ### 5. The Gate and the email — 1:45–2:20
 

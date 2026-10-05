@@ -24,6 +24,12 @@ BALANCES: dict[str, dict[str, int]] = {
 _SUBMITTED: dict[tuple[str, str], dict[str, Any]] = {}
 
 
+def _employee(value: str) -> str:
+    """The key of an employee: a principal id such as alice@example.com names the same person
+    as alice. A Run gives the model the requester's id, which is an email (issue #216)."""
+    return value.strip().lower().split("@", 1)[0]
+
+
 def get_balance(employee: str) -> dict[str, int]:
     """Days remaining per tracked leave type, as of the last submit."""
     return dict(_balances(employee))
@@ -33,7 +39,7 @@ def submit_leave(
     employee: str, start: str, end: str, leave_type: str, request_id: str
 ) -> dict[str, Any]:
     """Record a leave once; a replay on (employee, request_id) returns the first result."""
-    key = (employee, request_id)
+    key = (_employee(employee), request_id)
     if key in _SUBMITTED:
         return _SUBMITTED[key]
     balances = _balances(employee)
@@ -61,7 +67,7 @@ def submit_leave(
 
 
 def _balances(employee: str) -> dict[str, int]:
-    balances = BALANCES.get(employee)
+    balances = BALANCES.get(_employee(employee))
     if balances is None:
         raise ToolExecutionError(f"unknown employee {employee!r}")
     return balances
