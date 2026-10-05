@@ -23,7 +23,7 @@ from typing import Any, Literal
 from cograil import observability
 from cograil.cost import Charge, Spend, add_call, spend_of, with_spend
 from cograil.domain import AuditEvent, Harness, Run, RunStatus
-from cograil.errors import RunClaimLost
+from cograil.errors import LoopBudgetExceeded, RunClaimLost
 from cograil.gates import Clock
 from cograil.observability import log_event
 from cograil.providers.base import Usage
@@ -77,9 +77,19 @@ class RunClaims:
 
     def charge(self, run: Run, model: str, usage: Usage) -> Run:
         """The Run with one model call charged on top of all its execution spent so far.
-        Raises LoopBudgetExceeded as `cost.charge` does."""
+        Raises LoopBudgetExceeded as `cost.charge` does; a call that raises by being unpriced
+        counts its tokens on the execution's spend first, at $0 with a warning (`add_call`
+        aside), so the Run that escalates on the bound keeps them (issue #240)."""
         spend = self._spent.get(run.claim or "", spend_of(run))
-        spend = add_call(self._harness, spend, model, usage)
+        try:
+            spend = add_call(self._harness, spend, model, usage)
+        except LoopBudgetExceeded:
+            # The call is made, so its tokens are known though its dollars are not: they go
+            # on the execution's spend before the bound the unpriced model breached escalates.
+            if run.claim in self._spent:
+                self._spent[run.claim] = add_call(self._harness, spend, model, usage,
+                                                  aside=True)  # fmt: skip
+            raise
         if run.claim in self._spent:
             self._spent[run.claim] = spend
         return with_spend(run, spend)

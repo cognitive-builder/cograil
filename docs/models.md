@@ -76,10 +76,16 @@ Run's tally, which `GET /runs` and `GET /runs/{id}` show as `usage`. That is a S
 compression, an injection screen, the small tier's redaction of error text, and the routing call
 that started the Run from a chat message. A refused message starts no Run, so its routing call is
 charged to none. A Run that fails or escalates in the middle of a Step keeps the spend of every
-call made before it stopped, and `usd_budget_per_run` counts all of these calls. The tally keeps
-four kinds apart, because they are billed at different rates: fresh `input_tokens` and
-`output_tokens`, `cache_read_tokens` and `cache_write_tokens`, and `batch_tokens` (all the tokens
-of a call that went through the provider's batch path).
+call made before it stopped, and `usd_budget_per_run` counts all of these calls. That includes
+the call that breached the bound. A model the provider reports under an id that has no `pricing`
+entry — the harness prices every tier model under a dollar budget, so this is an id the provider
+renamed — has no dollars to count. An aside call on such a model (a redaction, the routing)
+counts its tokens at $0 with a `cost.unpriced` warning, and `usd_budget_per_run` cannot see its
+dollars. A Step's own call on one breaches the bound and escalates the Run, with the call's
+tokens on its tally at $0. The tally keeps four kinds apart, because they are billed at
+different rates: fresh `input_tokens` and `output_tokens`, `cache_read_tokens` and
+`cache_write_tokens`, and `batch_tokens` (all the tokens of a call that went through the
+provider's batch path).
 
 `cograil runs --cost` prints one row per Protocol over the newest `--limit` Runs (default 20):
 the Runs, how many resolved, the tokens by kind, the cost, and the headline number of ADR 0013,

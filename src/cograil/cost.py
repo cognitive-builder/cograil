@@ -87,11 +87,12 @@ def add_call(
 ) -> Spend:
     """`spend` with one call's dollars and tokens added; they go on the current model span too.
 
-    Raises LoopBudgetExceeded as `call_cost` does, for an unpriced model under a dollar budget.
-    A call made `aside` from a Step's turn (a redaction, the routing) has no model span of its
-    own and never raises: an unpriced model costs nothing there, with a warning. The harness
-    prices every tier model under a dollar budget, so only a model id the provider renamed
-    gets there.
+    Raises LoopBudgetExceeded as `call_cost` does, for an unpriced model under a dollar budget;
+    `RunClaims.charge` then counts the call's tokens through the aside path (issue #240), so
+    the Run that escalates on the bound keeps them. A call made `aside` from a Step's turn (a
+    redaction, the routing) has no model span of its own and never raises: an unpriced model
+    costs nothing there, with a warning. The harness prices every tier model under a dollar
+    budget, so only a model id the provider renamed gets there.
     """
     try:
         cost = call_cost(
