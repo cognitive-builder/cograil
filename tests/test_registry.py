@@ -18,7 +18,7 @@ from cograil.errors import (
     ToolExecutionError,
     ToolNotFound,
 )
-from cograil.registry import CallContext, ToolRegistry, build_registry
+from cograil.registry import MAX_TOOL_ARGS_BYTES, CallContext, ToolRegistry, build_registry
 from cograil.store import InMemoryRunStore
 
 HRIS = textwrap.dedent(
@@ -223,3 +223,47 @@ async def test_write_tool_with_invalid_args_never_starts(
     with pytest.raises(ToolArgumentError):
         await registry.invoke("hris.submit_leave", {"employee": 1}, ctx)
     assert [e.kind for e in await store.list_audit_events("r1")] == ["tool.called"]
+
+
+def padded(size: int) -> dict[str, Any]:
+    """Arguments that are exactly `size` bytes as compact JSON: {"employee":"xx…"}."""
+    return {"employee": "x" * (size - len('{"employee":""}'))}
+
+
+@pytest.mark.parametrize(
+    ("size", "refused"),
+    [(MAX_TOOL_ARGS_BYTES, False), (MAX_TOOL_ARGS_BYTES + 1, True)],
+    ids=["at-cap", "over-cap"],
+)
+async def test_arguments_over_the_size_cap_are_refused_and_audited(
+    size: int, refused: bool, store: InMemoryRunStore, ctx: CallContext
+) -> None:
+    """Issue #286: refused before the Tool runs, recorded without the arguments."""
+    calls: list[dict[str, Any]] = []
+
+    async def invoke(args: dict[str, Any]) -> None:
+        calls.append(args)
+
+    registry = ToolRegistry(store)
+    tool = Tool(name="hris.submit_leave", kind="python", scope="write", args_schema=EMPLOYEE)
+    registry.register(tool, invoke)
+    if not refused:
+        await registry.invoke("hris.submit_leave", padded(size), ctx)
+        assert len(calls) == 1
+        return
+    with pytest.raises(ToolArgumentError, match=f"{size} bytes"):
+        await registry.invoke("hris.submit_leave", padded(size), ctx)
+    assert calls == []
+    [call] = await store.list_tool_calls("r1")
+    assert call.args == {} and "cap" in (call.error or "")
+    [event] = await store.list_audit_events("r1")
+    assert (event.kind, event.principal_id) == ("tool.called", "alice@example.com")
+    assert "cap" in event.detail["error"]
+
+
+async def test_a_lone_surrogate_is_counted_not_raised(
+    store: InMemoryRunStore, ctx: CallContext
+) -> None:
+    """A model can send "\\ud800"; the size check must count it, not raise UnicodeEncodeError."""
+    await ToolRegistry(store).refuse_oversized("hris.get_balance", {"employee": "\ud800"}, ctx)
+    assert await store.list_audit_events("r1") == []

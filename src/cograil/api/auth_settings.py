@@ -4,7 +4,7 @@ COGRAIL_AUTH must be set; nothing defaults to a mode, so a deployment that forgo
 start instead of letting everyone in.
 
 - `dev`: every request is COGRAIL_DEV_PRINCIPAL with the groups in COGRAIL_DEV_GROUPS
-  (comma-separated). For local work and demos only.
+  (comma-separated). For local work and demos only: refused when COGRAIL_ENV=production.
 - `oidc`: OpenID Connect authorization code flow (authlib). Needs COGRAIL_OIDC_METADATA_URL,
   COGRAIL_OIDC_CLIENT_ID, COGRAIL_OIDC_CLIENT_SECRET, COGRAIL_OIDC_ALLOWED_DOMAINS
   (comma-separated email domains allowed to sign in) and COGRAIL_SESSION_SECRET (at least
@@ -87,6 +87,8 @@ def auth_settings(env: Mapping[str, str]) -> AuthSettings:
     mode = env.get("COGRAIL_AUTH", "").strip()
     try:
         if mode == "dev":
+            if env.get("COGRAIL_ENV", "").strip().lower() == "production":
+                raise AuthNotConfigured("COGRAIL_AUTH=dev is refused when COGRAIL_ENV=production")
             principal = env.get("COGRAIL_DEV_PRINCIPAL", "")
             return DevAuth(principal=principal, groups=_items(env.get("COGRAIL_DEV_GROUPS")))
         if mode == "oidc":
