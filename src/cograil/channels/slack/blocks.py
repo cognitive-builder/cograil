@@ -20,13 +20,30 @@ def clip(text: str) -> str:
     return text if len(text) <= MAX_TEXT else text[: MAX_TEXT - 1] + "…"
 
 
+def _escape_within(text: str, limit: int) -> str:
+    """`text` escaped, cut where the escaped form reaches `limit` characters; never half of an
+    entity like `&amp;`, which Slack would show as stray characters."""
+    kept: list[str] = []
+    room = limit
+    for char in text:
+        piece = escape(char)
+        if len(piece) > room:
+            break
+        kept.append(piece)
+        room -= len(piece)
+    return "".join(kept)
+
+
 def args_text(args: Mapping[str, Any]) -> str:
-    """The call's arguments as the approval page shows them, clipped to MAX_ARGS characters
-    with a pointer to the page for the rest."""
+    """The call's arguments as the approval page shows them, clipped so that even escaped
+    (`&` becomes `&amp;`) they stay within MAX_ARGS characters, with a pointer to the page for
+    the rest."""
     shown = json.dumps(args, indent=2, sort_keys=True, default=str)
-    clipped = len(shown) > MAX_ARGS
+    escaped = escape(shown)
+    body = escaped if len(escaped) <= MAX_ARGS else _escape_within(shown, MAX_ARGS)
+    clipped = len(body) < len(escaped)
     # A code fence inside the arguments must not close ours and let the rest format as text.
-    body = escape(shown[:MAX_ARGS]).replace("```", "``​`")
+    body = body.replace("```", "``​`")
     tail = "\n…" if clipped else ""
     pointer = "\nThe rest is on the approval page." if clipped else ""
     return f"```{body}{tail}```{pointer}"
@@ -71,6 +88,15 @@ def no_slack_approver_text(approver: str) -> str:
         f"Waiting for {approver} to approve. They have no Slack account in principals.yaml, so "
         "nothing was sent to them in Slack: they decide with the link in their email or on the "
         "approval page."
+    )
+
+
+def undelivered_prompt_text(approver: str) -> str:
+    """What the thread says when Slack refused the prompt (a missing scope, a deactivated
+    member): the approver has a Slack account, but they must decide elsewhere."""
+    return (
+        f"Waiting for {approver} to approve. The prompt could not be delivered to them in Slack; "
+        "they decide with the link in their email or on the approval page."
     )
 
 

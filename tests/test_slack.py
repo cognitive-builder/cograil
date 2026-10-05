@@ -3,7 +3,6 @@ buttons decide as the Principal the clicking member maps to, and members map to 
 through principals.yaml. A fake Poster stands in for Slack; no test calls Slack."""
 
 import shutil
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -300,8 +299,13 @@ async def test_the_prompt_names_the_requester_the_tool_the_step_and_the_argument
 
 @pytest.mark.parametrize(
     ("args", "clipped"),
-    [({"item": "42"}, False), ({"item": "x" * 5000}, True)],
-)
+    [
+        ({"item": "42"}, False),
+        ({"item": "x" * 5000}, True),
+        ({"item": "&" * 5000}, True),  # escaping swells these: the clip is taken after it
+        ({"item": "<" * 5000}, True),
+    ],
+)  # fmt: skip
 def test_arguments_are_clipped_with_a_pointer_to_the_approval_page(
     args: dict[str, str], clipped: bool
 ) -> None:
@@ -314,6 +318,24 @@ def test_arguments_cannot_ping_or_close_the_code_block() -> None:
     text = args_text({"note": "<!channel> ``` <@U1>"})
     assert "<" not in text and ">" not in text
     assert text.count("```") == 2
+
+
+def args_script(item: str) -> str:
+    """RUN_SCRIPT with the gated call's argument replaced, so the approval's args are ours."""
+    return RUN_SCRIPT.replace('args: {item: "42"}', f'args: {{item: "{item}"}}')
+
+
+@pytest.mark.parametrize("fill", ["&", "<"])
+async def test_the_prompt_is_delivered_for_arguments_full_of_escapable_characters(
+    env: Env, channel: SlackChannel, fill: str
+) -> None:
+    poster = FakePoster()
+    env.route_to("helper/record_item")
+    env.run_scripts.append(env.script(args_script(fill * 5000)))
+    await channel.on_message(say(), poster)
+    (prompt,) = poster.in_channel(MANAGER_DM)  # within a section block's limit, Slack takes it
+    assert len(prompt["blocks"][0]["text"]["text"]) < MAX_TEXT
+    assert len(poster.buttons()) == 2
 
 
 async def test_an_approver_without_a_slack_id_is_told_nothing_in_slack(
@@ -339,7 +361,23 @@ async def test_a_prompt_slack_will_not_deliver_is_said_in_the_thread(
     poster = FakePoster()
     poster.refuse_dm = True
     await start(env, channel, poster)
-    assert poster.buttons() == [] and "approval page" in poster.posts[-1]["text"]
+    assert poster.buttons() == []
+    said = poster.posts[-1]["text"]
+    assert "could not be delivered" in said and "email" in said and "approval page" in said
+    assert "no Slack account" not in said  # the approver has one; the delivery is what failed
+
+
+async def test_a_later_waiting_line_after_a_failed_dm_keeps_the_pointer(
+    env: Env, channel: SlackChannel
+) -> None:
+    poster = FakePoster()
+    poster.refuse_dm = True
+    await start(env, channel, poster)
+    await channel.on_message(say("any news?", dm=False), poster)
+    assert poster.buttons() == []  # the approver is still sent nothing
+    said = poster.posts[-1]["text"]
+    assert said.startswith(f"Waiting for <@{MANAGER}> to approve.")
+    assert "could not be delivered" in said
 
 
 # What the thread says is what the Runner recorded
@@ -350,10 +388,7 @@ async def test_an_approval_past_its_deadline_is_announced_as_expired(
 ) -> None:
     poster = FakePoster()
     await start(env, channel, poster)
-    token = poster.token()
-    stale = env.store._approvals[token]  # type: ignore[attr-defined]
-    past = datetime.now(UTC) - timedelta(minutes=1)
-    env.store._approvals[token] = stale.model_copy(update={"expires_at": past})  # type: ignore[attr-defined]
+    env.store.expire(poster.token())
     await decide(channel, poster)  # the button said Approve
     (run,) = await services.store.list_runs()
     assert run.status is RunStatus.escalated

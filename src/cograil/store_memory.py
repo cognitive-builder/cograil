@@ -6,7 +6,7 @@ It follows the RunStore contract in cograil.store, which re-exports it.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from cograil.domain import (
     BUDGET_ALERT_KIND,
@@ -120,6 +120,11 @@ class InMemoryRunStore:
         if token not in self._approvals:
             raise ApprovalNotFound(token)
         return self._approvals[token].model_copy(deep=True)
+
+    def expire(self, token: str) -> None:
+        """Test support: put an Approval past its deadline, as time running out would."""
+        past = datetime.now(UTC) - timedelta(minutes=1)
+        self._approvals[token] = self._approvals[token].model_copy(update={"expires_at": past})
 
     async def decide_approval(
         self,
