@@ -33,7 +33,7 @@ With `COGRAIL_AUTH=oidc`, Cograil uses the authorization code flow (through auth
 | `GET /auth/login` | Redirects the browser to the provider. A `next` query parameter (a same-site path, such as `/?approval=<token>`) is where `/auth/callback` returns the browser after sign-in. |
 | `GET /auth/callback` | Exchanges the code and checks the ID token: signature (through the provider's JWKS), issuer, audience, nonce and expiry. |
 | `POST /auth/logout` | Clears the session. |
-| `GET /auth/me` | Returns the Principal: `id`, `aliases`, `oid`, `groups` and `kind`. It works in both modes. |
+| `GET /auth/me` | Returns the Principal: `id`, `aliases`, `oid`, `slack_id`, `groups` and `kind`. It works in both modes. (`slack_id` is the Slack member id of `principals.yaml`; see `docs/slack.md`.) |
 
 After sign-in, the browser is redirected to the `next` path its `/auth/login` link carried — `/` when there was none, and `/` too when the path points anywhere but this service, so sign-in cannot be turned into an open redirect.
 
