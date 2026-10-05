@@ -25,6 +25,7 @@ from cograil.errors import CograilError, WorkspaceError
 from cograil.observability import log_event
 
 CHANNEL = "schedule"
+MISFIRE_GRACE_SECONDS = 60  # a tick the loop was too busy to start within a minute is dropped
 _WEEKDAYS = ("sun", "mon", "tue", "wed", "thu", "fri", "sat", "sun")  # cron: 0 and 7 are Sunday
 _WEEKDAY_NUMBER = re.compile(r"(?<![/\d])[0-7](?!\d)")
 
@@ -116,6 +117,7 @@ def build_scheduler(workspace: Workspace, fire: Fire) -> AsyncIOScheduler:
             id=f"{colleague.name}/{schedule.name}",
             max_instances=1,
             coalesce=True,
+            misfire_grace_time=MISFIRE_GRACE_SECONDS,
         )
     return scheduler
 
