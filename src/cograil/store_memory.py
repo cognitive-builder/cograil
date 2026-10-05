@@ -123,6 +123,8 @@ class InMemoryRunStore:
 
     def expire(self, token: str) -> None:
         """Test support: put an Approval past its deadline, as time running out would."""
+        if token not in self._approvals:
+            raise ApprovalNotFound(token)
         past = datetime.now(UTC) - timedelta(minutes=1)
         self._approvals[token] = self._approvals[token].model_copy(update={"expires_at": past})
 
