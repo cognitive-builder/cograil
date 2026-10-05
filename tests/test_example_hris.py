@@ -1,6 +1,8 @@
 """Example-workspace HRIS pack: one test per acceptance criterion of issues #9 and #86."""
 
+import importlib.util
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -135,3 +137,52 @@ async def test_unknown_employee_is_a_tool_execution_error(
             await registry.invoke("hris.get_balance", {"employee": "dave"}, ctx)
         with pytest.raises(ToolExecutionError, match="dave"):
             await registry.invoke("hris.get_manager", {"employee": "dave"}, ctx)
+
+
+# Issue #216: a Run gives the model the requester's id, an email; the mock knows short names.
+
+
+def load_hris(pack: str) -> ModuleType:
+    """A fresh copy of a pack's HRIS module, so its seed tables are untouched."""
+    spec = importlib.util.spec_from_file_location(
+        f"hris_{pack}", ROOT / f"workspaces/{pack}/tools/hris.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("pack", ["example-smb", "example-enterprise"])
+def test_an_employee_may_be_named_by_the_principal_id(pack: str) -> None:
+    hris = load_hris(pack)
+    name = next(iter(hris.BALANCES))
+    assert hris.get_balance(f"{name}@example.com") == hris.get_balance(name)
+    assert hris.get_balance(f"  {name.upper()}@Example.com ") == hris.get_balance(name)
+
+
+@pytest.mark.parametrize("pack", ["example-smb", "example-enterprise"])
+def test_a_submit_by_email_and_by_short_name_is_the_same_request(pack: str) -> None:
+    hris = load_hris(pack)
+    name = next(iter(hris.BALANCES))
+    before = hris.get_balance(name)["annual"]
+    args = ("2026-11-02", "2026-11-04", "annual", "req-216")
+    first = hris.submit_leave(f"{name}@example.com", *args)
+    again = hris.submit_leave(name, *args)
+    assert again is first  # the replay returns the first result
+    assert hris.get_balance(name)["annual"] == before - 3  # deducted once
+
+
+@pytest.mark.parametrize("pack", ["example-smb", "example-enterprise"])
+def test_an_unknown_employee_is_still_refused(pack: str) -> None:
+    hris = load_hris(pack)
+    with pytest.raises(ToolExecutionError, match="unknown employee"):
+        hris.get_balance("nobody@example.com")
+
+
+def test_the_manager_of_an_employee_named_by_email() -> None:
+    hris = load_hris("example-smb")
+    assert hris.get_manager("alice@example.com") == {
+        "employee": "alice@example.com",
+        "manager": "bob",
+    }
