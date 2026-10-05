@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-slack = ["slack-bolt>=1.21"]
+slack = ["slack-bolt>=1.21", "aiohttp>=3.9"]
 oidc = ["authlib>=1.8", "itsdangerous>=2.2"]
 mcp = ["fastmcp>=2.0"]
 ollama = ["ollama>=0.4"]

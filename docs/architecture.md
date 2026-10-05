@@ -49,9 +49,8 @@ may happen. State lives in one place, behind the `RunStore` interface.
 
 ## Request path
 
-A Run arrives on the CLI. The web and Slack channels are not built yet (issues #17, #18, #27); when
-they are, they enter at the same place the CLI does: a loaded workspace, a provider, a store,
-a `Runner`.
+A Run arrives on the CLI. The web and Slack channels (issues #18, #27; see `docs/slack.md`) enter
+at the same place the CLI does: a loaded workspace, a provider, a store, a `Runner`.
 
 1. `cograil run workspaces/example-smb --protocol leave_request --as alice@example.com
    --message "Annual leave from 2026-11-02 to 2026-11-04, please"`. The message is required.
@@ -186,8 +185,7 @@ of kind `system`) is allowed exactly when the Protocol allows scheduled executio
 
 ## Not built yet
 
-- The web and Slack channels, and the API in front of them (issues #17, #18, #27). The CLI is the only
-  entry point, and `--as` is not authenticated.
+- Authentication of the CLI: `--as` is not authenticated. The web and Slack channels sign people in.
 - The `directory` Tool kind. `build_registry` builds `python`, `rest`, `mcp` and `decision`. The
   `knowledge` kind registers from `knowledge/tool.py` with its ACL pre-filter (issue #23).
 - Approver routing: decision tables exist now, and `approval_routing` returns an approver

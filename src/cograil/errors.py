@@ -149,6 +149,10 @@ class ApprovalLinkInvalid(CograilError):
     """An approval link is malformed, forged or not for this Approval."""
 
 
+class SlackNotConfigured(CograilError):
+    """SLACK_BOT_TOKEN is set but SLACK_SIGNING_SECRET is not, or the `slack` extra is missing."""
+
+
 class EmailNotConfigured(CograilError):
     """COGRAIL_EMAIL or the settings its mode needs are missing or invalid."""
 
