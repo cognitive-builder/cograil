@@ -19,9 +19,10 @@ from cograil.api.auth_settings import auth_settings
 from cograil.api.services import RegistryOpener, Services
 from cograil.api.wiring import open_registry
 from cograil.approval_links import ApprovalLinks
+from cograil.audience import resolve_principal
 from cograil.channels.slack.approver import SlackApprover
 from cograil.domain import Colleague, RunStatus, Schedule
-from cograil.errors import AudienceDenied, StoreNotConfigured, WorkspaceError
+from cograil.errors import AudienceDenied, EmailDeliveryError, StoreNotConfigured, WorkspaceError
 from cograil.providers import FakeProvider
 from cograil.providers.base import Provider
 from cograil.providers.fake import load_script
@@ -30,11 +31,21 @@ from cograil.store import InMemoryRunStore
 from cograil.workspace import load_workspace
 
 DEMO = Path(__file__).parent / "fixtures/workspaces/cli-demo"
+TWO_GATES = Path(__file__).parent / "fixtures/workspaces/two-gates"
 # Step 1 looks a value up; step 2 plans a gated write, so the Run pauses there.
 SCRIPT = """
 - tool_calls: [{tool: demo.lookup, args: {key: answer}}]
 - {text: Found 42, done: true}
 - tool_calls: [{tool: demo.record, args: {item: "42"}}]
+"""
+# The two-gates pack: the gated write is split in two, so the scheduled Run pauses at
+# demo.record_a and its approved resume pauses again at demo.record_b.
+DOUBLE_SCRIPT = """
+- tool_calls: [{tool: demo.lookup, args: {key: answer}}]
+- {text: Found 42, done: true}
+- tool_calls: [{tool: demo.record_a, args: {item: "42"}}]
+- {text: Recorded A, done: true}
+- tool_calls: [{tool: demo.record_b, args: {item: "42"}}]
 """
 SCHEDULE = """schedules:
   - name: nightly
@@ -62,6 +73,23 @@ def make_workspace(
             "Scheduled execution: not allowed", "Scheduled execution: allowed"
         )
         protocol.write_text(text)
+    return root
+
+
+def two_gate_workspace(tmp_path: Path) -> Path:
+    """The two-gates pack with a Schedule, so a Run and its resume each stop at their own gate."""
+    root = tmp_path / "two-gates"
+    shutil.copytree(TWO_GATES, root)
+    with (root / "colleagues/gatekeeper.yaml").open("a") as colleague:
+        colleague.write(SCHEDULE.replace("record_item", "double_record"))
+    with (root / "principals.yaml").open("a") as file:
+        file.write(SYSTEM)
+    protocol = root / "protocols/double_record.md"
+    protocol.write_text(
+        protocol.read_text().replace(
+            "Scheduled execution: not allowed", "Scheduled execution: allowed"
+        )
+    )
     return root
 
 
@@ -151,6 +179,34 @@ def mail_to(outbox: Outbox) -> ApprovalMail:
     return ApprovalMail(outbox, "cograil@example.com", links)
 
 
+class RefusingMail(Outbox):
+    """An EmailSender that refuses every message."""
+
+    async def send(self, message: EmailMessage) -> None:
+        raise EmailDeliveryError("smtp: refused")
+
+
+class OnceOutbox(Outbox):
+    """An EmailSender that delivers the first message and refuses every later one."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._delivered = False
+
+    async def send(self, message: EmailMessage) -> None:
+        if self._delivered:
+            raise EmailDeliveryError("smtp: refused")
+        self._delivered = True
+        await super().send(message)
+
+
+class RefusingSlack(Slack):
+    """A Poster whose direct messages Slack refuses to carry."""
+
+    async def open_dm(self, user: str) -> str:
+        raise RuntimeError("missing_scope")
+
+
 class Env:
     def __init__(
         self,
@@ -159,8 +215,10 @@ class Env:
         allowed: bool = True,
         mail: Outbox | None = None,
         slack: Slack | None = None,
+        root: Path | None = None,
+        script: str = SCRIPT,
     ) -> None:
-        self.root = make_workspace(tmp_path, allowed=allowed)
+        self.root = root or make_workspace(tmp_path, allowed=allowed)
         if slack is not None:  # the approver, the Colleague's escalation_contact, is on Slack
             people = self.root / "principals.yaml"
             people.write_text(
@@ -171,9 +229,9 @@ class Env:
             )
         self.workspace = load_workspace(self.root)
         self.store = InMemoryRunStore()
-        script = tmp_path / "script.yaml"
-        script.write_text(SCRIPT)
-        self.provider = FakeProvider(load_script(script))
+        script_file = tmp_path / "script.yaml"
+        script_file.write_text(script)
+        self.provider = FakeProvider(load_script(script_file))
         self.services = Services(
             self.workspace, self.root, self.store,
             classifier=FakeProvider([]), provider_for=self.next_provider,
@@ -260,15 +318,87 @@ async def test_a_scheduled_run_whose_approver_no_channel_reaches_escalates(
 async def test_a_slack_refusal_with_no_mail_leaves_a_scheduled_run_undeliverable(
     tmp_path: Path,
 ) -> None:
-    class Refusing(Slack):
-        async def open_dm(self, user: str) -> str:
-            raise RuntimeError("missing_scope")
-
-    env = Env(tmp_path, slack=Refusing())
+    env = Env(tmp_path, slack=RefusingSlack())
     run = await env.services.scheduled(env.colleague, env.schedule)
     kinds = [e.kind for e in await env.store.list_audit_events(run.id)]
     assert "approval.slack_failed" in kinds and "approval.undeliverable" in kinds
     assert run.status is RunStatus.escalated
+
+
+# Fall-through between the channels (issue #267): every channel is tried, and one reaching
+# the approver is enough.
+
+
+@pytest.mark.parametrize("failing", ["mail", "slack"], ids=["email-fails", "slack-fails"])
+async def test_a_failed_channel_the_other_one_reaches_keeps_the_run_waiting(
+    tmp_path: Path, failing: str
+) -> None:
+    mail = RefusingMail() if failing == "mail" else Outbox()
+    slack = RefusingSlack() if failing == "slack" else Slack()
+    env = Env(tmp_path, mail=mail, slack=slack)
+    run = await env.services.scheduled(env.colleague, env.schedule)
+    assert run.status is RunStatus.awaiting_approval
+    kinds = {e.kind for e in await env.store.list_audit_events(run.id)}
+    failed = "approval.email_failed" if failing == "mail" else "approval.slack_failed"
+    sent = "approval.slack_sent" if failing == "mail" else "approval.emailed"
+    assert {failed, sent} <= kinds  # the failure is audited; the other channel reached them
+    assert "approval.undeliverable" not in kinds and "run.escalated" not in kinds
+
+
+async def test_every_channel_failing_leaves_the_approval_undeliverable(tmp_path: Path) -> None:
+    env = Env(tmp_path, mail=RefusingMail(), slack=RefusingSlack())
+    run = await env.services.scheduled(env.colleague, env.schedule)
+    assert run.status is RunStatus.escalated
+    events = await env.store.list_audit_events(run.id)
+    (undeliverable,) = [e for e in events if e.kind == "approval.undeliverable"]
+    assert undeliverable.detail["tried"] == ["email", "slack"]  # every channel was tried
+    escalated = next(e for e in events if e.kind == "run.escalated")
+    assert escalated.detail["reason"] == "approval_undeliverable"
+
+
+async def test_renotifying_tells_each_channel_once_including_slack(tmp_path: Path) -> None:
+    outbox, slack = Outbox(), Slack()
+    env = Env(tmp_path, mail=outbox, slack=slack)
+    run = await env.services.scheduled(env.colleague, env.schedule)
+    assert (len(outbox.sent), len(slack.posts)) == (1, 1)
+    again = await env.services.notify_approvers(await env.store.get_run(run.id))
+    assert again.status is RunStatus.awaiting_approval
+    assert (len(outbox.sent), len(slack.posts)) == (1, 1)  # neither channel sends twice
+    kinds = [e.kind for e in await env.store.list_audit_events(run.id)]
+    assert kinds.count("approval.emailed") == 1 and kinds.count("approval.slack_sent") == 1
+
+
+# A resumed scheduled Run that stops at a second Gate goes through decide, notify, escalate
+
+
+async def test_a_resumed_scheduled_run_stopping_at_a_second_gate_escalates_when_no_one_is_told(
+    tmp_path: Path,
+) -> None:
+    env = Env(tmp_path, mail=OnceOutbox(), root=two_gate_workspace(tmp_path), script=DOUBLE_SCRIPT)
+    run = await env.services.scheduled(env.colleague, env.schedule)
+    assert run.status is RunStatus.awaiting_approval  # the first gate: demo.record_a
+    (first,) = await env.store.list_approvals(run.id)
+    manager = resolve_principal(env.workspace, env.colleague.escalation_contact)
+    outcome = await env.services.decide(first.token, manager, "approved")
+    assert outcome.run.status is RunStatus.escalated  # it stopped again, and no one was told
+    events = await env.store.list_audit_events(run.id)
+    (undeliverable,) = [e for e in events if e.kind == "approval.undeliverable"]
+    assert (undeliverable.detail["tool"], undeliverable.detail["tried"]) == (
+        "demo.record_b",
+        ["email"],
+    )
+    resumed = next(e for e in events if e.kind == "gate.resumed")
+    assert (resumed.detail["tool"], resumed.detail["decided_by"]) == (
+        "demo.record_a",
+        env.colleague.escalation_contact,
+    )
+    escalated = next(e for e in events if e.kind == "run.escalated")
+    assert escalated.detail["reason"] == "approval_undeliverable"
+    called = [e.detail["tool"] for e in events if e.kind == "tool.called"]
+    assert called == ["demo.lookup", "demo.record_a"]  # the second gate's call never ran
+    by_tool = {a.tool: a for a in await env.store.list_approvals(run.id)}
+    assert by_tool["demo.record_a"].spent_at is not None
+    assert by_tool["demo.record_b"].decision == "expired"
 
 
 async def test_a_protocol_that_stopped_allowing_scheduled_execution_starts_no_run(

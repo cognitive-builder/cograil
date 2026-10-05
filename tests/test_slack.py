@@ -540,21 +540,41 @@ def test_model_output_cannot_ping_or_link(text: str) -> None:
     assert "<" not in escape(text) and ">" not in escape(text)
 
 
+def slack_app(pack: Path, env: Env, services: Services, slack: SlackSettings | None) -> FastAPI:
+    """The app over the pack workspace with Slack on or off, sharing the test's fakes."""
+    return create_app(
+        services.workspace, pack, services.store,
+        auth=auth_settings({"COGRAIL_AUTH": "dev", "COGRAIL_DEV_PRINCIPAL": ALICE_ID}),
+        classifier=env.classifier, provider_for=env.next_provider,
+        open_registry=open_registry, slack=slack,
+    )  # fmt: skip
+
+
 def test_the_app_serves_slack_only_when_it_is_set_up(
     env: Env, pack: Path, services: Services
 ) -> None:
     def answer(slack: SlackSettings | None) -> int:
-        app = create_app(
-            services.workspace, pack, services.store,
-            auth=auth_settings({"COGRAIL_AUTH": "dev", "COGRAIL_DEV_PRINCIPAL": ALICE_ID}),
-            classifier=env.classifier, provider_for=env.next_provider,
-            open_registry=open_registry, slack=slack,
-        )  # fmt: skip
-        return TestClient(app).post("/slack/events", json={}).status_code
+        return (
+            TestClient(slack_app(pack, env, services, slack))
+            .post("/slack/events", json={})
+            .status_code
+        )
 
     settings = SlackSettings.model_validate({"bot_token": "xoxb-1", "signing_secret": "s"})
     assert answer(None) == 404  # Slack is off
     assert answer(settings) == 401  # on, and an unsigned request is refused
+
+
+def test_the_slack_router_registers_the_direct_message_as_an_approver_channel(
+    env: Env, pack: Path, services: Services
+) -> None:
+    """In production the router is the only thing that adds the Slack DM to the ways
+    `Services.notify_approvers` reaches an approver (channels/slack/bolt.py); every other
+    test adds its channel by hand."""
+    settings = SlackSettings.model_validate({"bot_token": "xoxb-1", "signing_secret": "s"})
+    assert slack_app(pack, env, services, None).state.cograil_services.approver_channels == []
+    [channel] = slack_app(pack, env, services, settings).state.cograil_services.approver_channels
+    assert isinstance(channel, SlackApprover)
 
 
 async def test_a_direct_message_is_opened_with_the_approver() -> None:
