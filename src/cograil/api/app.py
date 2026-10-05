@@ -29,6 +29,7 @@ from cograil.domain import Workspace
 from cograil.errors import SlackNotConfigured
 from cograil.providers.base import Provider
 from cograil.redaction import Redactor
+from cograil.scheduler import build_scheduler, schedules
 from cograil.store import RunStore
 
 
@@ -59,12 +60,18 @@ def create_app(
     `classifier` routes chat messages on the small tier, `provider_for` gives the Provider a
     Protocol's Runs use, `redactor` redacts the opt-in message snippet log, `approval_mail`
     emails approvers a signed link (without it the link routes answer 404), `slack` turns on
-    POST /slack/events (cograil.channels.slack), and `close` runs at shutdown.
+    POST /slack/events (cograil.channels.slack), and `close` runs at shutdown. The Colleagues'
+    Schedules run while the app is up (cograil.scheduler).
     """
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        scheduler = build_scheduler(workspace, services.scheduled) if schedules(workspace) else None
+        if scheduler is not None:
+            scheduler.start()
         yield
+        if scheduler is not None:
+            scheduler.shutdown(wait=False)
         # A Run is a detached task; let the ones in flight finish before the store goes.
         await asyncio.gather(*services.tasks, return_exceptions=True)
         if close is not None:

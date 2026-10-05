@@ -37,12 +37,14 @@ def received_run(
     channel: str,
     message: str,
     extra: Mapping[str, Any] | None = None,
+    trigger: Trigger | None = None,
 ) -> Run:
-    """A received chat Run with its input; its workspace folder is recorded so that
-    `cograil approve` can resume it. `extra` adds keys to the Run's context, such as the
-    Slack thread the Run belongs to; it cannot replace the two keys above."""
+    """A received Run with its input, a chat Run unless `trigger` says otherwise (a Schedule's
+    Run); its workspace folder is recorded so that `cograil approve` can resume it. `extra`
+    adds keys to the Run's context, such as the Slack thread the Run belongs to; it cannot
+    replace the two keys above."""
     now = datetime.now(UTC)
-    trigger = Trigger(kind="chat", channel=channel)
+    trigger = trigger or Trigger(kind="chat", channel=channel)
     return Run(
         id=uuid.uuid4().hex,
         workspace=workspace,

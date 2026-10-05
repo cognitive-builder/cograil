@@ -5,8 +5,9 @@ connections.yaml, audiences.yaml, knowledge.yaml, principals.yaml and decisions/
 optional and default to empty; harness.yaml is optional and defaults to the Harness defaults
 (ADR 0012). Each decision table must be named after its file and pass the checks of
 decisions.py, and each `decision` Tool must name a table that loaded (ADR 0009). No principal
-id, alias, oid or Slack id may name two principals once normalised (cograil.identity), and no
-Colleague's escalation_contact may be an alias.
+id, alias, oid or Slack id may name two principals once normalised (cograil.identity), no
+Colleague's escalation_contact may be an alias, and every Colleague Schedule must pass
+cograil.scheduler.schedule_problems.
 Every failure is a WorkspaceError whose message names the offending file. `check_workspace`
 keeps going after a failure and reports every problem it can find; `load_workspace` raises one
 WorkspaceError carrying all of them, one per line.
@@ -38,6 +39,7 @@ from cograil.domain import (
 from cograil.errors import DecisionError, ProtocolParseError, WorkspaceError
 from cograil.identity import normalise_principal_id
 from cograil.parser import parse_protocol
+from cograil.scheduler import schedule_problems
 
 
 @dataclass(frozen=True)
@@ -96,6 +98,7 @@ def check_workspace(path: Path | str) -> WorkspaceReport:
     problems.found.extend(_unknown_tables(workspace, root / "tools.yaml"))
     problems.found.extend(_shared_names(workspace, root / "principals.yaml"))
     problems.found.extend(_alias_contacts(workspace, root / "colleagues"))
+    problems.found.extend(schedule_problems(workspace, str(root / "colleagues")))
     return WorkspaceReport(workspace, problems.found)
 
 
