@@ -46,6 +46,7 @@ nav:
   - Writing a Protocol: runbooks.md
   - Adding a Tool: tools.md
   - Deploying: deploy.md
+  - Demo script: demo.md
   - Reference:
       - Architecture: architecture.md
       - Approvals: approvals.md
