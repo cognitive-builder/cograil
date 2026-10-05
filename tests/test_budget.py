@@ -1,6 +1,10 @@
-"""Monthly spending cap tests for issue #56: one per acceptance criterion (ADR 0013)."""
+"""Monthly spending cap tests for issue #56: one per acceptance criterion (ADR 0013).
+
+The alert's paused-Run path — an execution that ends on an Approval, not completed — is
+issue #232."""
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -14,10 +18,11 @@ from cograil.domain import (
     Run,
     RunStatus,
     Tiers,
+    Tool,
     Trigger,
 )
 from cograil.parser import parse_protocol
-from cograil.providers import FakeProvider, scripted
+from cograil.providers import FakeProvider, Plan, PlannedToolCall, scripted
 from cograil.registry import ToolRegistry
 from cograil.runner import Runner
 from cograil.store import InMemoryRunStore
@@ -27,6 +32,10 @@ LAST_MONTH = datetime(2026, 9, 30, 23, 59, tzinfo=UTC)
 CONTACT = "ops@example.com"
 HARPER = Colleague(name="harper", role="HR", escalation_contact=CONTACT, protocols=["demo"])
 PROTOCOL = parse_protocol('Protocol: demo\n1. Step "One": Do it.\n')
+GATED = parse_protocol('Protocol: demo\n1. Step "Submit": Use @hris.submit_leave.\n')
+SUBMIT_LEAVE = Tool(
+    name="hris.submit_leave", kind="python", scope="write", confirm_before_write=True
+)
 PRICING = {"fake-model": Price(input_per_mtok=1.0, output_per_mtok=1.0)}
 TIERS = Tiers(small="fake-model", standard="fake-model", strong="fake-model")
 
@@ -48,6 +57,21 @@ def an_execution(store: InMemoryRunStore, tokens: int, cap: Harness) -> tuple[Ru
     provider = FakeProvider([scripted("ok", done=True, input_tokens=tokens, output_tokens=0)])
     runner = Runner(provider, ToolRegistry(store), store, HARPER, harness=cap, clock=lambda: NOW)
     return runner, provider
+
+
+def call(tool: str, **args: Any) -> PlannedToolCall:
+    return PlannedToolCall(id=f"call-{tool}", tool=tool, args=args)
+
+
+async def submit(args: dict[str, Any]) -> dict[str, Any]:
+    return {"ok": True}
+
+
+def a_gated_runner(store: InMemoryRunStore, script: list[Plan], cap: Harness) -> Runner:
+    """A Runner whose one Step plans a gated write, so the Run pauses on its Approval."""
+    registry = ToolRegistry(store)
+    registry.register(SUBMIT_LEAVE, submit)
+    return Runner(FakeProvider(script), registry, store, HARPER, harness=cap, clock=lambda: NOW)
 
 
 async def events(store: InMemoryRunStore, kind: str) -> list[dict[str, object]]:
@@ -102,6 +126,29 @@ async def test_one_alert_is_sent_when_the_months_spend_crosses_alert_at() -> Non
     (alert,) = await events(store, "budget.alerted")
     assert alert["contact"] == CONTACT and alert["month"] == "2026-10"
     assert alert["spend_usd"] == pytest.approx(0.6) and alert["monthly_usd"] == 1.0
+
+
+async def test_one_alert_is_sent_when_the_run_pauses_on_a_gate_over_alert_at() -> None:
+    """Issue #232: an execution that ends paused on a write Gate, not completed, alerts too."""
+    store = InMemoryRunStore()
+    await store.create_run(a_run("earlier", cost=0.4))  # $0.40 of the $1.00 cap already
+    await store.create_run(a_run("gated"))
+    cap = harness()  # alert at $0.50
+    plans_the_write = scripted("", call("hris.submit_leave"), input_tokens=200_000, output_tokens=0)
+    pausing = a_gated_runner(store, [plans_the_write], cap)
+    run = await pausing.run("gated", GATED)
+    assert run.status is RunStatus.awaiting_approval  # it paused: the month's spend is $0.60
+    (approval,) = await store.list_approvals("gated")
+    (alert,) = [e for e in await store.list_audit_events("gated") if e.kind == "budget.alerted"]
+    assert (alert.principal_id, alert.detail["contact"]) == ("alice@example.com", CONTACT)
+    assert alert.detail["month"] == "2026-10" and alert.detail["spend_usd"] == pytest.approx(0.6)
+    # The month's next execution, the resume, still over the threshold: it stays quiet.
+    finishes = scripted("submitted", done=True, input_tokens=100_000, output_tokens=0)
+    resuming = a_gated_runner(store, [finishes], cap)
+    resumed = await resuming.resume(str(approval.token), GATED, decider=CONTACT)
+    assert resumed.status is RunStatus.completed
+    again = [e for e in await store.list_audit_events("gated") if e.kind == "budget.alerted"]
+    assert again == [alert]
 
 
 async def test_a_workspace_without_a_cap_is_never_refused_or_alerted() -> None:
