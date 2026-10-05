@@ -5,6 +5,9 @@
 .env
 .env.*
 *.env
+**/.env
+**/.env.*
+**/*.env
 **/__pycache__
 .mypy_cache
 .ruff_cache

@@ -141,7 +141,7 @@ When mail is configured, an approver gets a one-click link: `/approvals/link/{to
 - **Request logs in front of the service** still record the full URL, for example Cloud Run's request log or a reverse proxy. Restrict who can read them.
 - **Decision AuditEvents carry the requester as principal.** The approver is in `detail.decided_by`. Tracked in #275.
 - **Rotating the link secret** voids every outstanding link. This fails safe: the approver decides in the web chat instead.
-- **A GET on an expired link escalates the Run,** which the timeout would have done anyway.
+- **A GET on an expired link escalates the Run.** Nothing escalates an overdue Approval on a timer, so a mail scanner, a link previewer or a forwarded copy that opens the link triggers it: a state change from a GET. The Approval was dead anyway. Tracked in #282.
 
 ## Secret Handling
 
@@ -177,6 +177,7 @@ An attacker wants one of them from:
     - The review and auto-merge jobs run only for branches of this repository.
     - The `@claude` jobs answer only owners, members and collaborators.
     - The deploy and the lane 3 job run only on a tag or when started by hand.
+    - **The deploy identity must be pinned.** Other workflows here, including the ones that run a model on text from issues, also request an identity token, so the Workload Identity condition names the deploy workflow on a version tag and not just the repository (`docs/deploy.md`). More hardening is a decision for the owner: #285.
 
 ### Known Limits
 
@@ -228,7 +229,7 @@ No finding was high severity. None bypasses the Step whitelist, a Gate, or the k
 | `/auth/login` signed the session again, so a session could be kept alive past 8 hours | Medium | Fixed: the session carries its sign-in time and ends 8 hours after it |
 | Redaction patterns missed `access_token=`, `refresh_token=`, `private_key=`, `Authorization: Basic`, `sig=` | Medium | Fixed |
 | A system principal given a `slack_id` could be used from Slack | Low | Fixed: Slack maps `kind: user` principals only |
-| A copied `sso.env` was neither git- nor docker-ignored | Low | Fixed: `*.env` is ignored |
+| A copied `sso.env` was neither git- nor docker-ignored | Low | Fixed: `*.env`, `.env` and `.env.*` are ignored by git at every depth and by docker at every depth (`**/`; a pattern without it matches only the build context root) |
 | The model chooses whom a read is for | Medium | Documented; #272 |
 | An `args_schema` accepts unknown keys by default | Medium | Documented; #273 |
 | MCP servers have no Connection credentials | Low | Documented; #274 |
