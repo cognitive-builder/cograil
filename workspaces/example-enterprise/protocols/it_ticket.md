@@ -8,7 +8,7 @@ Helpers: none
 1. Step "Look up": Use @knowledge.search with the user's question and @jira.search_issues to find an open ticket for the same problem. If a runbook answers the question, quote it and stop. (model: small; turns: 3)
 2. Step "Prioritise": Ask the requester for the impact (individual, team or company) and the urgency (low or high), then use @decide.ticket_priority to get the priority. (context: steps 1)
 3. Step "File": Use @jira.create_issue with a short summary, the requester's description and the priority. The tool requires approval; tell the requester it is waiting. (context: steps 1, 2; model: standard)
-4. Step "Notify": Use @notify.send to tell the requester the issue key. Use @jira.get_issue to read the key back first.
+4. Step "Notify": Use @notify.send to tell the requester the issue key.
 
 Error handling:
 - @jira.search_issues fails: retry once, then escalate to the IT Service Desk with the error.
