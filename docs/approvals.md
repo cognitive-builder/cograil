@@ -1,6 +1,6 @@
 # Approving by Email or in Chat
 
-A write Tool with `confirm_before_write` stops the Run at a Gate until its approver decides. There are two ways to decide: the approval card in the web chat (see `docs/api.md`) and a signed link in an email.
+A write Tool with `confirm_before_write` stops the Run at a Gate until its approver decides. There are three ways to decide: the approval card in the web chat (see `docs/api.md`), a signed link in an email, and the buttons the bot posts to the approver in Slack (see `docs/slack.md`).
 
 ## Email Links
 
@@ -29,4 +29,5 @@ The email names who asked, the Tool and its arguments, and holds one link: `/app
 | --- | --- | --- |
 | `approval.emailed` | The email was sent. | `approver`, `token`, `step`, `tool`, `expires_at`. Never the link. |
 | `approval.email_failed` | The provider refused it. The Run is not failed, and the approver can still use the web card. | The same, plus `error`. |
-| `gate.resumed` or `run.escalated` | The decision. | `decided_by` is the approver and `via` is `email_link`. A decision in the web chat has no `via`. |
+| `gate.resumed` | The decision was to approve. | `decided_by` is the approver and `via` names the way it was decided: `email_link` or `slack`. A decision in the web chat has no `via`. |
+| `run.escalated` | The decision was to decline. An Approval decided past its deadline is recorded as an expiry, not a decline, and escalates the same way. | `reason` is `approval_declined` or `approval_expired`, with the same `decided_by` and `via`. |

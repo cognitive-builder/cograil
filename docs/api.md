@@ -16,10 +16,12 @@ Settings come only from environment variables. To run the service in a container
 | `DATABASE_URL` | Required. The Postgres store, as a SQLAlchemy URL (`postgresql+asyncpg://...`). In production it names the `cograil_app` role; migrations use `MIGRATIONS_DATABASE_URL` instead. See "Database Roles" in `docs/deploy.md`. |
 | `ANTHROPIC_API_KEY` | Read by the Anthropic provider. |
 | `COGRAIL_AUTH` | Required. `dev` or `oidc`, with the settings of that mode. See `docs/auth.md`. |
+| `SLACK_BOT_TOKEN` | The Slack bot token (`xoxb-...`). Unset means the Slack channel is off. See `docs/slack.md`. |
+| `SLACK_SIGNING_SECRET` | Verifies that a request to `POST /slack/events` comes from Slack. Required with the token. |
 
 ## Endpoints
 
-"Signed in" means any Principal with a valid session. Every endpoint needs one, and answers 401 without it, except `/`, `/history`, `/health`, `/auth/*`, `/docs` and `/openapi.json`.
+"Signed in" means any Principal with a valid session. Every endpoint needs one, and answers 401 without it, except `/`, `/history`, `/health`, `/auth/*`, `/docs`, `/openapi.json`, the signed links of `GET` and `POST /approvals/link/{token}`, and `POST /slack/events`, where Slack's own signature is the sign-in.
 
 | Endpoint | What it does | Who may call it |
 | --- | --- | --- |
@@ -27,6 +29,7 @@ Settings come only from environment variables. To run the service in a container
 | `GET /history` | The run history page (see below). | Anyone; the page asks `/auth/me` who is signed in. |
 | `GET /health` | Says the service is up. | Anyone. |
 | `/auth/*` | Sign-in routes. | Anyone (see `docs/auth.md`). |
+| `POST /slack/events` | Slack's Events API and Interactivity: the messages the bot is sent and the buttons an approver clicks. Present only when Slack is set up (see `docs/slack.md`). | Anyone; Slack's signature is checked instead of a sign-in, and a request without a valid one gets a 401. |
 | `POST /chat` | Routes a message to a Protocol and streams the Run as SSE. | Signed in. |
 | `GET /runs` | Lists your Runs, newest first, each with the `principal_id` that started it, its `status`, `protocol`, `cost_usd` and `usage` (tokens by category: `input_tokens` and `output_tokens` that were fresh, `cache_read_tokens`, `cache_write_tokens`, and `batch_tokens`); an auditor's list is every Run. `limit` is 1 to 100, default 20. | Signed in. |
 | `GET /runs/{id}` | One Run with its Steps, tool calls and Gates. `protocol_changed` is true when the Workspace no longer has the Protocol at the version the Run began with; then `steps` is empty and the rest of the Run is still shown. | The Principal who started it. An auditor lists every Run but does not open another's. |
