@@ -12,3 +12,4 @@ uv.lock
 workspaces/*/.secrets/
 !workspaces/example-*/
 !.env.example
+site/

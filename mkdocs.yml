@@ -1,0 +1,61 @@
+site_name: Cograil
+site_description: Turn a Markdown runbook into an AI colleague that follows it step by step.
+site_url: https://cognitive-builder.github.io/cograil/
+repo_url: https://github.com/cognitive-builder/cograil
+repo_name: cognitive-builder/cograil
+edit_uri: edit/main/docs/
+docs_dir: docs
+strict: true
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+# Product Plan.md is background for people, not part of the site.
+exclude_docs: |
+  Product Plan.md
+  graphs/
+
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Concepts: concepts.md
+  - Writing a Protocol: runbooks.md
+  - Adding a Tool: tools.md
+  - Deploying: deploy.md
+  - Reference:
+      - Architecture: architecture.md
+      - Approvals: approvals.md
+      - Authentication: auth.md
+      - API: api.md
+      - Knowledge: knowledge.md
+      - Models: models.md
+      - Evals: evals.md
+      - Observability: observability.md
+      - Slack: slack.md
+      - Threat model: threat-model.md
+  - Decisions:
+      - ADR index: adr/README.md
