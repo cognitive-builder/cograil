@@ -71,9 +71,12 @@ input price in `usd_budget_per_run`.
 
 ## Cost telemetry
 
-Every model call (a Step's turn, a compression, an injection screen) adds its dollars to the
-Run's `cost_usd` and its tokens to the Run's tally, which `GET /runs` and `GET /runs/{id}` show as
-`usage`. The tally keeps four kinds apart, because they are billed at different rates: fresh
+Every model call made for a Run adds its dollars to the Run's `cost_usd` and its tokens to the
+Run's tally, which `GET /runs` and `GET /runs/{id}` show as `usage`. That is a Step's turn, a
+compression, an injection screen, the small tier's redaction of error text, and the routing call
+that started the Run from a chat message. A refused message starts no Run, so its routing call is
+charged to none. A Run that fails or escalates in the middle of a Step keeps the spend of every
+call made before it stopped, and `usd_budget_per_run` counts all of these calls. The tally keeps four kinds apart, because they are billed at different rates: fresh
 `input_tokens` and `output_tokens`, `cache_read_tokens` and `cache_write_tokens`, and
 `batch_tokens` (all the tokens of a call that went through the provider's batch path).
 

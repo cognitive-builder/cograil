@@ -35,7 +35,6 @@ from pydantic_core import to_jsonable_python
 
 from cograil.claims import RunClaims
 from cograil.context import SCREENED_KEY, data_message
-from cograil.cost import charge
 from cograil.domain import Harness, Run, Step
 from cograil.errors import ProviderError
 from cograil.gates import StepProgress
@@ -193,7 +192,7 @@ class Screen:
             verdict = plan.text or (plan.step_complete.output if plan.step_complete else "")
             usage = plan.usage
             progress.tokens += usage.input_tokens + usage.output_tokens
-            run = charge(self._harness, run, plan.model, usage)
+            run = self._claims.charge(run, plan.model, usage)
         return run, parse_verdict(verdict, len(items))
 
 

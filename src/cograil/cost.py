@@ -1,9 +1,13 @@
 """Cost telemetry: tokens and dollars of every model call, summed per Run and per Protocol.
 
-Every model call (a Step's turn, a compression, an injection screen) goes through `charge`,
-which adds its dollars to `Run.cost_usd` and its tokens to the Run's tally in
-`Run.context["usage"]`. The tally keeps fresh tokens (prompt not read from or written to saved
-context, and what the model wrote), cache read and cache write tokens, and batch tokens apart,
+Every model call is charged to its Run: a Step's turn, a compression and an injection screen
+through `charge` (by way of `RunClaims.charge`, which keeps the spend of a Run that fails or
+escalates mid-Step, issue #221); a redaction and the routing that started the Run through a
+`Charge` callback, as they run where the Run is not in hand. A charge adds the call's dollars
+to `Run.cost_usd` and its tokens to the Run's tally in `Run.context["usage"]`.
+
+The tally keeps fresh tokens (prompt not read from or written to saved context, and what the
+model wrote), cache read and cache write tokens, and batch tokens apart,
 as ADR 0013 asks: a cache read and a batch token are billed at a different rate from a fresh one,
 so one sum would hide what a Run cost. A call that went through the provider's batch path counts
 all its tokens as batch tokens.
@@ -15,17 +19,22 @@ escalation, divided by their count.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+import logging
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
 from cograil.domain import Harness, Run, RunStatus
+from cograil.errors import LoopBudgetExceeded
 from cograil.harness import call_cost
-from cograil.observability import record_model_call
+from cograil.observability import log_event, record_model_call
 from cograil.providers.base import Usage
 
 USAGE_KEY = "usage"  # Run.context["usage"]: the Run's token tally
+
+type Charge = Callable[[str, Usage], None]
+"""Charges one model call, by its model and usage, to the Run it was made for."""
 
 
 class RunUsage(BaseModel):
@@ -60,17 +69,67 @@ def run_usage(run: Run) -> RunUsage:
     return RunUsage.model_validate(run.context.get(USAGE_KEY, {}))
 
 
+class Spend(BaseModel):
+    """What a Run has spent: its dollars and its token tally."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    cost_usd: float = 0.0
+    usage: RunUsage = RunUsage()
+
+
+def spend_of(run: Run) -> Spend:
+    """What `run` shows it has spent."""
+    return Spend(cost_usd=run.cost_usd, usage=run_usage(run))
+
+
+def with_spend(run: Run, spend: Spend) -> Run:
+    """`run` showing `spend`; the same Run when it already does."""
+    if spend == spend_of(run):
+        return run
+    context: dict[str, Any] = {**run.context, USAGE_KEY: spend.usage.model_dump()}
+    return run.model_copy(update={"cost_usd": spend.cost_usd, "context": context})
+
+
+def add_call(
+    harness: Harness, spend: Spend, model: str, usage: Usage, *, aside: bool = False
+) -> Spend:
+    """`spend` with one call's dollars and tokens added; they go on the current model span too.
+
+    Raises LoopBudgetExceeded as `call_cost` does, for an unpriced model under a dollar budget.
+    A call made `aside` from a Step's turn (a redaction, the routing) has no model span of its
+    own and never raises: an unpriced model costs nothing there, with a warning. The harness
+    prices every tier model under a dollar budget, so only a model id the provider renamed
+    gets there.
+    """
+    try:
+        cost = call_cost(
+            harness, model, usage.input_tokens, usage.output_tokens,
+            usage.cache_read_tokens, usage.cache_write_tokens,
+        )  # fmt: skip
+    except LoopBudgetExceeded:
+        if not aside:
+            raise
+        log_event("cost.unpriced", logging.WARNING, model=model)
+        cost = 0.0
+    if not aside:
+        record_model_call(model, usage, cost)
+    return Spend(cost_usd=spend.cost_usd + cost, usage=spend.usage + _of_call(usage))
+
+
 def charge(harness: Harness, run: Run, model: str, usage: Usage) -> Run:
     """`run` with one call's dollars and tokens added; they go on the current model span too.
     Raises LoopBudgetExceeded as `call_cost` does, for an unpriced model under a dollar budget."""
-    cost = call_cost(
-        harness, model, usage.input_tokens, usage.output_tokens,
-        usage.cache_read_tokens, usage.cache_write_tokens,
-    )  # fmt: skip
-    record_model_call(model, usage, cost)
-    tally = run_usage(run) + _of_call(usage)
-    context: dict[str, Any] = {**run.context, USAGE_KEY: tally.model_dump()}
-    return run.model_copy(update={"cost_usd": run.cost_usd + cost, "context": context})
+    return with_spend(run, add_call(harness, spend_of(run), model, usage))
+
+
+def charge_aside(harness: Harness, run: Run, calls: Iterable[tuple[str, Usage]]) -> Run:
+    """`run` with calls made aside from its Steps (the routing that started it) charged; this
+    never raises (`add_call` aside)."""
+    spend = spend_of(run)
+    for model, usage in calls:
+        spend = add_call(harness, spend, model, usage, aside=True)
+    return with_spend(run, spend)
 
 
 def _of_call(usage: Usage) -> RunUsage:
