@@ -14,6 +14,9 @@ A Run execution is one trace, a tree of spans:
   a compression and an injection screen each make one. The classification of a chat message, the
   small-tier redaction and eval runs make model calls outside a Step; they have no span yet.
 
+A model call's tokens and cost belong to its own `chat` span: charging one anywhere else is
+refused as an error instead of putting its usage on the Step or Run span.
+
 ## Attributes
 
 Run and Step spans carry these attributes:
@@ -24,7 +27,7 @@ Run and Step spans carry these attributes:
 | `cograil.workspace` | Run | The Workspace |
 | `cograil.colleague` | Run | The Colleague |
 | `cograil.protocol` | Run | The Protocol |
-| `cograil.step` | Step | The Step's number |
+| `cograil.step.number` | Step | The Step's number |
 | `cograil.step.name` | Step | The Step's name |
 
 Model spans follow the OTel GenAI (generative AI) naming, so tools such as Arize Phoenix can read
