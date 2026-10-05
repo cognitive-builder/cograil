@@ -21,7 +21,10 @@ type Sweep = Callable[[], Awaitable[list[str]]]
 
 
 async def sweep_forever(sweep: Sweep, interval: float = SWEEP_INTERVAL_SECONDS) -> None:
-    """Run `sweep` now and every `interval` seconds until cancelled."""
+    """Run `sweep` now and every `interval` seconds until cancelled.
+
+    The broad `except Exception` is deliberate: this is a loop that must survive. Nothing else
+    expires an Approval, so whatever one sweep raises is logged and the next tick runs."""
     while True:
         try:
             expired = await sweep()

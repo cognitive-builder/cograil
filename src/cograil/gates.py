@@ -240,12 +240,15 @@ class Gates:
             raise refusal
         return await self._decide(run, approval, decision, decider, via)
 
-    async def expire(self, token: str) -> Run:
-        """Escalate the Run if its Approval is past expires_at; otherwise change nothing."""
+    async def expire(self, token: str, *, via: str | None = None) -> Run:
+        """Escalate the Run if its Approval is past expires_at; otherwise change nothing.
+
+        Needs only the store and the clock, so it works for a Run whose Protocol is gone.
+        `via` says what found it overdue (`sweep`, `email_link`), written on the AuditEvent."""
         approval, run = await self._paused_on(token)
         if not self._overdue(approval):
             return run
-        return await self._decide(run, approval, "expired", None)
+        return await self._decide(run, approval, "expired", None, via)
 
     async def undeliverable(self, token: str) -> Run:
         """Escalate the Run paused on this Approval, which no channel could tell its approver

@@ -119,7 +119,7 @@ Roles belong to the whole Postgres cluster, not to one database. The downgrade o
 
    The service URL is only known after the first deploy, so deploy once, read the URL, then run `gcloud run services update cograil --update-env-vars COGRAIL_OIDC_REDIRECT_URL=...`.
 
-The workflow deploys with `--allow-unauthenticated`. Browsers have to reach the sign-in page, and the app refuses every other request without a session. Never set `COGRAIL_AUTH=dev` on a deployed service.
+The workflow deploys with `--allow-unauthenticated`. Browsers have to reach the sign-in page, and the app refuses every other request without a session. Never set `COGRAIL_AUTH=dev` on a deployed service: with `COGRAIL_ENV=production`, which the workflow sets, the service refuses to start in that mode.
 
 ## Scale to Zero and the Cold Start
 
