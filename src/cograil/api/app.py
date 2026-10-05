@@ -67,6 +67,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         scheduler = build_scheduler(workspace, services.scheduled) if schedules(workspace) else None
+        _app.state.cograil_scheduler = scheduler
         if scheduler is not None:
             scheduler.start()
         yield

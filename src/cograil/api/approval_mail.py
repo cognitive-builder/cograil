@@ -1,9 +1,10 @@
 """Tell an approver by email that a gate waits on them, with a signed link (issue #24).
 
-Sent once per pending Approval after a Run stops at a gate. Each outcome is an AuditEvent of
-the Run, `approval.emailed` or `approval.email_failed`, naming the approver and the link's
-expiry, never the link itself (it is a credential). A failed email never fails the Run: the
-approver can still open the approval card in the web chat. Tool arguments in the email are
+Sent once per pending Approval after a Run stops at a gate, as one of the channels of
+`notify_approvers` (cograil.api.approver_notice). Each outcome is an AuditEvent of the Run,
+`approval.emailed` or `approval.email_failed`, naming the approver and the link's expiry, never
+the link itself (it is a credential). A failed email never fails the Run: the approver can still
+open the approval card in the web chat. Tool arguments in the email are
 data the Run planned, shown to the approver, never instructions.
 """
 
@@ -26,6 +27,8 @@ MAX_ARGS_CHARS = 1000
 
 
 class ApprovalMail:
+    name = "email"
+
     def __init__(self, sender: EmailSender, sender_address: str, links: ApprovalLinks) -> None:
         self._sender = sender
         self._from = sender_address
@@ -47,18 +50,8 @@ class ApprovalMail:
             raise EmailNotConfigured(f"COGRAIL_APPROVAL_LINK_SECRET: {exc}") from None
         return cls(build_sender(settings), settings.sender, links)
 
-    async def notify(self, store: RunStore, run: Run) -> None:
-        """Email the approver of each pending Approval of `run` not emailed yet."""
-        emailed = {
-            e.detail.get("token")
-            for e in await store.list_audit_events(run.id)
-            if e.kind == "approval.emailed"
-        }
-        for approval in await store.list_approvals(run.id):
-            if approval.decision == "pending" and approval.token not in emailed:
-                await self._send(store, run, approval)
-
-    async def _send(self, store: RunStore, run: Run, approval: Approval) -> None:
+    async def send(self, store: RunStore, run: Run, approval: Approval) -> bool:
+        """Email the approver of `approval`; True when the email was sent."""
         detail = {"step": approval.step, "tool": approval.tool, "token": approval.token,
                   "approver": approval.approver, "expires_at": approval.expires_at}  # fmt: skip
         try:
@@ -73,6 +66,7 @@ class ApprovalMail:
             detail=detail,
         )  # fmt: skip
         await store.append_audit_event(event)
+        return kind == "approval.emailed"
 
     def _message(self, run: Run, approval: Approval) -> EmailMessage:
         args = json.dumps(approval.args, indent=2, sort_keys=True, default=str)

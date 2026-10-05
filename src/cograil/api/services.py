@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from cograil.api.approval_mail import ApprovalMail
+from cograil.api.approver_notice import ApproverChannel, notify_approvers
 from cograil.api.schemas import PendingApproval, RunOutcome, RunSummary
 from cograil.api.sse import Emit
 from cograil.audience import check_audience
@@ -65,10 +66,12 @@ class Services:
         approval_mail: ApprovalMail | None = None,
     ) -> None:
         self.approval_mail = approval_mail
+        # Every way an approver can be reached; the Slack router adds its direct message.
+        self.approver_channels: list[ApproverChannel] = [approval_mail] if approval_mail else []
         self.workspace = workspace
         self.path = path
         self.store = store
-        self.tasks: set[asyncio.Task[None]] = set()
+        self.tasks: set[asyncio.Task[Any]] = set()
         self._classifier = classifier
         self._provider_for = provider_for
         self._open_registry = open_registry
@@ -144,14 +147,23 @@ class Services:
             emit("run", {"run_id": run.id})
             await store.append_audit_event(_classified(run, routing))
             ended = await runner.run(run.id, protocol)
-            await self._email_approvers(ended)
-            emit("done", (await self.outcome(ended)).model_dump(mode="json"))
+        ended = await self.notify_approvers(ended)
+        emit("done", (await self.outcome(ended)).model_dump(mode="json"))
 
     async def scheduled(self, colleague: Colleague, schedule: Schedule) -> Run:
         """Start and run the Run a Schedule asks for, as the system principal it names.
 
         The audience check and the Tool gates apply as for a chat Run; a write waits for an
-        Approval. The Run starts with a `schedule.fired` AuditEvent naming the Schedule."""
+        Approval. The Run starts with a `schedule.fired` AuditEvent naming the Schedule.
+
+        The Run is its own task, kept in `tasks` and shielded from the job: stopping the
+        scheduler cancels the job, but shutdown still lets the Run finish before the store goes."""
+        task = asyncio.ensure_future(self._scheduled(colleague, schedule))
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+        return await asyncio.shield(task)
+
+    async def _scheduled(self, colleague: Colleague, schedule: Schedule) -> Run:
         protocol, colleague = self.pick(schedule.protocol, colleague.name)
         principal = scheduled_principal(self.workspace, schedule)
         check_audience(self.workspace, colleague, protocol, principal)
@@ -166,8 +178,7 @@ class Services:
             await store.create_run(run)
             await store.append_audit_event(_fired(run, schedule))
             ended = await runner.run(run.id, protocol)
-            await self._email_approvers(ended)
-            return ended
+        return await self.notify_approvers(ended)
 
     async def _route(
         self, principal: Principal, message: str, emit: Emit
@@ -221,7 +232,7 @@ class Services:
             ended = await runner.resume(
                 token, protocol, decider=decider, decision=decision, via=via
             )
-        await self._email_approvers(ended)
+        ended = await self.notify_approvers(ended)
         return await self.outcome(ended, approver=decider)
 
     def _pick_for(self, run: Run) -> tuple[Protocol, Colleague]:
@@ -234,9 +245,19 @@ class Services:
             )
         return protocol, colleague
 
-    async def _email_approvers(self, run: Run) -> None:
-        if self.approval_mail is not None and run.status is RunStatus.awaiting_approval:
-            await self.approval_mail.notify(self.store, run)
+    async def notify_approvers(self, run: Run) -> Run:
+        """Tell the approver of a Run paused at a Gate, on every channel that can reach them.
+
+        A Run no channel could tell its approver of is recorded (`approval.undeliverable`);
+        when it has no one watching it (a scheduled Run, no chat), it also escalates to the
+        Colleague's escalation_contact rather than waiting out its expiry. Returns the Run as
+        it stands."""
+        unreached = await notify_approvers(self.store, self.approver_channels, run)
+        if not unreached or run.trigger_kind != "schedule":
+            return run
+        protocol, colleague = self._pick_for(run)
+        async with self.runner(protocol, colleague, _ignore) as (runner, _):
+            return await runner.undeliverable(unreached[0].token)
 
     async def outcome(self, run: Run, *, approver: str | None = None) -> RunOutcome:
         """Where a Run stands; `approver` limits `awaiting` to that approver's own gates.

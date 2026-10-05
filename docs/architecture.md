@@ -192,7 +192,7 @@ holds the Schedules:
 schedules:
   - name: nightly-digest
     protocol: weekly_digest      # one of the Colleague's protocols
-    cron: "0 2 * * 1-5"          # five fields, UTC; 1-5 is Monday to Friday, as in cron
+    cron: "0 2 * * 1-5"          # five fields, UTC; 1-5 is Monday to Friday, 0 and 7 Sunday
     principal: digest-bot        # a `kind: system` principal in principals.yaml
     audience: all-employees      # an Audience in audiences.yaml; there is no default
     message: Send the weekly digest
@@ -202,12 +202,20 @@ schedules:
   `Scheduled execution: allowed`, whose cron is invalid, whose principal is not a `system`
   principal, or whose audience is not in `audiences.yaml`. A system principal takes its groups
   from the Schedule's audience, so it carries none of its own.
+- The weekday field means what it means in cron: lists, ranges (`0-4`, `5-7`, `mon-sun`) and
+  steps (`*/2`), with 0 and 7 both Sunday. A cron that restricts both the day of month and the
+  weekday (`0 9 1 * mon`) fires in cron when either matches, which the scheduler cannot do, so
+  the workspace does not load: restrict the day of month or the weekday, not both.
 - `cograil.scheduler.build_scheduler` puts one APScheduler job per Schedule on the event loop;
   the web service starts it with the app and stops it at shutdown. Each tick calls
   `Services.scheduled`, which runs the audience check, writes a `schedule.fired` AuditEvent
   with the system principal and starts the Run with `Trigger(kind="schedule")`.
 - The Tool gates are unchanged: a scheduled Run that reaches a write Tool pauses for an
-  Approval like any other Run. A tick that raises a `CograilError` is logged as `schedule.failed`.
+  Approval like any other Run, and `Services.notify_approvers` tells its approver by email and
+  by Slack direct message, whichever are set up. If neither can reach the approver the Run
+  records `approval.undeliverable` and escalates to the Colleague's escalation contact (#263).
+  A tick that raises a `CograilError` is logged as `schedule.failed`. A scheduled Run is kept
+  in `Services.tasks`, so shutdown lets it finish before the store closes.
 - Each service process schedules its own jobs, so run one process per workspace.
 
 ## Not built yet

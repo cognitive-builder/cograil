@@ -26,8 +26,8 @@ from cograil.observability import log_event
 
 CHANNEL = "schedule"
 MISFIRE_GRACE_SECONDS = 60  # a tick the loop was too busy to start within a minute is dropped
-_WEEKDAYS = ("sun", "mon", "tue", "wed", "thu", "fri", "sat", "sun")  # cron: 0 and 7 are Sunday
-_WEEKDAY_NUMBER = re.compile(r"(?<![/\d])[0-7](?!\d)")
+_WEEKDAYS = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")  # cron numbers them from 0
+_WEEKDAY_BOUND = re.compile(r"^(?:[0-7]|sun|mon|tue|wed|thu|fri|sat)$")
 
 type Fire = Callable[[Colleague, Schedule], Awaitable[object]]
 
@@ -36,11 +36,44 @@ def cron_trigger(cron: str) -> CronTrigger:
     """The APScheduler trigger for a five-field cron in UTC; ValueError if it is not one.
 
     Weekday numbers mean what they mean in cron (1 is Monday, 0 and 7 Sunday); APScheduler 3
-    counts from Monday as 0, so they are written as names before it reads them."""
+    counts from Monday as 0, so the weekday field is written as the list of day names it
+    stands for. A cron that restricts both the day of month and the weekday fires in cron when
+    either matches, which APScheduler cannot do, so it is refused."""
     fields = cron.split()
     if len(fields) == 5:
-        fields[4] = _WEEKDAY_NUMBER.sub(lambda m: _WEEKDAYS[int(m.group())], fields[4])
+        if not fields[2].startswith("*") and not fields[4].startswith("*"):
+            raise ValueError("restrict the day of month or the weekday, not both")
+        fields[4] = _weekday_names(fields[4])
     return CronTrigger.from_crontab(" ".join(fields), timezone=UTC)
+
+
+def _weekday_names(field: str) -> str:
+    """A cron weekday field as the names of its days, Sunday first; `*` is left as it is."""
+    if field == "*":
+        return field
+    days: set[int] = set()
+    for part in field.lower().split(","):
+        bounds, slash, step = part.partition("/")
+        first, dash, last = bounds.partition("-")
+        if bounds == "*":
+            first, last = "0", "6"
+        elif not dash:
+            last = "6" if slash else first
+        by = int(step) if step.isdigit() else 0
+        if not (_WEEKDAY_BOUND.match(first) and _WEEKDAY_BOUND.match(last)) or (slash and by < 1):
+            raise ValueError(f"unknown weekday {part!r}")
+        low, high = _weekday(first), _weekday(last, ends_range=bool(dash))
+        if low > high:
+            raise ValueError(f"unknown weekday {part!r}")
+        days.update(day % 7 for day in range(low, high + 1, by or 1))
+    return ",".join(_WEEKDAYS[day] for day in sorted(days))
+
+
+def _weekday(bound: str, *, ends_range: bool = False) -> int:
+    """0 to 7 for a weekday number or name; `sun` is 0, or 7 at the end of a range (`mon-sun`)."""
+    if bound == "sun" and ends_range:
+        return 7
+    return int(bound) if bound.isdigit() else _WEEKDAYS.index(bound)
 
 
 def schedules(workspace: Workspace) -> list[tuple[Colleague, Schedule]]:

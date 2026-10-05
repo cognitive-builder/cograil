@@ -23,11 +23,20 @@ The email names who asked, the Tool and its arguments, and holds one link: `/app
 - **It expires with the Approval.** The expiry is `approvals.timeout_hours` in `harness.yaml` (72 by default). A link used after that escalates the Run to the Colleague's escalation contact and answers 410.
 - **The Runner's rules still apply.** The Run's own principal can never be the approver, and an approval of a Run started under another harness or tool pack is refused.
 
+## Who Is Told
+
+Whenever a Run stops at a Gate, whatever started it (the web chat, Slack or a Schedule), the service tells the approver on every channel that can reach them: the email above when mail is configured, and a Slack direct message when Slack is on and the approver has a `slack_id` (see `docs/slack.md`). Each Approval is sent once per channel.
+
+If no channel can reach the approver, the Run records `approval.undeliverable`. A Run with nobody watching it, which is a scheduled Run, is then escalated to the Colleague's escalation contact at once instead of waiting out the expiry: the Approval is recorded as expired and `run.escalated` carries `reason: approval_undeliverable`. A chat Run is not escalated, because its requester sees the pending Approval and can pass it on.
+
 ## What Is Audited
 
 | AuditEvent | When | Detail |
 | --- | --- | --- |
 | `approval.emailed` | The email was sent. | `approver`, `token`, `step`, `tool`, `expires_at`. Never the link. |
-| `approval.email_failed` | The provider refused it. The Run is not failed, and the approver can still use the web card. | The same, plus `error`. |
+| `approval.email_failed` | The provider refused it. The Run is not failed, and the approver can still use the web card. If no other channel reached the approver, `approval.undeliverable` follows. | The same, plus `error`. |
+| `approval.slack_sent` | The Slack direct message was sent. | `approver`, `token`, `step`, `tool`. |
+| `approval.slack_failed` | Slack refused it (a missing `im:write` scope, a deactivated member). | The same, plus `error`, the error's type. |
+| `approval.undeliverable` | No channel reached the approver. The principal is the Run's. | `approver`, `token`, `step`, `tool`, `tried`, the channels that were offered the Approval. |
 | `gate.resumed` | The decision was to approve. | `decided_by` is the approver and `via` names the way it was decided: `email_link` or `slack`. A decision in the web chat has no `via`. |
-| `run.escalated` | The decision was to decline. An Approval decided past its deadline is recorded as an expiry, not a decline, and escalates the same way. | `reason` is `approval_declined` or `approval_expired`, with the same `decided_by` and `via`. |
+| `run.escalated` | The decision was to decline. An Approval decided past its deadline is recorded as an expiry, not a decline, and escalates the same way. | `reason` is `approval_declined` or `approval_expired`, with the same `decided_by` and `via`; or `approval_undeliverable` when nobody could be told about an Approval of a scheduled Run (see above). |
