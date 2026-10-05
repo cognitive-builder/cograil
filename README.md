@@ -143,7 +143,7 @@ Each one is an ADR in [`docs/adr/`](docs/adr/README.md).
 
 ## How the backlog gets built
 
-Work is GitHub issues. An autopilot on the maintainer's Mac starts one task at a time: Claude cloud sessions for lanes 1 and 2, and a GitHub Actions run on GLM for lane 3. Each session follows the same implement-issue command, GitHub merges green pull requests on its own, and a person steps in only for tasks labelled `needs:human`. See `docs/adr/0015-autopilot.md`.
+Work is GitHub issues. An autopilot on the maintainer's Mac starts one task at a time: Claude cloud sessions for lanes 1 and 2, and a GitHub Actions run on GLM for lane 3. Each session follows the same implement-issue command, a pull request merges once its two required checks are green, and a person steps in only for tasks labelled `needs:human`. See `docs/adr/0015-autopilot.md`.
 
 ## Limits
 
