@@ -1,0 +1,19 @@
+# Every secret is the NAME of an environment variable; no value is stored here (ADR 0004).
+connections:
+  - name: jira
+    auth: oauth_client_credentials
+    # Placeholder cloud id: use your own site's id.
+    base_url: https://api.atlassian.com/ex/jira/00000000-0000-4000-8000-000000000001
+    token_url: https://auth.atlassian.com/oauth/token
+    scopes: [read:jira-work, write:jira-work]
+    secret_env:
+      client_id: JIRA_CLIENT_ID
+      client_secret: JIRA_CLIENT_SECRET
+  - name: notify
+    auth: oauth_client_credentials
+    base_url: https://notify.example.com/api
+    token_url: https://notify.example.com/oauth/token
+    scopes: [messages.send]
+    secret_env:
+      client_id: NOTIFY_CLIENT_ID
+      client_secret: NOTIFY_CLIENT_SECRET

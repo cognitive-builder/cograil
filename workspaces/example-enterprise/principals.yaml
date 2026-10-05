@@ -1,0 +1,11 @@
+# Fictional people. `oid` is the Entra Object ID, required for Entra sign-in (docs/auth.md).
+principals:
+  - id: alice@example.com
+    oid: 00000000-0000-4000-8000-00000000a11c
+    groups: [all-employees]
+  - id: fiona@example.com
+    oid: 00000000-0000-4000-8000-00000000f10a
+    groups: [all-employees, finance]
+  - id: ivan@example.com
+    oid: 00000000-0000-4000-8000-00000000b10b
+    groups: [all-employees, it-staff]

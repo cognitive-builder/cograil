@@ -1,0 +1,12 @@
+# `claims` are Entra group object ids (docs/auth.md, "Setting Up Entra ID"). The ids below are
+# placeholders: replace them with the Object IDs of your own groups.
+audiences:
+  - name: all-employees
+    groups: [all-employees]
+    claims: ["00000000-0000-4000-8000-0000000000a1"]
+  - name: finance-team
+    groups: [finance]
+    claims: ["00000000-0000-4000-8000-0000000000f1"]
+  - name: it-staff
+    groups: [it-staff]
+    claims: ["00000000-0000-4000-8000-0000000000b1"]

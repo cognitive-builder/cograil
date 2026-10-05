@@ -1,0 +1,57 @@
+tools:
+  - name: jira.search_issues
+    kind: rest
+    scope: read
+    connection: jira
+    description: Search Jira issues with a JQL query.
+    args_schema: {type: object, properties: {jql: {type: string}}, required: [jql]}
+    rest:
+      method: GET
+      path: /rest/api/3/search/jql
+      max_attempts: 3
+  - name: jira.get_issue
+    kind: rest
+    scope: read
+    connection: jira
+    description: One Jira issue by key, for example IT-123.
+    args_schema: {type: object, properties: {issue_key: {type: string}}, required: [issue_key]}
+    rest:
+      method: GET
+      path: /rest/api/3/issue/{issue_key}
+  - name: jira.create_issue
+    kind: rest
+    scope: write
+    confirm_before_write: true
+    connection: jira
+    description: Create a Jira issue in a project.
+    args_schema:
+      type: object
+      properties:
+        fields: {type: object, description: Jira issue fields, including project, summary and issuetype.}
+      required: [fields]
+    rest:
+      method: POST
+      path: /rest/api/3/issue
+      max_attempts: 1  # not idempotent: a retry could file the issue twice
+  # A real notifier writes outside the process, so it is gated. (The mock in example-smb is not.)
+  - name: notify.send
+    kind: rest
+    scope: write
+    confirm_before_write: true
+    connection: notify
+    description: Send a message to a principal or the escalation contact.
+    args_schema: {type: object, properties: {to: {type: string}, message: {type: string}}, required: [to, message]}
+    rest:
+      method: POST
+      path: /messages
+      max_attempts: 1
+  - name: knowledge.search
+    kind: knowledge
+    scope: read
+    description: Search the SharePoint-style libraries with ACL pre-filter.
+    args_schema: {type: object, properties: {query: {type: string}}, required: [query]}
+  - name: decide.ticket_priority
+    kind: decision
+    scope: read
+    description: Ticket priority from impact and urgency (decisions/ticket_priority.yaml).
+    args_schema: {type: object, properties: {impact: {type: string}, urgency: {type: string}}, required: [impact, urgency]}
