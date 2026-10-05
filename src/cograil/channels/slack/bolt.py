@@ -17,6 +17,7 @@ from slack_bolt.async_app import AsyncApp
 from slack_sdk.web.async_client import AsyncWebClient
 
 from cograil.api.services import Services
+from cograil.channels.slack.approver import SlackApprover
 from cograil.channels.slack.blocks import APPROVE_ACTION, DECLINE_ACTION, clip
 from cograil.channels.slack.channel import ButtonDecision, Incoming, SlackChannel
 from cograil.channels.slack.settings import SlackSettings
@@ -141,8 +142,11 @@ def build_bolt_app(settings: SlackSettings, channel: SlackChannel) -> AsyncApp:
 
 
 def slack_router(settings: SlackSettings, services: Services) -> APIRouter:
-    """The route Slack posts events and button clicks to."""
-    handler = AsyncSlackRequestHandler(build_bolt_app(settings, SlackChannel(services)))
+    """The route Slack posts events and button clicks to. It also adds the direct message to the
+    ways `Services.notify_approvers` reaches an approver, for Runs that start outside Slack."""
+    bolt = build_bolt_app(settings, SlackChannel(services))
+    services.approver_channels.append(SlackApprover(services.workspace, BoltPoster(bolt.client)))
+    handler = AsyncSlackRequestHandler(bolt)
     router = APIRouter(tags=["slack"])
 
     @router.post(EVENTS_PATH, include_in_schema=False)

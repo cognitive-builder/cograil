@@ -25,6 +25,7 @@ from cograil.channels.slack import (
     principal_for_slack_user,
     slack_settings,
 )
+from cograil.channels.slack.approver import SlackApprover
 from cograil.channels.slack.blocks import APPROVE_ACTION, DECLINE_ACTION, MAX_TEXT, args_text
 from cograil.channels.slack.bolt import (
     BoltPoster,
@@ -45,7 +46,10 @@ ALICE_ID = "alice@example.com"
 
 
 class FakePoster:
+    newest: "FakePoster"
+
     def __init__(self) -> None:
+        FakePoster.newest = self
         self.posts: list[dict[str, Any]] = []
         self.whispers: list[dict[str, Any]] = []
         self.replaced: list[dict[str, Any]] = []
@@ -108,8 +112,30 @@ def services(env: Env) -> Services:
     return services
 
 
+class NewestPoster:
+    """What the approver channel of `Services` posts through: the test's own FakePoster, the
+    newest one made, standing in for the Bolt client that slack_router gives it."""
+
+    async def post(
+        self,
+        channel: str,
+        thread_ts: str | None,
+        text: str,
+        blocks: list[dict[str, Any]] | None = None,
+    ) -> None:
+        await FakePoster.newest.post(channel, thread_ts, text, blocks)
+
+    async def open_dm(self, user: str) -> str:
+        return await FakePoster.newest.open_dm(user)
+
+    async def whisper(self, channel: str, thread_ts: str, user: str, text: str) -> None: ...
+
+    async def replace(self, channel: str, ts: str, text: str) -> None: ...
+
+
 @pytest.fixture
 def channel(services: Services) -> SlackChannel:
+    services.approver_channels.append(SlackApprover(services.workspace, NewestPoster()))
     return SlackChannel(services)
 
 

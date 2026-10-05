@@ -70,6 +70,7 @@ GateAuditKind = Literal[
 EscalationReason = Literal[
     "approval_declined",
     "approval_expired",
+    "approval_undeliverable",
     "approver_is_principal",
     "failure_threshold",
     "loop_budget_exceeded",
@@ -246,6 +247,13 @@ class Gates:
             return run
         return await self._decide(run, approval, "expired", None)
 
+    async def undeliverable(self, token: str) -> Run:
+        """Escalate the Run paused on this Approval, which no channel could tell its approver
+        about: nobody would decide it, so it goes to the escalation_contact now rather than at
+        expiry. The Approval is recorded as expired, so it cannot be decided afterwards."""
+        approval, run = await self._paused_on(token)
+        return await self._decide(run, approval, "expired", None, reason="approval_undeliverable")
+
     async def escalate(self, run: Run, reason: EscalationReason, detail: dict[str, Any]) -> Run:
         """Stop the Run and hand it to the Colleague's escalation_contact."""
         run = await self._save(run, status=RunStatus.escalated)
@@ -294,8 +302,11 @@ class Gates:
         decision: Literal["approved", "declined", "expired"],
         decider: str | None,
         via: str | None = None,
+        *,
+        reason: EscalationReason | None = None,
     ) -> Run:
-        """`decider` is None when the Approval timed out with nobody deciding it."""
+        """`decider` is None when the Approval timed out with nobody deciding it; `reason` names
+        why an undecided Approval was closed when that is not the timeout."""
         approved = decision == "approved"
         status = RunStatus.running if approved else RunStatus.escalated
         run = run.model_copy(update={"status": status, "updated_at": self._clock()})
@@ -305,9 +316,7 @@ class Gates:
         detail = {**_about(approval), "approver": approval.approver, "decided_by": decider}
         if via is not None:
             detail["via"] = via
-        reason: EscalationReason = (
-            "approval_declined" if decision == "declined" else "approval_expired"
-        )
+        reason = reason or ("approval_declined" if decision == "declined" else "approval_expired")
         event = (
             self._event(run, "gate.resumed", detail)
             if approved

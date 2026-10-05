@@ -44,8 +44,9 @@ id and starts nothing.
 - A message in the thread of a Run continues it. If the Run waits at a gate the reply says whom
   it waits for; if it is still working, or over, the reply says so. A thread starts a second Run
   only if its Run is no longer among the requester's 50 newest.
-- A gate's prompt goes to its **approver**, not to the requester's thread. The bot opens a direct
-  message with the approver (the approver's `slack_id` in `principals.yaml`, the same map
+- A gate's prompt goes to its **approver**, not to the requester's thread. For every Run that
+  stops at a gate, whether it started in Slack, in the web chat or on a Schedule, the bot opens a
+  direct message with the approver (the approver's `slack_id` in `principals.yaml`, the same map
   reversed) and posts the prompt there: who asked, the Tool, the Step, the call's arguments as
   the approval page shows them (clipped to 1000 characters after escaping, with a pointer to the
   page for the rest), and **Approve** and **Decline** buttons. The Run's thread gets a line,
