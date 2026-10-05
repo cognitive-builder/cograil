@@ -173,12 +173,15 @@ An attacker wants one of them from:
     - Patterns: emails, bearer and Basic credentials, provider keys, JWTs, URL userinfo, connection strings, and `name=value` pairs whose name ends in a secret-like word, such as `access_token`, `x-api-key`, `private_key` or `sig`.
     - Then the small tier, for what the patterns miss.
 6. **Logs and traces.** Spans carry no prompts, arguments or outputs, and an exception is recorded by its type only. Errors shown to a client are generic. The detail goes to the log, redacted.
-7. **CI.** No workflow runs on `pull_request_target`. Workflows that use secrets skip pull requests from forks. `@claude` answers only owners, members and collaborators.
+7. **CI.** No workflow runs on `pull_request_target`. Workflows that use secrets are gated in one of three ways:
+    - The review and auto-merge jobs run only for branches of this repository.
+    - The `@claude` jobs answer only owners, members and collaborators.
+    - The deploy and the lane 3 job run only on a tag or when started by hand.
 
 ### Known Limits
 
 - **Successful Tool output is stored raw.** Arguments, results and Step outputs are kept on the Run as the audit trail of what happened, and only error text is redacted. The Run's own principal can read them through `GET /runs/{id}`. A Tool that returns a secret puts that secret in the Run and in the model's context. Do not build Tools that return credentials.
-- **Pattern redaction is a heuristic.** Without a configured model, as in a CLI or eval run without a key, only the patterns apply.
+- **Pattern redaction is a heuristic.** Without a configured model, as in a CLI or eval run without a key, only the patterns apply. The patterns miss a camelCase name (`accessToken=`) and a name with letters glued in front (`mytoken=`). They also mask some harmless text, for example the word after `Signature:`.
 - **MCP servers cannot take credentials from a Connection yet,** so a token can end up in `tools.yaml`. Tracked in #274.
 - **The length check cannot tell a placeholder from a secret.** The placeholder in `sso.env.example` is long enough to pass. Generate the secret as `docs/auth.md` shows.
 - **`http://` base URLs are allowed** for local mocks. Use `https://` for anything that carries a credential.
