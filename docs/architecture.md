@@ -207,7 +207,10 @@ schedules:
   `Services.scheduled`, which runs the audience check, writes a `schedule.fired` AuditEvent
   with the system principal and starts the Run with `Trigger(kind="schedule")`.
 - The Tool gates are unchanged: a scheduled Run that reaches a write Tool pauses for an
-  Approval like any other Run. A tick that raises a `CograilError` is logged as `schedule.failed`.
+  Approval like any other Run, and `Services.notify_approvers` tells its approver by email and
+  by Slack direct message, whichever are set up. If neither can reach the approver the Run
+  records `approval.undeliverable` and escalates to the Colleague's escalation contact (#263).
+  A tick that raises a `CograilError` is logged as `schedule.failed`.
 - Each service process schedules its own jobs, so run one process per workspace.
 
 ## Not built yet

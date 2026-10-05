@@ -191,6 +191,10 @@ class Runner:
         """Escalate the Run paused on this Approval if it timed out; for a scheduler."""
         return await self._gates.expire(token)
 
+    async def undeliverable(self, token: str) -> Run:
+        """Escalate the Run paused on this Approval, which nothing could tell its approver of."""
+        return await self._gates.undeliverable(token)
+
     async def _execute(self, run: Run, protocol: Protocol) -> Run:
         graph = compile_protocol(protocol, lambda step: self._node(step, protocol))
         with run_span(run, protocol.name):

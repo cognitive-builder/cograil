@@ -83,6 +83,26 @@ def test_a_failed_email_is_audited_and_does_not_fail_the_run(tmp_path: Path) -> 
     assert kinds(env, done["run"]["id"]).count("approval.email_failed") == 1
 
 
+def test_an_approval_is_emailed_once_however_often_the_approvers_are_notified(
+    env: Env, outbox: Outbox
+) -> None:
+    done = env.paused_run()
+    services = env.app.state.cograil_services
+    run = stored(env, done["run"]["id"])
+    assert asyncio.run(services.notify_approvers(run)).status is RunStatus.awaiting_approval
+    assert len(outbox.sent) == 1
+
+
+def test_a_chat_run_with_no_channel_to_its_approver_is_recorded_not_escalated(
+    tmp_path: Path,
+) -> None:
+    env = Env(tmp_path)  # no mail, no Slack: the requester sees the pending approval in the chat
+    done = env.paused_run()
+    run_id = done["run"]["id"]
+    assert done["run"]["status"] == "awaiting_approval"
+    assert kinds(env, run_id).count("approval.undeliverable") == 1
+
+
 def test_opening_the_link_shows_the_call_and_decides_nothing(env: Env, outbox: Outbox) -> None:
     done = env.paused_run()
     page = env.client.get(local(link_of(outbox.sent[0])))
