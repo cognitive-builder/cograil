@@ -7,3 +7,6 @@ knowledge:
   - name: finance-site
     path: knowledge/sharepoint/finance
     acl_groups: [finance]
+  - name: hr-site
+    path: knowledge/sharepoint/hr
+    acl_groups: [all-employees]

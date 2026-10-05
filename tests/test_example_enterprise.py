@@ -29,8 +29,8 @@ def _env_example() -> dict[str, str]:
     return {name: value for name, value in pairs}
 
 
-def test_two_colleagues_each_with_a_protocol(workspace: Workspace) -> None:
-    assert [c.name for c in workspace.colleagues] == ["finn", "ivy"]
+def test_three_colleagues_each_with_a_protocol(workspace: Workspace) -> None:
+    assert [c.name for c in workspace.colleagues] == ["finn", "hazel", "ivy"]
     protocols = {p.name for p in workspace.protocols}
     assert all(set(c.protocols) <= protocols for c in workspace.colleagues)
     audiences = {a.name for a in workspace.audiences}
@@ -67,7 +67,7 @@ def test_jira_tools_use_the_rest_kind_and_every_write_is_gated(workspace: Worksp
     jira = [t for name, t in tools.items() if name.startswith("jira.")]
     assert jira and all(t.kind == "rest" and t.connection == "jira" for t in jira)
     writes = [t for t in tools.values() if t.scope == "write"]
-    assert {t.name for t in writes} == {"jira.create_issue", "notify.send"}
+    assert {t.name for t in writes} == {"hris.submit_leave", "jira.create_issue", "notify.send"}
     assert all(t.confirm_before_write for t in writes)  # issue comment: a real notify is gated
 
 

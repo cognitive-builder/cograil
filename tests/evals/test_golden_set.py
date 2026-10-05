@@ -34,9 +34,9 @@ def offline(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
 
-def test_the_golden_set_holds_25_cases_covering_every_outcome() -> None:
-    assert len(CASES) == 25
-    assert {c.protocol for c in CASES} == {"leave_request", "policy_question"}
+def test_the_golden_set_holds_at_least_25_cases_covering_every_outcome() -> None:
+    assert len(CASES) >= 25
+    assert {c.protocol for c in CASES} == {"leave_request", "policy_question", "it_access_request"}
     outcomes = {c.expect.status for c in CASES}
     assert outcomes == {"completed", "awaiting_approval", "escalated", "failed", "denied"}
     assert any(c.expect.gates for c in CASES) and any(c.smoke for c in CASES)
@@ -92,7 +92,7 @@ def test_eval_runs_every_case_on_the_fake_model_without_cograil_live(
     monkeypatch.chdir(ROOT)  # the default golden set is tests/evals/<workspace name>.jsonl
     result = runner.invoke(app, ["eval", "workspaces/example-smb"])
     assert result.exit_code == 0, result.output
-    assert "level fake, 25 cases" in result.output and "passed 25/25" in result.output
+    assert "level fake, 31 cases" in result.output and "passed 31/31" in result.output
 
 
 class LiveStandIn:
