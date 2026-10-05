@@ -163,7 +163,74 @@ def test_an_expired_link_escalates_the_run(env: Env, outbox: Outbox) -> None:
     assert response.status_code == 410
     assert stored(env, run_id).status is RunStatus.escalated
     assert audit(env, run_id, "run.escalated")[0].detail["reason"] == "approval_expired"
-    assert env.client.get(url).status_code == 409  # escalated already; nothing more to decide
+    assert env.client.get(url).status_code == 410  # escalated already; nothing more to decide
+
+
+def overdue_link(env: Env) -> tuple[str, str]:
+    """Put the paused Run's Approval past its expiry; its run id and the link signed for it."""
+    run_id = env.paused_run()["run"]["id"]
+    return run_id, reissued(env, expires_at=datetime.now(UTC) - timedelta(minutes=1))
+
+
+def snapshot(env: Env, run_id: str) -> tuple[Any, Any, Any]:
+    token = next(iter(env.store._approvals))  # type: ignore[attr-defined]
+    return (
+        stored(env, run_id),
+        asyncio.run(env.store.get_approval(token)),
+        asyncio.run(env.store.list_audit_events(run_id)),
+    )
+
+
+def test_a_get_of_an_expired_link_changes_nothing(env: Env) -> None:
+    run_id, url = overdue_link(env)
+    before = snapshot(env, run_id)
+    assert env.client.get(url).status_code == 410
+    assert snapshot(env, run_id) == before
+    assert before[0].status is RunStatus.awaiting_approval
+
+
+def test_the_sweep_escalates_an_overdue_approval_without_anyone_opening_the_link(
+    env: Env,
+) -> None:
+    run_id, url = overdue_link(env)
+    services = env.app.state.cograil_services
+    token = next(iter(env.store._approvals))  # type: ignore[attr-defined]
+    assert asyncio.run(services.sweep_overdue_approvals()) == [token]
+    assert stored(env, run_id).status is RunStatus.escalated
+    assert asyncio.run(env.store.get_approval(token)).decision == "expired"
+    (event,) = audit(env, run_id, "run.escalated")
+    assert event.detail["reason"] == "approval_expired"
+    assert asyncio.run(services.sweep_overdue_approvals()) == []  # nothing left to escalate
+    assert env.client.get(url).status_code == 410  # the link now says it expired, not 409
+
+
+def test_the_sweep_leaves_an_approval_that_is_not_yet_due(env: Env) -> None:
+    run_id = env.paused_run()["run"]["id"]
+    assert asyncio.run(env.app.state.cograil_services.sweep_overdue_approvals()) == []
+    assert stored(env, run_id).status is RunStatus.awaiting_approval
+
+
+def test_the_sweep_leaves_another_workspaces_approval_alone(env: Env) -> None:
+    run_id, _ = overdue_link(env)
+    foreign = stored(env, run_id).model_copy(update={"workspace": "elsewhere"})
+    env.store._runs[run_id] = foreign  # type: ignore[attr-defined]
+    assert asyncio.run(env.app.state.cograil_services.sweep_overdue_approvals()) == []
+    assert stored(env, run_id).status is RunStatus.awaiting_approval
+
+
+def test_the_app_sweeps_at_startup_and_stops_the_sweep_at_shutdown(env: Env) -> None:
+    run_id, _ = overdue_link(env)
+
+    async def start_and_stop() -> Any:
+        async with env.app.router.lifespan_context(env.app):
+            sweeper = env.app.state.cograil_sweeper
+            await asyncio.sleep(0.2)  # the first sweep runs as the app starts
+            assert not sweeper.done()
+        return sweeper
+
+    sweeper = asyncio.run(start_and_stop())
+    assert sweeper.cancelled()
+    assert stored(env, run_id).status is RunStatus.escalated
 
 
 def test_the_link_routes_are_off_without_approval_mail(tmp_path: Path) -> None:

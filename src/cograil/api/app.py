@@ -24,6 +24,7 @@ from cograil.api.auth import install_auth
 from cograil.api.auth_settings import AuthSettings
 from cograil.api.services import ProviderFactory, RegistryOpener, Services
 from cograil.approval_links import hide_link_queries
+from cograil.approval_sweep import sweep_forever
 from cograil.channels import web
 from cograil.channels.slack import SlackSettings
 from cograil.domain import Workspace
@@ -62,7 +63,8 @@ def create_app(
     Protocol's Runs use, `redactor` redacts the opt-in message snippet log, `approval_mail`
     emails approvers a signed link (without it the link routes answer 404), `slack` turns on
     POST /slack/events (cograil.channels.slack), and `close` runs at shutdown. The Colleagues'
-    Schedules run while the app is up (cograil.scheduler).
+    Schedules run while the app is up (cograil.scheduler), and so does the sweep that escalates
+    overdue Approvals (cograil.approval_sweep).
     """
 
     @asynccontextmanager
@@ -71,7 +73,11 @@ def create_app(
         _app.state.cograil_scheduler = scheduler
         if scheduler is not None:
             scheduler.start()
+        sweeper = asyncio.ensure_future(sweep_forever(services.sweep_overdue_approvals))
+        _app.state.cograil_sweeper = sweeper
         yield
+        sweeper.cancel()
+        await asyncio.gather(sweeper, return_exceptions=True)
         if scheduler is not None:
             scheduler.shutdown(wait=False)
         # A Run is a detached task; let the ones in flight finish before the store goes.

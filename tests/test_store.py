@@ -344,6 +344,41 @@ async def test_approval_is_spent_once_even_by_concurrent_spends(store: RunStore)
         await store.spend_approval("missing", T0, run=run)
 
 
+async def test_overdue_approvals_are_the_pending_ones_past_their_expiry(store: RunStore) -> None:
+    """Issue #282: the sweep finds them with one read, across Runs, and writes nothing."""
+    run = await stored_run(store)
+    tag = uuid.uuid4().hex
+
+    def approval(name: str, expires_at: datetime | None) -> Approval:
+        return Approval(token=f"{name}-{tag}", run_id=run.id, step=1, tool="hris.book", args={},
+                        approver="bob", expires_at=expires_at)  # fmt: skip
+
+    now = T0 + timedelta(hours=2)
+    made = {
+        "due": approval("due", now - timedelta(minutes=1)),
+        "exact": approval("exact", now),
+        "later": approval("later", now + timedelta(minutes=1)),
+        "never": approval("never", None),
+        "decided": approval("decided", now - timedelta(hours=1)),
+    }
+    for one in made.values():
+        await store.create_approval(one, run=run)
+    await store.decide_approval(made["decided"].token, "declined", T0, run=run)
+
+    elsewhere = make_run().model_copy(update={"workspace": "another-workspace"})
+    await store.create_run(elsewhere)
+    foreign = Approval(token=f"foreign-{tag}", run_id=elsewhere.id, step=1, tool="hris.book",
+                       args={}, approver="bob", expires_at=now - timedelta(minutes=1))  # fmt: skip
+    await store.create_approval(foreign, run=elsewhere)
+
+    found = await store.list_overdue_approvals("example-smb", now)
+    assert {a.token for a in found if a.token.endswith(tag)} == {
+        made["due"].token,
+        made["exact"].token,
+    }  # not the later, never-expiring, decided or other workspace's
+    assert (await store.get_approval(made["due"].token)).decision == "pending"
+
+
 async def test_an_approval_is_created_only_by_the_execution_holding_the_claim(
     store: RunStore,
 ) -> None:
