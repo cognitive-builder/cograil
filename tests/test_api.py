@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from cograil.api.app import create_app
 from cograil.api.auth_settings import auth_settings
 from cograil.api.wiring import app_from_env, open_registry
+from cograil.approval_links import ACCESS_LOGGER, LinkQueryFilter
 from cograil.audience import resolve_principal
 from cograil.cost import RunUsage, charge, run_usage
 from cograil.domain import (
@@ -642,6 +643,12 @@ def test_health_and_openapi_docs_are_served(env: Env) -> None:
         paths
     )
     assert set(paths["/approvals/{token}"]) == {"get", "post"}
+
+
+def test_the_app_keeps_link_signatures_out_of_the_access_log(env: Env) -> None:
+    """The filter itself is tested in test_approval_links; here, that the app installs it."""
+    access = logging.getLogger(ACCESS_LOGGER)
+    assert any(isinstance(f, LinkQueryFilter) for f in access.filters)
 
 
 # wiring

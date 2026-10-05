@@ -50,6 +50,14 @@ def answer(text: str) -> FakeProvider:
         ("Server=db.internal;Database=hris;User Id=app;Password=hunter2", "db.internal"),
         ("bad request /x?api_key=abc123&days=3", "abc123"),
         ('login failed {"password": "hunter2"}', "hunter2"),
+        ("refresh failed: access_token=at-0123456789", "at-0123456789"),
+        ("refresh_token: rt-0123456789 expired", "rt-0123456789"),
+        ('{"auth_token": "au-0123456789"}', "au-0123456789"),
+        ("private_key=pk-0123456789", "pk-0123456789"),
+        ("x-api-key: xk-0123456789", "xk-0123456789"),
+        ("Authorization: Basic YWxpY2U6aHVudGVyMg==", "YWxpY2U6aHVudGVyMg=="),
+        ("Authorization: Token tk0123456789", "tk0123456789"),
+        ("GET /approvals/link/abab?exp=1&sig=c0ffee0123", "c0ffee0123"),
     ],
 )
 def test_patterns_mask_what_must_not_be_stored(raw: str, secret: str) -> None:

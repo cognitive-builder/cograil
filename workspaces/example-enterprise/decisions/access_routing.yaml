@@ -1,0 +1,22 @@
+name: access_routing
+version: 1
+hit_policy: first
+inputs:
+  system: {type: string}
+  access_level: {type: string}
+outputs:
+  approver_tier: {type: string}
+  requires_security: {type: boolean}
+rules:
+  - id: r1
+    when: {access_level: admin}
+    then: {approver_tier: it_lead, requires_security: true}
+  - id: r2
+    when: {system: payroll}
+    then: {approver_tier: system_owner, requires_security: true}
+  - id: r3
+    when: {system: crm}
+    then: {approver_tier: system_owner, requires_security: false}
+  - id: default
+    when: {}
+    then: {approver_tier: manager, requires_security: false}

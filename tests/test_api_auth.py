@@ -5,6 +5,7 @@ transport, so authlib runs the real flow (discovery, code exchange, JWKS, ID tok
 import json
 import logging
 import time
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import parse_qs, parse_qsl, urlsplit
 
@@ -14,7 +15,7 @@ from fastapi.testclient import TestClient
 from joserfc import jwt
 from joserfc.jwk import RSAKey
 
-from cograil.api.auth import SESSION_COOKIE, idp_http, install_auth
+from cograil.api.auth import SESSION_COOKIE, SESSION_MAX_AGE, idp_http, install_auth
 from cograil.api.auth_settings import auth_settings
 from cograil.domain import Audience, Principal, Workspace
 from cograil.errors import AuthNotConfigured
@@ -215,6 +216,21 @@ def test_a_tampered_session_cookie_is_not_a_principal(idp: FakeIdp) -> None:
 
     assert me(signed) == 200
     assert me(f"{payload[:-2]}AA.{signature}") == me(payload) == 401
+
+
+def test_a_session_ends_eight_hours_after_sign_in_however_often_it_is_resigned(
+    idp: FakeIdp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Visiting /auth/login writes the session again, and with it the cookie's signature time;
+    the session must still end SESSION_MAX_AGE after the sign-in itself."""
+    web = client(OIDC_ENV, idp)
+    sign_in(web, idp, GOOGLE)
+    web.get("/auth/login", follow_redirects=False)  # re-signs the cookie with a fresh timestamp
+    assert web.get("/auth/me").status_code == 200
+    # Only auth's clock moves: the cookie's signature, checked on the real clock, stays fresh.
+    later = time.time() + SESSION_MAX_AGE
+    monkeypatch.setattr("cograil.api.auth.time", SimpleNamespace(time=lambda: later))
+    assert web.get("/auth/me").status_code == 401
 
 
 @pytest.mark.parametrize(

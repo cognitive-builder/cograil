@@ -59,5 +59,7 @@ def test_the_image_does_not_trust_forwarded_headers_by_itself(workflow_text: str
 
 def test_dockerignore_keeps_secrets_out_of_the_image() -> None:
     lines = (ROOT / ".dockerignore").read_text().splitlines()
-    for pattern in (".env", ".env.*", "workspaces/*/.secrets"):
+    # .dockerignore matches from the build context root: the nested forms catch a copied
+    # workspaces/<pack>/sso.env, which `COPY ${WORKSPACE}` would otherwise bake into the image.
+    for pattern in (".env", ".env.*", "**/.env", "**/.env.*", "**/*.env", "workspaces/*/.secrets"):
         assert pattern in lines

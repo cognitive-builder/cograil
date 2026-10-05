@@ -1,0 +1,23 @@
+name: approval_routing
+version: 1
+hit_policy: first
+inputs:
+  duration_days: {type: integer}
+  leave_type: {type: string}
+  requester_role: {type: string}
+outputs:
+  approver_tier: {type: string}
+  requires_hr: {type: boolean}
+rules:
+  - id: r1
+    when: {leave_type: unpaid}
+    then: {approver_tier: hr_ops, requires_hr: true}
+  - id: r2
+    when: {duration_days: ">10"}
+    then: {approver_tier: skip_level, requires_hr: true}
+  - id: r3
+    when: {requester_role: manager}
+    then: {approver_tier: director, requires_hr: false}
+  - id: default
+    when: {}
+    then: {approver_tier: manager, requires_hr: false}

@@ -335,13 +335,13 @@ async def test_the_prompt_names_the_requester_the_tool_the_step_and_the_argument
 def test_arguments_are_clipped_with_a_pointer_to_the_approval_page(
     args: dict[str, str], clipped: bool
 ) -> None:
-    text = args_text(args)
-    assert ("The rest is on the approval page" in text) == clipped
+    text, was_clipped = args_text(args)
+    assert ("The rest is on the approval page" in text) == clipped == was_clipped
     assert len(text) < MAX_TEXT
 
 
 def test_arguments_cannot_ping_or_close_the_code_block() -> None:
-    text = args_text({"note": "<!channel> ``` <@U1>"})
+    text, _ = args_text({"note": "<!channel> ``` <@U1>"})
     assert "<" not in text and ">" not in text
     assert text.count("```") == 2
 
@@ -361,7 +361,21 @@ async def test_the_prompt_is_delivered_for_arguments_full_of_escapable_character
     await channel.on_message(say(), poster)
     (prompt,) = poster.in_channel(MANAGER_DM)  # within a section block's limit, Slack takes it
     assert len(prompt["blocks"][0]["text"]["text"]) < MAX_TEXT
-    assert len(poster.buttons()) == 2
+    assert len(poster.buttons()) == 1  # clipped, so Decline only (next test)
+
+
+async def test_clipped_arguments_cannot_be_approved_from_slack(
+    env: Env, channel: SlackChannel
+) -> None:
+    """Padding in one argument must not push another out of the approver's sight: a prompt
+    that clips the arguments offers Decline only and sends the approver to the page."""
+    poster = FakePoster()
+    env.route_to("helper/record_item")
+    env.run_scripts.append(env.script(args_script("x" * 5000)))
+    await channel.on_message(say(), poster)
+    assert [b["action_id"] for b in poster.buttons()] == [DECLINE_ACTION]
+    text = poster.in_channel(MANAGER_DM)[0]["blocks"][0]["text"]["text"]
+    assert "approve it there" in text
 
 
 async def test_an_approver_without_a_slack_id_is_told_nothing_in_slack(
@@ -444,6 +458,16 @@ def test_a_member_maps_to_the_principal_and_groups_in_principals_yaml(pack: Path
     alice = principal_for_slack_user(workspace, ALICE)
     assert alice is not None and (alice.id, alice.groups) == ("alice@example.com", ["staff"])
     assert principal_for_slack_user(workspace, "U_NOBODY") is None
+
+
+def test_a_slack_id_on_a_system_principal_maps_to_nobody(pack: Path) -> None:
+    """A Schedule's actor passes Audiences no person does; no Slack member may act as it."""
+    people = [
+        {"id": "manager@example.com", "slack_id": MANAGER, "groups": ["staff"]},
+        {"id": "scheduler@example.com", "slack_id": "U_SYS", "kind": "system"},
+    ]
+    (pack / "principals.yaml").write_text(yaml.safe_dump({"principals": people}))
+    assert principal_for_slack_user(load_workspace(pack), "U_SYS") is None
 
 
 def test_a_slack_id_may_not_name_two_principals(pack: Path) -> None:

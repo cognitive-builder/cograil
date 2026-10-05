@@ -39,3 +39,26 @@ tools:
     scope: read
     description: Approval tier from duration, leave type and role (decisions/approval_routing.yaml).
     args_schema: {type: object, properties: {duration_days: {type: integer}, leave_type: {type: string}, requester_role: {type: string}}, required: [duration_days, leave_type, requester_role]}
+  - name: it.get_access
+    kind: python
+    scope: read
+    description: The access level an employee holds on each system today.
+    args_schema: {type: object, properties: {employee: {type: string}}, required: [employee]}
+  - name: it.request_access
+    kind: python
+    scope: write
+    confirm_before_write: true
+    description: Request access to a system. Idempotent on (employee, request_id).
+    args_schema:
+      type: object
+      properties:
+        employee: {type: string}
+        system: {type: string}
+        access_level: {type: string}
+        request_id: {type: string}
+      required: [employee, system, access_level, request_id]
+  - name: decide.access_routing
+    kind: decision
+    scope: read
+    description: Approver tier from system and access level (decisions/access_routing.yaml).
+    args_schema: {type: object, properties: {system: {type: string}, access_level: {type: string}}, required: [system, access_level]}

@@ -1,0 +1,6 @@
+name: hazel
+role: HR Assistant
+escalation_contact: hr-ops@example.com
+default_tier: standard
+audiences: [all-employees]
+protocols: [leave_request, policy_question]

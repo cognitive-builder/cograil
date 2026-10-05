@@ -8,8 +8,10 @@ Principal with `Depends(current_principal)`, which answers 401 when nobody is si
 - oidc: `/auth/login` sends the browser to the identity provider (authorization code flow,
   with state and nonce, via authlib); `/auth/callback` exchanges the code, validates the ID
   token (signature, issuer, audience, nonce, expiry) and keeps the Principal in a session
-  cookie signed with COGRAIL_SESSION_SECRET (HttpOnly, Secure, SameSite=Lax, 8 hours);
-  `POST /auth/logout` clears it. A `/auth/login?next=<path>` holds a same-site path the
+  cookie signed with COGRAIL_SESSION_SECRET (HttpOnly, Secure, SameSite=Lax). A session ends 8
+  hours after sign-in, counted from the sign-in time it carries, so a cookie the middleware signs
+  again (a later visit to `/auth/login` does that) is not kept alive; `POST /auth/logout` clears
+  it. A `/auth/login?next=<path>` holds a same-site path the
   callback returns the browser to after sign-in, so a link like `/?approval=<token>` survives
   it; any other `next` falls back to `/`. A sign-in is refused unless the id claim holds an email in
   one of COGRAIL_OIDC_ALLOWED_DOMAINS, verified by the provider when the claim is `email`.
@@ -25,12 +27,12 @@ groups are fixed at sign-in until the session ends.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable, Mapping
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
-from pydantic import ValidationError
 
 from cograil.api.auth_settings import AuthSettings, DevAuth, OidcAuth
 from cograil.audience import resolve_principal
@@ -42,6 +44,7 @@ from cograil.observability import log_event
 SESSION_COOKIE = "cograil_session"
 SESSION_MAX_AGE = 8 * 60 * 60
 SESSION_KEY = "principal"
+SIGNED_IN_KEY = "signed_in_at"  # seconds since the epoch; the session ends SESSION_MAX_AGE later
 NEXT_KEY = "next"  # where /auth/login was asked to bring the browser back to
 SCOPES = "openid email profile"
 ENTRA_OID = "oid"  # the Entra object id claim; Entra sends it with the profile scope
@@ -131,10 +134,18 @@ def _claim_values(value: object) -> list[str]:
 
 
 def _session_principal(request: Request) -> Principal:
+    """The Principal of a session younger than SESSION_MAX_AGE. The cookie's own signature
+    time moves whenever the session is written again, so the age is taken from the sign-in."""
+    session = request.session
     try:
-        return Principal.model_validate(request.session[SESSION_KEY])
-    except (KeyError, ValidationError):
+        principal = Principal.model_validate(session[SESSION_KEY])
+        signed_in_at = float(session[SIGNED_IN_KEY])
+    except (KeyError, TypeError, ValueError):  # pydantic's ValidationError is a ValueError
         raise HTTPException(401, "sign in at /auth/login") from None
+    if time.time() - signed_in_at >= SESSION_MAX_AGE:
+        session.clear()
+        raise HTTPException(401, "the session has ended; sign in at /auth/login")
+    return principal
 
 
 _OTHER_ORIGIN = ("//", "/\\", "\\")  # the browser's URL parser reads all three as one
@@ -187,6 +198,7 @@ def _oidc_router(settings: OidcAuth, workspace: Workspace, client: Any) -> APIRo
         back = _same_site_path(request.session.get(NEXT_KEY))
         request.session.clear()
         request.session[SESSION_KEY] = principal.model_dump(mode="json")
+        request.session[SIGNED_IN_KEY] = int(time.time())
         log_event("auth.signed_in", principal_id=principal.id, groups=principal.groups)
         return RedirectResponse(back, status_code=303)
 

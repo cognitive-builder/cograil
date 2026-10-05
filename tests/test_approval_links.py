@@ -1,5 +1,6 @@
 """Signed approval links and the mail settings (issue #24)."""
 
+import logging
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from urllib.parse import parse_qs, urlparse
@@ -7,7 +8,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 import pytest
 
-from cograil.approval_links import ApprovalLinks
+from cograil.approval_links import ApprovalLinks, LinkQueryFilter, hide_link_queries
 from cograil.channels.mail import (
     ResendSender,
     ResendSettings,
@@ -126,3 +127,26 @@ async def test_resend_posts_the_email_and_refusal_is_a_typed_error() -> None:
     assert b'"to":["b@x.io"]' in seen[0].content.replace(b" ", b"")
     with pytest.raises(EmailDeliveryError):
         await sender.send(message())
+
+
+@pytest.mark.parametrize(
+    ("path", "logged"),
+    [
+        ("/approvals/link/abab?exp=1&sig=c0ffee", "/approvals/link/abab?[REDACTED:link]"),
+        ("/root/approvals/link/abab?exp=1&sig=c0ffee", "/root/approvals/link/abab?[REDACTED:link]"),
+        ("/runs?limit=5", "/runs?limit=5"),  # other queries are left alone
+    ],
+)
+def test_the_access_log_never_holds_a_links_signature(
+    caplog: pytest.LogCaptureFixture, path: str, logged: str
+) -> None:
+    """A logged link would approve for whoever reads the log, until its Approval is decided."""
+    name = "test.access"
+    hide_link_queries(name)
+    hide_link_queries(name)  # every app built in a process installs it; one filter is enough
+    access = logging.getLogger(name)
+    assert sum(isinstance(f, LinkQueryFilter) for f in access.filters) == 1
+    with caplog.at_level(logging.INFO, logger=name):  # uvicorn's own access-log format
+        access.info('%s - "%s %s HTTP/%s" %d', "10.0.0.1:5000", "GET", path, "1.1", 200)
+    (line,) = caplog.messages
+    assert f"GET {logged} HTTP/1.1" in line and "c0ffee" not in line
