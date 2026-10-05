@@ -109,6 +109,12 @@ class ProviderError(CograilError):
     """A model provider call failed, or a FakeProvider script ran out."""
 
 
+class ModelSpanMissing(CograilError):
+    """A model call was charged where its chat span is not the current span.
+
+    Its usage would land on the wrong span, so the charge is refused rather than traced."""
+
+
 class EvalError(CograilError):
     """An eval case file is invalid, or an eval level cannot run here (cograil.evals)."""
 
