@@ -163,7 +163,7 @@ def test_an_expired_link_escalates_the_run(env: Env, outbox: Outbox) -> None:
     assert response.status_code == 410
     assert stored(env, run_id).status is RunStatus.escalated
     assert audit(env, run_id, "run.escalated")[0].detail["reason"] == "approval_expired"
-    assert env.client.get(url).status_code == 409  # escalated already; nothing more to decide
+    assert env.client.get(url).status_code == 410  # escalated already; nothing more to decide
 
 
 def overdue_link(env: Env) -> tuple[str, str]:
@@ -192,7 +192,7 @@ def test_a_get_of_an_expired_link_changes_nothing(env: Env) -> None:
 def test_the_sweep_escalates_an_overdue_approval_without_anyone_opening_the_link(
     env: Env,
 ) -> None:
-    run_id, _ = overdue_link(env)
+    run_id, url = overdue_link(env)
     services = env.app.state.cograil_services
     token = next(iter(env.store._approvals))  # type: ignore[attr-defined]
     assert asyncio.run(services.sweep_overdue_approvals()) == [token]
@@ -201,10 +201,19 @@ def test_the_sweep_escalates_an_overdue_approval_without_anyone_opening_the_link
     (event,) = audit(env, run_id, "run.escalated")
     assert event.detail["reason"] == "approval_expired"
     assert asyncio.run(services.sweep_overdue_approvals()) == []  # nothing left to escalate
+    assert env.client.get(url).status_code == 410  # the link now says it expired, not 409
 
 
 def test_the_sweep_leaves_an_approval_that_is_not_yet_due(env: Env) -> None:
     run_id = env.paused_run()["run"]["id"]
+    assert asyncio.run(env.app.state.cograil_services.sweep_overdue_approvals()) == []
+    assert stored(env, run_id).status is RunStatus.awaiting_approval
+
+
+def test_the_sweep_leaves_another_workspaces_approval_alone(env: Env) -> None:
+    run_id, _ = overdue_link(env)
+    foreign = stored(env, run_id).model_copy(update={"workspace": "elsewhere"})
+    env.store._runs[run_id] = foreign  # type: ignore[attr-defined]
     assert asyncio.run(env.app.state.cograil_services.sweep_overdue_approvals()) == []
     assert stored(env, run_id).status is RunStatus.awaiting_approval
 

@@ -97,8 +97,8 @@ class ProgressStore:
     async def list_approvals(self, run_id: str) -> list[Approval]:
         return await self._inner.list_approvals(run_id)
 
-    async def list_overdue_approvals(self, now: datetime) -> list[Approval]:
-        return await self._inner.list_overdue_approvals(now)
+    async def list_overdue_approvals(self, workspace: str, now: datetime) -> list[Approval]:
+        return await self._inner.list_overdue_approvals(workspace, now)
 
     async def append_audit_event(self, event: AuditEvent) -> None:
         await self._inner.append_audit_event(event)

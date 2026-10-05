@@ -222,10 +222,13 @@ class Services:
     async def sweep_overdue_approvals(self) -> list[str]:
         """Escalate every Run paused on an Approval past its expiry, with no request asking.
 
-        Returns the tokens it expired. An Approval another workspace owns, or whose Run has
-        moved on since the query, is skipped and logged; the rest of the sweep still runs."""
+        Returns the tokens it expired. Only this workspace's Approvals are swept. One whose Run has
+        moved on since the query, or was started on a Protocol version this workspace no longer
+        has, is skipped and logged; the rest of the sweep still runs."""
         expired: list[str] = []
-        for approval in await self.store.list_overdue_approvals(datetime.now(UTC)):
+        for approval in await self.store.list_overdue_approvals(
+            self.workspace.name, datetime.now(UTC)
+        ):
             try:
                 run = await self.expire(approval.token)
             except CograilError as exc:

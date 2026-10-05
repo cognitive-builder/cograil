@@ -6,9 +6,9 @@ answers 403 and changes nothing. GET only shows the call and two buttons: a mail
 opens the link decides nothing, and no GET writes anything (issue #282). POST decides, as
 the approver, through the same Runner rules as the signed-in route (the Run's own principal
 still cannot be the approver) and records `via: email_link` on the AuditEvent. An Approval is
-decided once, so a used link answers 409. A link past its expiry answers 410 on both; the Run
-is escalated to the escalation contact by the sweep (cograil.approval_sweep), or at once by a
-POST that finds it still pending.
+decided once, so a used link answers 409. A link past its expiry, or whose Approval is already
+recorded as expired, answers 410 on both; the Run is escalated to the escalation contact by the
+sweep (cograil.approval_sweep), or at once by a POST that finds it still pending.
 """
 
 from __future__ import annotations
@@ -63,11 +63,13 @@ async def _open_approval(
         mail.links.verify(approval, exp, sig)
     except (ApprovalNotFound, ApprovalLinkInvalid):
         raise HTTPException(403, "this link is not valid") from None
+    if approval.decision == "expired":  # the sweep, or an earlier POST, got there first
+        raise HTTPException(410, "this link has expired; the request was escalated")
     if approval.decision != "pending":
         raise HTTPException(409, "this approval was already decided; the link works once")
     if mail.links.expired(exp, datetime.now(UTC)):
         if not expire:
-            raise HTTPException(410, "this link has expired; the request is escalated")
+            raise HTTPException(410, "this link has expired")
         try:
             await services.expire(token)
         except (RunNotPaused, RunNotFound):

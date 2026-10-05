@@ -179,12 +179,15 @@ class InMemoryRunStore:
         found = sorted((a for a in self._approvals.values() if a.run_id == run_id), key=_token)
         return [a.model_copy(deep=True) for a in found]
 
-    async def list_overdue_approvals(self, now: datetime) -> list[Approval]:
+    async def list_overdue_approvals(self, workspace: str, now: datetime) -> list[Approval]:
         found = sorted(
             (
                 a
                 for a in self._approvals.values()
-                if a.decision == "pending" and a.expires_at is not None and a.expires_at <= now
+                if a.decision == "pending"
+                and a.expires_at is not None
+                and a.expires_at <= now
+                and self._runs[a.run_id].workspace == workspace
             ),
             key=_token,
         )

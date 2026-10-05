@@ -141,7 +141,7 @@ When mail is configured, an approver gets a one-click link: `/approvals/link/{to
 - **Request logs in front of the service** still record the full URL, for example Cloud Run's request log or a reverse proxy. Restrict who can read them.
 - **Decision AuditEvents carry the requester as principal.** The approver is in `detail.decided_by`. Tracked in #275.
 - **Rotating the link secret** voids every outstanding link. This fails safe: the approver decides in the web chat instead.
-- **An overdue Approval waits for the next sweep.** The sweep runs once a minute while the service is up, and once at startup for what fell due while it was down. An Approval can stay `awaiting_approval` for up to a minute past its expiry, and for as long as the service is stopped. A late POST of the link still escalates the Run at once.
+- **An overdue Approval waits for the next sweep.** The sweep runs once a minute while the service is up, and once at startup for what fell due while it was down. An Approval can stay `awaiting_approval` for up to a minute past its expiry, and for as long as the service is stopped. A Run started on a Protocol version the workspace no longer has is skipped by the sweep (logged as `approval.sweep_skipped`) and stays `awaiting_approval`, as no decision can resume it either. A late POST of the link still escalates the Run at once.
 
 ## Secret Handling
 
