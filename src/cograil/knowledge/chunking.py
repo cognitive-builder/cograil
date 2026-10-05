@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+from cograil.domain import MAX_CHUNK_CHARS
 from cograil.errors import KnowledgeSourceError
 
 
 def chunk_text(text: str, size: int, overlap: int) -> list[str]:
     """Windows of at most `size` characters; each starts `overlap` characters before the
     previous one ended. A window ends at whitespace when one lies in its second half, so words
-    are not cut when they need not be. Blank text gives no chunks."""
-    if size < 1 or not 0 <= overlap < size:
-        raise KnowledgeSourceError(f"need 0 <= overlap < size, got size={size} overlap={overlap}")
+    are not cut when they need not be. Blank text gives no chunks. `size` is at most
+    MAX_CHUNK_CHARS."""
+    if not 1 <= size <= MAX_CHUNK_CHARS or not 0 <= overlap < size:
+        raise KnowledgeSourceError(
+            f"need 0 <= overlap < size <= {MAX_CHUNK_CHARS}, got size={size} overlap={overlap}"
+        )
     text = text.strip()
     chunks: list[str] = []
     start = 0

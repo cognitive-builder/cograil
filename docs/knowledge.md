@@ -19,10 +19,10 @@ knowledge:
 | `name` | The name of the source. It is part of every Chunk id. |
 | `path` | The folder, relative to the Workspace folder. It must stay inside the Workspace. |
 | `acl_groups` | The default groups for files that have no ACL file of their own. It is also the most that any ACL file can name. It must list at least one group. |
-| `chunk_size` | The most characters in one Chunk. The default is 800. |
+| `chunk_size` | The most characters in one Chunk. The default is 800. It is at most 4000. |
 | `chunk_overlap` | The characters shared by neighbouring Chunks. The default is 120. |
 
-`chunk_size` and `chunk_overlap` count characters, not words. `chunk_overlap` must be smaller than `chunk_size`, or the Workspace is invalid. A KnowledgeSource with `acl_groups: []` is also invalid. `cograil validate` reports it.
+`chunk_size` and `chunk_overlap` count characters, not words. `chunk_overlap` must be smaller than `chunk_size`, or the Workspace is invalid. A `chunk_size` above 4000 also makes the Workspace invalid, because a Chunk is retrieved whole into a Step's context. A KnowledgeSource with `acl_groups: []` is also invalid. `cograil validate` reports it.
 
 A Chunk ends at a space when one falls in the second half of its window, so words are not cut when they need not be. A document with no text gives no Chunks. A PDF with only scanned images is such a document, because Cograil does not read images.
 

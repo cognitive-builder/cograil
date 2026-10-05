@@ -18,6 +18,7 @@ Settings come only from environment variables. To run the service in a container
 | `COGRAIL_AUTH` | Required. `dev` or `oidc`, with the settings of that mode. See `docs/auth.md`. |
 | `SLACK_BOT_TOKEN` | The Slack bot token (`xoxb-...`). Unset means the Slack channel is off. See `docs/slack.md`. |
 | `SLACK_SIGNING_SECRET` | Verifies that a request to `POST /slack/events` comes from Slack. Required with the token. |
+| `COGRAIL_CHAT_RATE_LIMIT` | Optional. How often one Principal may call `POST /chat`, as `<requests>/<seconds>`. The default is `20/60`. `off` turns it off. See "Limits" below. |
 
 ## Endpoints
 
@@ -40,7 +41,7 @@ Settings come only from environment variables. To run the service in a container
 
 ## The Chat Stream
 
-`POST /chat` takes `{"message": "..."}` (1 to 8000 characters) and answers with `text/event-stream`. Each event has a name and a JSON `data` line.
+`POST /chat` takes `{"message": "..."}` (1 to 8000 characters) and answers with `text/event-stream`. Each event has a name and a JSON `data` line. The route is rate limited for each Principal. Over the limit it answers 429 with a `Retry-After` header. See "Limits" below, and "Chat Rate Limit" in [the deploy guide](deploy.md) for the setting.
 
 | Event | Meaning |
 | --- | --- |
@@ -110,6 +111,15 @@ Open `/history` in a browser (the chat page's header links to it). It is one HTM
 
 The answer has `items`, `limit`, `offset` and `next_offset`. Pass `next_offset` as `offset` to get the next page. It is null on the last page.
 
+## Limits
+
+- **Request body.** A request body over 1 MiB (1,048,576 bytes) answers 413. This holds whether the size is declared in `Content-Length` or the body arrives in chunks.
+- **Chat rate.** Each Principal may call `POST /chat` 20 times in 60 seconds by default. Over the limit the answer is 429, with a `Retry-After` header (in seconds) and a JSON `detail`. The check runs before anything is routed or run. A refused message is not counted, and the window slides. The limit is kept for each Principal id.
+- **Per process.** The count is held in the service's process. With several workers or replicas, each counts on its own, so the real limit is the limit times the number of processes.
+- **Slack.** Slack messages are not rate limited. Only `POST /chat` is.
+
+Set the rate with `COGRAIL_CHAT_RATE_LIMIT` (see [the deploy guide](deploy.md)).
+
 ## Status Codes
 
 | Code | When |
@@ -118,5 +128,7 @@ The answer has `items`, `limit`, `offset` and `next_offset`. Pass `next_offset` 
 | 403 | You are not the approver of this Approval, or the Runner refused your decision. |
 | 404 | No such Run or Approval, or the Run is not yours. |
 | 409 | The Approval is already decided, the Run is not paused, or the Workspace changed since the Run began. |
+| 413 | The request body is over 1 MiB. |
 | 422 | The body or a query value is invalid. An extra field in a body counts. |
+| 429 | `POST /chat` was called too often by this Principal. `Retry-After` says how many seconds to wait. |
 | 500 | The Run failed while resuming. The body names the error class. |

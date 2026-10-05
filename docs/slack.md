@@ -72,6 +72,10 @@ id and starts nothing.
 
 The full call, and the email link that decides it, are described in [approvals](approvals.md).
 
+## Message size and rate
+
+A message is at most 8000 characters, the same cap as the web chat. A longer one is refused before it is routed: the bot replies in the thread "a message is at most 8000 characters" and nothing starts. Slack messages are not rate limited. The chat rate limit applies to `POST /chat` only (see `docs/api.md`).
+
 ## Known limits
 
 This first version has limits you should know before turning it on. They are tracked and will
@@ -83,5 +87,4 @@ change:
 - **Two members can end up with a Run each in one thread** (the lookup is per requester), and a
   message in a thread repeats the waiting line or reports status; its own text is not used
   (#245).
-- **A direct message that also mentions the bot is ignored**, and the Slack path has no message
-  length cap like the web chat's (#243).
+- **A direct message that also mentions the bot is ignored** (#243).

@@ -22,6 +22,7 @@ from cograil.api import approvals, audit, chat, link_decisions, runs
 from cograil.api.approval_mail import ApprovalMail
 from cograil.api.auth import install_auth
 from cograil.api.auth_settings import AuthSettings
+from cograil.api.limits import DEFAULT_CHAT_RATE, BodySizeLimit, RateLimit, RateLimiter
 from cograil.api.services import ProviderFactory, RegistryOpener, Services
 from cograil.approval_links import hide_link_queries
 from cograil.channels import web
@@ -55,14 +56,16 @@ def create_app(
     redactor: Redactor | None = None,
     approval_mail: ApprovalMail | None = None,
     slack: SlackSettings | None = None,
+    chat_rate: RateLimit | None = DEFAULT_CHAT_RATE,
 ) -> FastAPI:
     """The service for the workspace loaded from `path`.
 
     `classifier` routes chat messages on the small tier, `provider_for` gives the Provider a
     Protocol's Runs use, `redactor` redacts the opt-in message snippet log, `approval_mail`
     emails approvers a signed link (without it the link routes answer 404), `slack` turns on
-    POST /slack/events (cograil.channels.slack), and `close` runs at shutdown. The Colleagues'
-    Schedules run while the app is up (cograil.scheduler).
+    POST /slack/events (cograil.channels.slack), `chat_rate` limits each principal's POST /chat
+    (None: no limit), and `close` runs at shutdown. Every request body is capped
+    (cograil.api.limits). The Colleagues' Schedules run while the app is up (cograil.scheduler).
     """
 
     @asynccontextmanager
@@ -87,6 +90,8 @@ def create_app(
     app = FastAPI(title="Cograil", version=__version__, lifespan=lifespan)
     hide_link_queries()  # a signed approval link must not reach the access log
     app.state.cograil_services = services
+    app.state.cograil_chat_limiter = RateLimiter(chat_rate) if chat_rate is not None else None
+    app.add_middleware(BodySizeLimit)
     install_auth(app, auth, workspace)
     routers = (
         web.router,

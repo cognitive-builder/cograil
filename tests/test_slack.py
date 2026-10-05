@@ -16,6 +16,7 @@ from test_api import DEMO, REST_SCRIPT, RUN_SCRIPT, Env
 
 from cograil.api.app import create_app
 from cograil.api.auth_settings import auth_settings
+from cograil.api.schemas import MAX_MESSAGE_CHARS
 from cograil.api.services import Services
 from cograil.api.wiring import open_registry
 from cograil.channels.slack import (
@@ -174,6 +175,16 @@ async def test_a_message_starts_a_run_and_answers_in_its_thread(
     assert run.status is RunStatus.awaiting_approval
     assert {p["thread_ts"] for p in poster.in_channel(DM)} == {"100.1"}
     assert [b["action_id"] for b in poster.buttons()] == [APPROVE_ACTION, DECLINE_ACTION]
+
+
+async def test_a_message_over_the_cap_is_refused_before_it_is_routed(
+    env: Env, channel: SlackChannel, services: Services
+) -> None:
+    poster = FakePoster()
+    await channel.on_message(say("x" * (MAX_MESSAGE_CHARS + 1)), poster)
+    assert await services.store.list_runs() == []
+    (reply,) = poster.in_channel(DM)
+    assert reply["text"] == f"a message is at most {MAX_MESSAGE_CHARS} characters"
 
 
 async def test_each_run_gets_its_own_thread(

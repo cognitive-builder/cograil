@@ -37,8 +37,15 @@ The image holds no secrets and no database address. Everything comes from the Cl
 | `COGRAIL_OIDC_CLIENT_SECRET` | Secret Manager secret `cograil-oidc-client-secret` |
 | `COGRAIL_SESSION_SECRET` | Secret Manager secret `cograil-session-secret` |
 | `COGRAIL_AUTH`, `COGRAIL_OIDC_*` (not secret) | Plain environment variables on the service, set once |
+| `COGRAIL_CHAT_RATE_LIMIT` (optional, not secret) | Plain environment variable on the service. See "Chat Rate Limit". |
 
 The workflow maps the four secrets on every deploy. It never reads their values, and GitHub never holds them. Plain variables you set on the service stay in place across deploys.
+
+### Chat Rate Limit
+
+`COGRAIL_CHAT_RATE_LIMIT` limits how often one Principal may call `POST /chat`. The form is `<requests>/<seconds>`. The default is `20/60`: 20 requests in any 60 seconds. `off` turns the limit off. Both numbers must be positive whole numbers. Any other value stops the service at start (`LimitNotConfigured`).
+
+The count is held in the process. Cloud Run may run several instances, and a service may run several workers, and each one counts on its own. The effective limit is the limit times the number of processes. Slack messages are not rate limited. See "Limits" in `docs/api.md`.
 
 ### Neon
 

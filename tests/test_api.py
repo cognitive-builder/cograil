@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from cograil.api.app import create_app
 from cograil.api.auth_settings import auth_settings
+from cograil.api.limits import DEFAULT_CHAT_RATE, RateLimit
 from cograil.api.wiring import app_from_env, open_registry
 from cograil.approval_links import ACCESS_LOGGER, LinkQueryFilter
 from cograil.audience import resolve_principal
@@ -76,6 +77,7 @@ class Env:
         close: Any = None,
         root: Path = DEMO,
         approval_mail: Any = None,
+        chat_rate: RateLimit | None = DEFAULT_CHAT_RATE,
     ) -> None:
         self.tmp_path = tmp_path
         self.store = store or InMemoryRunStore()
@@ -92,6 +94,7 @@ class Env:
             open_registry=open_registry,
             close=close,
             approval_mail=approval_mail,
+            chat_rate=chat_rate,
         )
         self.app.state.cograil_principal = lambda request: who(workspace, request)
         self.client = TestClient(self.app)
@@ -276,7 +279,10 @@ def test_chat_needs_a_signed_in_principal(env: Env) -> None:
     assert env.client.post("/chat", json={"message": "hi"}).status_code == 401
 
 
-@pytest.mark.parametrize("body", [{}, {"message": ""}, {"message": "hi", "principal": "x"}])
+@pytest.mark.parametrize(
+    "body",
+    [{}, {"message": ""}, {"message": "hi", "principal": "x"}, {"message": "x" * 8001}],
+)
 def test_chat_refuses_a_bad_body(env: Env, body: dict[str, Any]) -> None:
     assert env.client.post("/chat", json=body, headers={"X-User": ALICE}).status_code == 422
 

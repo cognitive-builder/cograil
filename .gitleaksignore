@@ -1,0 +1,10 @@
+# Findings gitleaks may skip, one fingerprint (<commit>:<file>:<rule>:<line>) per line.
+# Add one only for a value that is fake by design, and say where it comes from.
+#
+# tests/test_redaction.py: made-up tokens the redaction tests must mask (#36).
+70c41783d41c08fb851f57b6b21a0dab96a9f461:tests/test_redaction.py:generic-api-key:53
+70c41783d41c08fb851f57b6b21a0dab96a9f461:tests/test_redaction.py:generic-api-key:54
+70c41783d41c08fb851f57b6b21a0dab96a9f461:tests/test_redaction.py:generic-api-key:55
+70c41783d41c08fb851f57b6b21a0dab96a9f461:tests/test_redaction.py:generic-api-key:56
+70c41783d41c08fb851f57b6b21a0dab96a9f461:tests/test_redaction.py:generic-api-key:57
+70c41783d41c08fb851f57b6b21a0dab96a9f461:tests/test_redaction.py:generic-api-key:59

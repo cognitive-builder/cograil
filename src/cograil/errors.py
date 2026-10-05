@@ -80,6 +80,14 @@ class StoreNotConfigured(CograilError):
     """DATABASE_URL is not set, so there is no RunStore to serve from."""
 
 
+class LimitNotConfigured(CograilError):
+    """A service limit read from the environment, such as COGRAIL_CHAT_RATE_LIMIT, is invalid."""
+
+
+class MessageTooLong(CograilError):
+    """A chat message is longer than the service accepts, whatever channel it came from."""
+
+
 class LoginDenied(CograilError):
     """The identity provider's answer does not let this person sign in."""
 

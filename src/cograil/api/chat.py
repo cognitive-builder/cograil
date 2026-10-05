@@ -10,6 +10,7 @@ Events, each `event: <name>` and a JSON `data:` line:
 - `error`: the request failed; `type` is the error class, `message` says why.
 
 The stream ends after `refusal`, `done` or `error`. Closing the connection does not stop a Run.
+A principal over the chat rate limit gets a 429 with Retry-After instead (cograil.api.limits).
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from fastapi.responses import StreamingResponse
 
 from cograil.api.auth import current_principal
 from cograil.api.deps import CurrentPrincipal, ServicesDep
+from cograil.api.limits import limit_chat
 from cograil.api.schemas import ChatRequest
 from cograil.api.sse import Emit, stream_events
 
@@ -30,7 +32,11 @@ STREAM_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 @router.post(
     "/chat",
     response_class=StreamingResponse,
-    responses={200: {"content": {"text/event-stream": {}}, "description": "Server-sent events."}},
+    responses={
+        200: {"content": {"text/event-stream": {}}, "description": "Server-sent events."},
+        429: {"description": "Over the principal's chat rate limit; see Retry-After."},
+    },
+    dependencies=[Depends(limit_chat)],
 )
 async def chat(
     body: ChatRequest, principal: CurrentPrincipal, services: ServicesDep

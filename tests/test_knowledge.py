@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 
 import cograil.knowledge.cli
 from cograil.cli import app
-from cograil.domain import Chunk, KnowledgeSource
+from cograil.domain import MAX_CHUNK_CHARS, Chunk, KnowledgeSource
 from cograil.errors import KnowledgeSourceError
 from cograil.knowledge import (
     InMemoryKnowledgeStore,
@@ -85,7 +85,9 @@ def test_loads_markdown_and_pdf_and_nothing_else(workspace: Path) -> None:
     assert {c.source for c in chunks} == {"docs"}
 
 
-@pytest.mark.parametrize(("size", "overlap"), [(20, 0), (20, 5), (50, 10), (800, 120)])
+@pytest.mark.parametrize(
+    ("size", "overlap"), [(20, 0), (20, 5), (50, 10), (800, 120), (MAX_CHUNK_CHARS, 0)]
+)
 def test_chunk_size_and_overlap_are_configurable(size: int, overlap: int) -> None:
     text = " ".join(f"word{n:03d}" for n in range(60))
     chunks = chunk_text(text, size, overlap)
@@ -107,7 +109,9 @@ def test_the_source_settings_reach_the_chunks(workspace: Path) -> None:
     assert all(len(c.text) <= 60 for c in small)
 
 
-@pytest.mark.parametrize(("size", "overlap"), [(0, 0), (10, 10), (10, 20), (10, -1)])
+@pytest.mark.parametrize(
+    ("size", "overlap"), [(0, 0), (10, 10), (10, 20), (10, -1), (MAX_CHUNK_CHARS + 1, 0)]
+)
 def test_a_bad_chunk_setting_is_refused(size: int, overlap: int) -> None:
     with pytest.raises(KnowledgeSourceError):
         chunk_text("some text", size, overlap)
