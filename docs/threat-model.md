@@ -177,7 +177,7 @@ An attacker wants one of them from:
     - The review and auto-merge jobs run only for branches of this repository.
     - The `@claude` jobs answer only owners, members and collaborators.
     - The deploy and the lane 3 job run only on a tag or when started by hand.
-    - **History is scanned for secrets.** A `secrets` job runs gitleaks 8.28.0 (pinned, checksum verified) over the full git history of every pull request and every push to `main`. A fake secret that a test needs is listed in `.gitleaksignore` by its fingerprint, with a comment that gives the reason. The six fake tokens in `tests/test_redaction.py` are listed there.
+    - **History is scanned for secrets.** A `secrets` job runs gitleaks 8.28.0 (pinned, checksum verified) over the full git history of every pull request and every push to `main`. A new fake secret that a test needs carries a `gitleaks:allow` comment on its line. The six fake tokens already in `tests/test_redaction.py` are listed in `.gitleaksignore` by their fingerprints.
     - **The deploy identity must be pinned.** Other workflows here, including the ones that run a model on text from issues, also request an identity token, so the Workload Identity condition names the deploy workflow on a version tag and not just the repository (`docs/deploy.md`). More hardening is a decision for the owner: #285.
 
 ### Known Limits

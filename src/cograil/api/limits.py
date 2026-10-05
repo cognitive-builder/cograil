@@ -68,7 +68,9 @@ class RateLimiter:
     def hit(self, key: str) -> float | None:
         """Count a hit for `key`; None when allowed, else the seconds until one would be."""
         now = self._clock()
-        hits = self._hits.setdefault(key, deque())
+        hits = self._hits.get(key)
+        if hits is None:  # at most `limit.requests` timestamps per principal are kept
+            hits = self._hits[key] = deque()
         while hits and hits[0] <= now - self.limit.window_seconds:
             hits.popleft()
         if len(hits) >= self.limit.requests:
@@ -77,8 +79,9 @@ class RateLimiter:
         return None
 
 
-def limit_chat(request: Request, principal: CurrentPrincipal) -> None:
-    """Refuse a chat message over the principal's rate limit with a 429."""
+async def limit_chat(request: Request, principal: CurrentPrincipal) -> None:
+    """Refuse a chat message over the principal's rate limit with a 429. Async with no await,
+    so it runs on the event loop and two requests cannot interleave inside `hit`."""
     limiter: RateLimiter | None = request.app.state.cograil_chat_limiter
     if limiter is None:
         return

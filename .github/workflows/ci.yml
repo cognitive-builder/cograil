@@ -53,7 +53,7 @@ jobs:
         run: uv run --only-group docs mkdocs build --strict
 
   # Every commit of the branch, history included, is scanned for credentials (issue #37).
-  # A fake secret a test needs goes in .gitleaksignore by its fingerprint, with its reason.
+  # A fake secret a test needs carries a `gitleaks:allow` comment on its line (.gitleaksignore).
   secrets:
     runs-on: ubuntu-latest
     env:

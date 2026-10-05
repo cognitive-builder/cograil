@@ -1,5 +1,6 @@
-# Findings gitleaks may skip, one fingerprint (<commit>:<file>:<rule>:<line>) per line.
-# Add one only for a value that is fake by design, and say where it comes from.
+# Findings already on main that gitleaks may skip, one fingerprint (<commit>:<file>:<rule>:<line>)
+# per line. A squash merge changes a commit, so a pull request cannot list its own: a new fake
+# secret a test needs carries a `gitleaks:allow` comment on its line instead.
 #
 # tests/test_redaction.py: made-up tokens the redaction tests must mask (#36).
 70c41783d41c08fb851f57b6b21a0dab96a9f461:tests/test_redaction.py:generic-api-key:53
