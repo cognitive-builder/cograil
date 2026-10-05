@@ -212,7 +212,7 @@ An attacker wants one of them from:
 - **The chat rate limit is held in each process.** With several workers or replicas, the real limit is the limit times the number of processes.
 - **Slack messages are not rate limited.** Only `POST /chat` is.
 - **Signing out clears the browser's copy only.** A copied cookie stays valid until its 8 hours are up, and so do the groups fixed at sign-in. Rotate `COGRAIL_SESSION_SECRET` to end every session at once.
-- **`COGRAIL_AUTH=dev` signs everyone in as one principal.** It is for a laptop, never for a reachable service. Refusing it in production is tracked in #276.
+- **`COGRAIL_AUTH=dev` signs everyone in as one principal.** It is for a laptop, never for a reachable service. The service refuses to start with it when `COGRAIL_ENV=production`, which the deploy workflow sets.
 - **The OpenAPI docs at `/docs` are public.** They list the routes and hold no data.
 
 ## Security Review, October 2026

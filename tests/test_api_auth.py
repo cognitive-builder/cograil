@@ -127,6 +127,13 @@ def test_dev_mode_refuses_a_system_principal() -> None:
         client(env)
 
 
+def test_dev_mode_is_refused_in_production() -> None:
+    env = {"COGRAIL_AUTH": "dev", "COGRAIL_DEV_PRINCIPAL": "alice@example.com",
+           "COGRAIL_ENV": "production"}  # fmt: skip
+    with pytest.raises(AuthNotConfigured, match="COGRAIL_ENV=production"):
+        auth_settings(env)
+
+
 @pytest.mark.parametrize(
     ("env", "named"),
     [
