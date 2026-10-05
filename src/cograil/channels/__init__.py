@@ -1,1 +1,2 @@
-"""Channels: the places people talk to a Colleague (web chat now, Slack later)."""
+"""Channels: the web chat and Slack, where people talk to a Colleague, and the email that
+carries approval links."""
