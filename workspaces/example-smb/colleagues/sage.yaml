@@ -1,0 +1,6 @@
+name: sage
+role: IT Access Assistant
+escalation_contact: it-help@example.com
+default_tier: standard
+audiences: [all-employees]
+protocols: [it_access_request]

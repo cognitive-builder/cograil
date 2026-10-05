@@ -55,3 +55,34 @@ tools:
     scope: read
     description: Ticket priority from impact and urgency (decisions/ticket_priority.yaml).
     args_schema: {type: object, properties: {impact: {type: string}, urgency: {type: string}}, required: [impact, urgency]}
+  # The example HRIS is a deterministic in-process mock (tools/hris.py); a real pack would use
+  # the `rest` kind over a Connection, as jira.* does.
+  - name: hris.get_balance
+    kind: python
+    scope: read
+    description: Leave balances by type for a principal.
+    args_schema: {type: object, properties: {employee: {type: string}}, required: [employee]}
+  - name: hris.submit_leave
+    kind: python
+    scope: write
+    confirm_before_write: true
+    description: Submit a leave request. Idempotent on (employee, request_id).
+    args_schema:
+      type: object
+      properties:
+        employee: {type: string}
+        start: {type: string, format: date}
+        end: {type: string, format: date}
+        leave_type: {type: string}
+        request_id: {type: string}
+      required: [employee, start, end, leave_type, request_id]
+  - name: decide.approval_routing
+    kind: decision
+    scope: read
+    description: Approval tier from duration, leave type and role (decisions/approval_routing.yaml).
+    args_schema: {type: object, properties: {duration_days: {type: integer}, leave_type: {type: string}, requester_role: {type: string}}, required: [duration_days, leave_type, requester_role]}
+  - name: decide.access_routing
+    kind: decision
+    scope: read
+    description: Approver tier from system and access level (decisions/access_routing.yaml).
+    args_schema: {type: object, properties: {system: {type: string}, access_level: {type: string}}, required: [system, access_level]}

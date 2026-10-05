@@ -21,8 +21,12 @@ runner = CliRunner()
 def test_example_workspace_loads() -> None:
     workspace = load_workspace(EXAMPLE)
     assert workspace.name == "example-smb"
-    assert [c.name for c in workspace.colleagues] == ["harper"]
-    assert {p.name for p in workspace.protocols} == {"leave_request", "policy_question"}
+    assert [c.name for c in workspace.colleagues] == ["harper", "sage"]
+    assert {p.name for p in workspace.protocols} == {
+        "leave_request",
+        "policy_question",
+        "it_access_request",
+    }
     assert "hris.submit_leave" in {t.name for t in workspace.tools}
     assert [a.name for a in workspace.audiences] == ["all-employees", "managers"]
 

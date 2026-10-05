@@ -11,6 +11,10 @@ carry ids, names, models, tokens and cost, and never prompts, tool arguments or 
 exception that leaves a span is recorded by its type alone: its message may hold a tool's error
 text, which the audit trail redacts.
 
+A call's usage and cost land on its own chat span alone: `record_model_call` refuses to stamp
+any other span, so a charge made outside a chat span can never put its tokens on the Step or Run
+span (issue #228).
+
 `configure_tracing` sends spans to the console (stderr) unless OTEL_EXPORTER_OTLP_ENDPOINT is
 set, then to that OTLP endpoint (for example Arize Phoenix). Without it the spans are no-ops.
 """
@@ -28,10 +32,12 @@ from typing import TYPE_CHECKING, Any
 
 from opentelemetry import trace
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter, SpanExporter
 from opentelemetry.trace import StatusCode
 from pydantic_core import to_jsonable_python
+
+from cograil.errors import ModelSpanMissing
 
 if TYPE_CHECKING:
     from cograil.domain import Run, Step
@@ -106,7 +112,7 @@ def step_span(run: Run, step: Step) -> Iterator[trace.Span]:
     """The span of one Step; its model calls are its children."""
     attributes = {
         "cograil.run_id": run.id,
-        "cograil.step": step.number,
+        "cograil.step.number": step.number,
         "cograil.step.name": step.name,
     }
     with _span(f"step {step.number} {step.name}", attributes) as span:
@@ -122,9 +128,20 @@ def model_span(model: str) -> Iterator[trace.Span]:
 
 
 def record_model_call(model: str, usage: Usage, cost_usd: float) -> None:
-    """Stamp the current span with what the call used and cost. Cache tokens are reported
-    apart from `gen_ai.usage.input_tokens`, which counts only the fresh prompt (ADR 0013)."""
+    """Stamp the chat span of the call with what it used and cost. Cache tokens are reported
+    apart from `gen_ai.usage.input_tokens`, which counts only the fresh prompt (ADR 0013).
+
+    A charge made while another span is current — a Step's, the Run's — would put its usage on
+    that span, so it is refused with ModelSpanMissing instead. With no span current there is
+    nothing to stamp, as when tracing is off, and the charge is only accounted, not traced."""
     span = trace.get_current_span()
+    if not isinstance(span, ReadableSpan):
+        return  # no live span is current — tracing is off, or no span was started
+    attributes = span.attributes or {}
+    if attributes.get("gen_ai.operation.name") != "chat":
+        raise ModelSpanMissing(
+            f"a call of {model} was charged on the span {span.name!r}, not on its chat span"
+        )
     span.set_attributes({
         "gen_ai.response.model": model,
         "gen_ai.usage.input_tokens": usage.input_tokens,

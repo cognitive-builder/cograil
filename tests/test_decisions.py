@@ -160,7 +160,7 @@ def test_leave_request_routes_with_the_table() -> None:
     workspace = load_workspace(EXAMPLE)
     protocol = next(p for p in workspace.protocols if p.name == "leave_request")
     assert ROUTING in protocol.steps[2].tools
-    assert [d.name for d in workspace.decisions] == ["approval_routing"]
+    assert [d.name for d in workspace.decisions] == ["access_routing", "approval_routing"]
 
 
 async def test_decision_tool_without_its_table_is_not_built(store: InMemoryRunStore) -> None:
