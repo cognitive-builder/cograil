@@ -3,14 +3,15 @@
 A message that mentions the bot, or is sent to it directly, starts a Run through
 `Services.chat`; the Run remembers its Slack thread in `Run.context["slack"]`, and every reply
 about it goes to that thread, so there is one thread per Run. A later message in that thread
-continues the Run: it answers where the Run stands and, for a Run paused at a gate, asks again.
-The Run itself only moves on a decision (rule 1), never on chat.
+continues the Run: it answers where the Run stands and, for a Run paused at a gate, repeats whom
+the Run waits for; the approver is never sent the prompt a second time. The Run itself only
+moves on a decision (rule 1), never on chat.
 
 A gate's prompt goes to its approver, not to the Run's thread: a direct message with the
 approver's Slack member id (`slack_id` in principals.yaml, reversed) that names the requester, the
 Tool, the Step and the call's arguments. The Run's thread only says who it waits for. An approver
-with no `slack_id`, or one Slack will not open a direct message with, gets nothing in Slack and
-the thread says where to decide.
+with no `slack_id`, or one Slack will not deliver the prompt to, gets nothing in Slack and the
+thread says which it was and where they decide.
 
 An approval button decides through `Services.decide`, the code behind POST /approvals/{token},
 as the Principal the clicking Slack member maps to: the Runner refuses anyone but the
@@ -35,6 +36,7 @@ from cograil.channels.slack.blocks import (
     decided_text,
     no_slack_approver_text,
     outcome_text,
+    undelivered_prompt_text,
     waiting_text,
 )
 from cograil.channels.slack.identity import principal_for_slack_user, slack_id_of, slack_mention
@@ -139,6 +141,8 @@ class SlackChannel:
             try:
                 await self._services.decide(token, principal, decision, via="slack")
             except Exception as exc:  # a refusal is whispered; a Run that failed is announced
+                # Catching everything is safe: `_decided` returns None while the Approval is
+                # still pending, so an unexpected failure is never announced as a decision.
                 await self._decision_failed(
                     exc, user, (channel, thread_ts, message_ts), token, poster
                 )
@@ -213,7 +217,8 @@ class SlackChannel:
             await self._report(seen["run"]["run_id"], message.channel, message.thread_ts, poster)
 
     async def _continue(self, run: Run, message: Incoming, poster: Poster) -> None:
-        """A message in a Run's thread: re-ask a pending gate, or say where the Run stands."""
+        """A message in a Run's thread: repeat whom a pending gate waits for, or say where the
+        Run stands."""
         if run.status is RunStatus.awaiting_approval:
             await self._report(run.id, message.channel, message.thread_ts, poster, prompt=False)
             return
@@ -241,24 +246,26 @@ class SlackChannel:
     async def _deliver(
         self, run: Run, approval: Approval, thread: tuple[str, str], poster: Poster, *, prompt: bool
     ) -> None:
-        """Send the gate to its approver in a direct message and say in the thread whom it
-        waits for; an approver Slack cannot reach is told nothing, and the thread says where
-        to decide."""
+        """Say in the Run's thread whom a pending gate waits for, and with `prompt` also send
+        the gate to its approver in a direct message. An approver with no `slack_id`, or one
+        Slack will not deliver to, is sent nothing; the thread says where they decide."""
         workspace = self._services.workspace
         approver = slack_mention(workspace, approval.approver)
         slack_id = slack_id_of(workspace, approval.approver)
         if slack_id is None:
             await poster.post(*thread, no_slack_approver_text(approver))
             return
-        if prompt:
-            blocks = approval_blocks(approval, slack_mention(workspace, run.principal_id))
-            try:
-                dm = await poster.open_dm(slack_id)
+        try:
+            # Opened even without `prompt`: whether Slack answers says if the approver is still
+            # reachable, without sending them the prompt a second time.
+            dm = await poster.open_dm(slack_id)
+            if prompt:
+                blocks = approval_blocks(approval, slack_mention(workspace, run.principal_id))
                 await poster.post(dm, None, f"Approval needed for {approval.tool}", blocks)
-            except Exception as exc:  # Slack refused (a missing scope, a deactivated member)
-                log_event("slack.prompt_undelivered", logging.WARNING, error=type(exc).__name__)
-                await poster.post(*thread, no_slack_approver_text(approver))
-                return
+        except Exception as exc:  # Slack refused (a missing scope, a deactivated member)
+            log_event("slack.prompt_undelivered", logging.WARNING, error=type(exc).__name__)
+            await poster.post(*thread, undelivered_prompt_text(approver))
+            return
         await poster.post(*thread, waiting_text(approver))
 
     @contextmanager

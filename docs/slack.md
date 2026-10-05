@@ -47,13 +47,13 @@ id and starts nothing.
 - A gate's prompt goes to its **approver**, not to the requester's thread. The bot opens a direct
   message with the approver (the approver's `slack_id` in `principals.yaml`, the same map
   reversed) and posts the prompt there: who asked, the Tool, the Step, the call's arguments as
-  the approval page shows them (clipped to 1000 characters, with a pointer to the page for the
-  rest), and **Approve** and **Decline** buttons. The Run's thread gets a line, "Waiting for
-  <approver> to approve.", and no buttons. A message in the thread asking again repeats that line;
-  it does not send the approver the prompt a second time.
-- An approver with no `slack_id` (or one Slack will not open a direct message with, for example
-  because the app lacks `im:write`) is sent nothing in Slack, and the thread says so and points
-  to the link in their email and to the approval page.
+  the approval page shows them (clipped to 1000 characters after escaping, with a pointer to the
+  page for the rest), and **Approve** and **Decline** buttons. The Run's thread gets a line,
+  "Waiting for <approver> to approve.", and no buttons. A message in the thread asking again
+  repeats that line; it does not send the approver the prompt a second time.
+- An approver with no `slack_id` (or one Slack will not deliver the prompt to, for example
+  because the app lacks `im:write`) is sent nothing in Slack, and the thread says which of the
+  two it was and points to the link in their email and to the approval page.
 - A click is a decision by the Principal the clicking member maps to. The Runner refuses anyone
   but the approver, including the Run's own requester, and writes a `gate.refused` AuditEvent; the
   click is recorded on `gate.resumed` as `via: slack`. The refusal is shown only to the person who
@@ -78,6 +78,7 @@ change:
   and groups decide who may start a Run and what it may read, not who can read the channel. Use
   direct messages for Colleagues that handle protected information (#245).
 - **Two members can end up with a Run each in one thread** (the lookup is per requester), and a
-  message in a thread re-asks the gate or reports status; its own text is not used (#245).
+  message in a thread repeats the waiting line or reports status; its own text is not used
+  (#245).
 - **A direct message that also mentions the bot is ignored**, and the Slack path has no message
   length cap like the web chat's (#243).
