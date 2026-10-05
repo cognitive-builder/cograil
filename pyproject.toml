@@ -47,8 +47,8 @@ dev = [
   "types-jsonschema",
 ]
 docs = [
-  "mkdocs>=1.6",
-  "mkdocs-material>=9.5",
+  "mkdocs>=1.6,<2",
+  "mkdocs-material>=9.5,<10",
 ]
 
 [build-system]
