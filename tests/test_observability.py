@@ -19,7 +19,7 @@ from cograil.cost import charge
 from cograil.domain import Colleague, Harness, Price
 from cograil.errors import ModelSpanMissing
 from cograil.harness import tier_model
-from cograil.observability import OTLP_ENDPOINT_ENV, _exporter, model_span, step_span
+from cograil.observability import OTLP_ENDPOINT_ENV, _exporter, model_span, run_span, step_span
 from cograil.parser import parse_protocol
 from cograil.providers import FakeProvider, scripted
 from cograil.providers.base import Usage
@@ -101,41 +101,50 @@ def test_a_failing_span_keeps_the_exception_type_but_not_its_message(
 
 async def test_a_charge_outside_a_model_span_is_refused(store: InMemoryRunStore) -> None:
     # The mistake a routing or redaction call would make once it is charged like a Step's own
-    # call (#226): its usage would be stamped on whatever span is current, here a Step's.
+    # call (#226): its usage would be stamped on whatever span is current, a Step's or the
+    # Run's, instead of on the chat span of the call.
     run = await store.get_run("r1")
     usage = Usage(input_tokens=10, output_tokens=5)
     with pytest.raises(ModelSpanMissing), step_span(run, PROTOCOL.steps[0]):
+        charge(PRICES, run, "fake-model", usage)
+    with pytest.raises(ModelSpanMissing), run_span(run, "leave_request"):
         charge(PRICES, run, "fake-model", usage)
 
 
 # The shared test setup installs a tracer provider at import, and OpenTelemetry allows only one
 # per process, so `configure_tracing` runs in a child interpreter, which starts with none.
 _TRACING_CHILD = """
-import io, json, sys
+import io, json, sys, traceback
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 
 mode = sys.argv[1]
-if mode != "off":
-    sys.stderr = io.StringIO()  # the console exporter binds this when configure_tracing builds it
-from cograil.observability import configure_tracing, model_span, record_model_call
-from cograil.providers.base import Usage
+real_stderr = sys.stderr
+try:
+    if mode != "off":
+        sys.stderr = io.StringIO()  # the console exporter binds this when it is built
+    from cograil.observability import configure_tracing, model_span, record_model_call
+    from cograil.providers.base import Usage
 
-was_installed = isinstance(trace.get_tracer_provider(), TracerProvider)
-provider = trace.get_tracer_provider()
-if mode != "off":
-    configure_tracing()
+    was_installed = isinstance(trace.get_tracer_provider(), TracerProvider)
     provider = trace.get_tracer_provider()
-    configure_tracing()  # a second call after one is installed changes nothing
-with model_span("fake-model"):
-    record_model_call("fake-model", Usage(input_tokens=10, output_tokens=5), 0.0)
-print(json.dumps({
-    "was_installed": was_installed,
-    "installed": isinstance(trace.get_tracer_provider(), TracerProvider),
-    "idempotent": provider is trace.get_tracer_provider(),
-    "flushed": provider.force_flush(10_000) if mode != "off" else None,
-    "stderr": sys.stderr.getvalue() if mode != "off" else "",
-}))
+    if mode != "off":
+        configure_tracing()
+        provider = trace.get_tracer_provider()
+        configure_tracing()  # a second call after one is installed changes nothing
+    with model_span("fake-model"):
+        record_model_call("fake-model", Usage(input_tokens=10, output_tokens=5), 0.0)
+    print(json.dumps({
+        "was_installed": was_installed,
+        "installed": isinstance(trace.get_tracer_provider(), TracerProvider),
+        "idempotent": provider is trace.get_tracer_provider(),
+        "flushed": provider.force_flush(10_000) if mode != "off" else None,
+        "stderr": sys.stderr.getvalue() if mode != "off" else "",
+    }))
+except BaseException:
+    # sys.stderr is the capture buffer here, so a crash must reach the real one to be seen.
+    traceback.print_exc(file=real_stderr)
+    raise
 """
 
 

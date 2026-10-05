@@ -14,8 +14,8 @@ A Run execution is one trace, a tree of spans:
   a compression and an injection screen each make one. The classification of a chat message, the
   small-tier redaction and eval runs make model calls outside a Step; they have no span yet.
 
-A model call's tokens and cost belong to its own `chat` span: charging one anywhere else is
-refused as an error instead of putting its usage on the Step or Run span.
+A model call's tokens and cost belong to its own `chat` span: a charge made while a Step or
+Run span is current is refused as an error instead of putting its usage on that span.
 
 ## Attributes
 
