@@ -10,6 +10,12 @@ mid-write still leaves a record.
 Whitelists and gates are the runner's job; the registry only answers "what is this Tool
 and what did it do".
 
+Arguments over MAX_TOOL_ARGS_BYTES, serialised as JSON, are refused with ToolArgumentError
+(issue #286): `refuse_oversized` records the refusal like a failed invoke, without the
+arguments, and `invoke` calls it first. The runner calls it before any Gate is created.
+The cap is in code, not harness.yaml: a workspace cannot raise it, and adding a field to the
+Harness would change every harness version and refuse the approval of every paused Run.
+
 A `decision` Tool also gets a `decision.evaluated` AuditEvent naming the table, its version and
 the rules that fired (ADR 0009); its ToolCall result is the outcome as plain data.
 
@@ -68,6 +74,8 @@ if TYPE_CHECKING:
 Closer = Callable[[], Awaitable[None]]
 
 UNVERSIONED = "unversioned"
+
+MAX_TOOL_ARGS_BYTES = 64 * 1024
 
 _HTTP_TIMEOUT_S = 10.0
 
@@ -129,6 +137,7 @@ class ToolRegistry:
     async def invoke(self, name: str, args: Mapping[str, Any], ctx: CallContext) -> Any:
         """Validate, call and record; raises ToolNotFound, ToolArgumentError or
         ToolExecutionError (or a typed error the Tool raised itself)."""
+        await self.refuse_oversized(name, args, ctx)
         call = ToolCall(step=ctx.step, tool=name, args=dict(args), started_at=_now())
         try:
             entry = self._entries.get(name)
@@ -151,6 +160,20 @@ class ToolRegistry:
             raise error from exc
         await self._record(ctx, call, result=result)
         return result
+
+    async def refuse_oversized(self, name: str, args: Mapping[str, Any], ctx: CallContext) -> None:
+        """Raise ToolArgumentError if the arguments as JSON exceed MAX_TOOL_ARGS_BYTES, after
+        recording the refusal: a ToolCall without the arguments and a `tool.called` AuditEvent."""
+        text = json.dumps(dict(args), separators=(",", ":"), ensure_ascii=False, default=str)
+        size = len(text.encode())
+        if size <= MAX_TOOL_ARGS_BYTES:
+            return
+        error = ToolArgumentError(
+            f"{name}: arguments are {size} bytes as JSON, over the {MAX_TOOL_ARGS_BYTES}-byte cap"
+        )
+        await self._record(ctx, ToolCall(step=ctx.step, tool=name, args={}, started_at=_now()),
+                           error=str(error))  # fmt: skip
+        raise error
 
     async def _record(
         self, ctx: CallContext, call: ToolCall, result: Any = None, error: str | None = None
