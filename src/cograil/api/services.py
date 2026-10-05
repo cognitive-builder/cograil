@@ -154,16 +154,14 @@ class Services:
         """Start and run the Run a Schedule asks for, as the system principal it names.
 
         The audience check and the Tool gates apply as for a chat Run; a write waits for an
-        Approval. The Run starts with a `schedule.fired` AuditEvent naming the Schedule. The
-        task that runs it is kept in `tasks`, so shutdown lets the Run finish."""
-        task = asyncio.current_task()
-        if task is not None:
-            self.tasks.add(task)
-        try:
-            return await self._scheduled(colleague, schedule)
-        finally:
-            if task is not None:
-                self.tasks.discard(task)
+        Approval. The Run starts with a `schedule.fired` AuditEvent naming the Schedule.
+
+        The Run is its own task, kept in `tasks` and shielded from the job: stopping the
+        scheduler cancels the job, but shutdown still lets the Run finish before the store goes."""
+        task = asyncio.ensure_future(self._scheduled(colleague, schedule))
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+        return await asyncio.shield(task)
 
     async def _scheduled(self, colleague: Colleague, schedule: Schedule) -> Run:
         protocol, colleague = self.pick(schedule.protocol, colleague.name)

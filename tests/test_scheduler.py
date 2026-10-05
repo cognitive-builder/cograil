@@ -386,6 +386,7 @@ async def test_the_app_starts_the_scheduler_with_a_schedule_and_stops_it(tmp_pat
         scheduler = app.state.cograil_scheduler
         assert scheduler.running
         assert [job.id for job in scheduler.get_jobs()] == ["helper/nightly"]
+    await asyncio.sleep(0)  # APScheduler finishes stopping on the next turn of the loop
     assert not scheduler.running
 
 
