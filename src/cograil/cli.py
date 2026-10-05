@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Literal
@@ -19,41 +19,34 @@ from typing import Annotated, Literal
 import typer
 
 from cograil.audience import check_audience, resolve_principal
-from cograil.cliexit import (
-    EXIT_BY_STATUS,
-    EXIT_CODES,
-    EXIT_FAILED,
-    await_command,
-    fail,
+from cograil.cli_support import (
+    AsOption,
+    FakeScript,
+    build_tools,
+    check_tools,
+    guarded_decision,
+    guarded_run,
+    load_or_fail,
+    make_run_provider,
+    pick_protocol,
+    principal_id,
+    report_run,
 )
+from cograil.cliexit import EXIT_CODES, await_command, fail
 from cograil.context import cache_ledger, compression_ledger, format_ledger, window_ledger
 from cograil.cost import cost_by_protocol, format_cost_table
 from cograil.decisions import parse_inputs, table_for
-from cograil.domain import Colleague, Protocol, Run, RunStatus, Workspace
 from cograil.errors import (
-    ApprovalAlreadyDecided,
-    ApprovalNotAllowed,
     ApprovalNotFound,
     AudienceDenied,
-    CograilError,
     DecisionError,
-    RunClaimLost,
     RunNotFound,
-    RunNotPaused,
-    RunVersionChanged,
-    ToolNotFound,
-    WorkspaceError,
 )
 from cograil.evals.cli import eval_command
 from cograil.graph_cli import graph
 from cograil.knowledge.cli import knowledge_app
-from cograil.knowledge.store import PostgresKnowledgeStore
-from cograil.knowledge.tool import add_knowledge
 from cograil.progress import ProgressStore
-from cograil.providers import FakeProvider, Provider, make_provider, provider_ready
-from cograil.providers.fake import load_script
-from cograil.redaction import redactor
-from cograil.registry import ToolRegistry, build_registry
+from cograil.providers import FakeProvider
 from cograil.run_input import received_run
 from cograil.runner import Runner
 from cograil.store import PostgresRunStore, RunStore
@@ -67,17 +60,6 @@ app = typer.Typer(
 app.add_typer(knowledge_app, name="knowledge")
 app.command()(graph)
 app.command(name="eval")(eval_command)
-AsOption = Annotated[
-    str, typer.Option("--as", help="The principal acting (for approve, the deciding approver).")
-]
-FakeScript = Annotated[
-    Path | None,
-    typer.Option(
-        "--fake-script",
-        help="Use the FakeProvider with the plans in this YAML file instead of Anthropic. "
-        "Ignored with --decline.",
-    ),
-]
 
 
 @app.command()
@@ -104,74 +86,6 @@ def validate(
     )
 
 
-def _principal_id(value: str) -> str:
-    if not value.strip():
-        fail("--as must name a principal")
-    return value.strip()
-
-
-def _load(path: Path) -> Workspace:
-    try:
-        return load_workspace(path)
-    except WorkspaceError as exc:
-        fail(f"invalid: {exc}")
-
-
-def _pick(workspace: Workspace, name: str) -> tuple[Protocol, Colleague]:
-    protocol = next((p for p in workspace.protocols if p.name == name), None)
-    if protocol is None:
-        fail(f"no protocol {name!r} in {workspace.name}")
-    colleague = next((c for c in workspace.colleagues if protocol.name in c.protocols), None)
-    if colleague is None:
-        fail(f"no colleague runs protocol {protocol.name!r}")
-    return protocol, colleague
-
-
-def _provider(workspace: Workspace, script: Path | None) -> Provider:
-    if script is not None:
-        try:
-            return FakeProvider(load_script(script))
-        except CograilError as exc:
-            fail(str(exc))
-    harness = workspace.harness
-    if not provider_ready(harness):
-        fail("ANTHROPIC_API_KEY is not set (or use --fake-script)")
-    try:
-        return make_provider(harness, harness.models.standard)
-    except CograilError as exc:
-        fail(str(exc))
-
-
-async def _registry(workspace: Workspace, store: RunStore, root: Path, live: bool) -> ToolRegistry:
-    try:
-        registry = await build_registry(workspace, store, root, redactor=redactor(workspace, live))
-    except CograilError as exc:
-        fail(f"cannot build the tools: {exc}")
-    url = os.environ.get("DATABASE_URL")
-    if url and any(tool.kind == "knowledge" for tool in workspace.tools):
-        knowledge = PostgresKnowledgeStore.from_url(url)  # the Chunks `knowledge sync` stored
-        registry.on_close(knowledge.dispose)
-        add_knowledge(registry, workspace, knowledge)
-    return registry
-
-
-def _check_tools(workspace: Workspace, protocol: Protocol, registry: ToolRegistry) -> None:
-    """Refuse to go on when a Step names a Tool nothing implements yet."""
-    kinds = {tool.name: tool.kind for tool in workspace.tools}
-    for step in protocol.steps:
-        for name in step.tools:
-            try:
-                registry.get(name)
-            except ToolNotFound:
-                # _registry leaves the knowledge kind out when DATABASE_URL is unset.
-                hint = (
-                    "; knowledge tools need DATABASE_URL"
-                    if kinds[name] == "knowledge" and not os.environ.get("DATABASE_URL")
-                    else ""
-                )
-                fail(f"step {step.number}: tool {name} (kind {kinds[name]}) is not available{hint}")
-
-
 @app.command()
 def run(
     path: Annotated[Path, typer.Argument(help="Workspace folder.")],
@@ -194,24 +108,24 @@ def run(
     """
     if not message.strip():
         raise typer.BadParameter("say what the Run is asked to do", param_hint="--message")
-    await_command(_run(path, protocol, _principal_id(as_), message, fake_script))
+    await_command(_run(path, protocol, principal_id(as_), message, fake_script))
 
 
 async def _run(
     path: Path, protocol_name: str, principal_id: str, message: str, script: Path | None
 ) -> None:
-    workspace = _load(path)
-    protocol, colleague = _pick(workspace, protocol_name)
+    workspace = load_or_fail(path)
+    protocol, colleague = pick_protocol(workspace, protocol_name)
     principal = resolve_principal(workspace, principal_id)
     try:
         check_audience(workspace, colleague, protocol, principal)
     except AudienceDenied as exc:
         fail(f"denied: {exc}")
-    provider = _provider(workspace, script)
+    provider = make_run_provider(workspace, script)
     async with open_store() as base:
         store = ProgressStore(base, typer.echo)
-        async with await _registry(workspace, store, path, script is None) as registry:
-            _check_tools(workspace, protocol, registry)
+        async with await build_tools(workspace, store, path, script is None) as registry:
+            check_tools(workspace, protocol, registry)
             # Trigger.kind has no "cli": a CLI Run is a chat on the channel "cli".
             started = received_run(
                 workspace.name, path, protocol, colleague, principal, channel="cli", message=message
@@ -219,32 +133,8 @@ async def _run(
             await store.create_run(started)
             typer.echo(f"run {started.id} ({protocol.name} as {principal.id})")
             runner = Runner(provider, registry, store, colleague, harness=workspace.harness)
-            ended = await _guarded(runner.run(started.id, protocol))
-            await _report(store, colleague, ended)
-
-
-async def _guarded(running: Awaitable[Run]) -> Run:
-    """The Runner's result; a failed Run (closed by the Runner) exits with EXIT_FAILED."""
-    try:
-        return await running
-    except CograilError as exc:
-        fail(f"failed: {type(exc).__name__}: {exc}", EXIT_FAILED)
-
-
-async def _report(store: RunStore, colleague: Colleague, ended: Run) -> None:
-    """Say how the Run stands, what to do next, and exit with the code of its status."""
-    typer.echo(f"{ended.id}  {ended.status}  ${ended.cost_usd:.4f}")
-    if ended.status is RunStatus.awaiting_approval:
-        for approval in await store.list_approvals(ended.id):
-            if approval.decision == "pending":
-                typer.echo(
-                    f"awaiting {approval.approver} to approve {approval.tool} (step "
-                    f"{approval.step}): cograil approve {approval.token} --as {approval.approver}"
-                )
-    elif ended.status is RunStatus.escalated:
-        typer.echo(f"escalated to {colleague.escalation_contact}")
-    if ended.status in EXIT_BY_STATUS:
-        raise typer.Exit(code=EXIT_BY_STATUS[ended.status])
+            ended = await guarded_run(runner.run(started.id, protocol))
+            await report_run(store, colleague, ended)
 
 
 @app.command()
@@ -272,7 +162,7 @@ def approve(
     DATABASE_URL, database unreachable, workspace changed or missing); 2 usage error; 3 paused
     again at another gate; 4 escalated; 5 failed.
     """
-    await_command(_approve(token, _principal_id(as_), workspace, decline, fake_script))
+    await_command(_approve(token, principal_id(as_), workspace, decline, fake_script))
 
 
 async def _approve(
@@ -288,36 +178,20 @@ async def _approve(
         if path is None and not recorded:
             fail("the Run records no workspace folder; pass --workspace")
         where = path or Path(str(recorded))
-        workspace = _load(where)
-        protocol, colleague = _pick(workspace, paused.protocol)
+        workspace = load_or_fail(where)
+        protocol, colleague = pick_protocol(workspace, paused.protocol)
         if protocol.version != paused.protocol_version:
             fail(f"protocol {protocol.name} is now version {protocol.version}; the Run has "
                  f"version {paused.protocol_version}")  # fmt: skip
-        provider = FakeProvider([]) if decline else _provider(workspace, script)
-        async with await _registry(workspace, store, where, script is None) as registry:
+        provider = FakeProvider([]) if decline else make_run_provider(workspace, script)
+        async with await build_tools(workspace, store, where, script is None) as registry:
             runner = Runner(provider, registry, store, colleague, harness=workspace.harness)
             decision: Literal["approved", "declined"] = "declined" if decline else "approved"
             canonical = resolve_principal(workspace, decider).id
-            ended = await _decide(
+            ended = await guarded_decision(
                 runner.resume(token, protocol, decider=canonical, decision=decision)
             )
-            await _report(store, colleague, ended)
-
-
-async def _decide(deciding: Awaitable[Run]) -> Run:
-    """The Runner's result of a decision; refusals exit 1, a Run that failed exits 5."""
-    try:
-        return await deciding
-    except (
-        ApprovalNotAllowed,
-        RunNotPaused,
-        ApprovalAlreadyDecided,
-        RunClaimLost,
-        RunVersionChanged,
-    ) as exc:
-        fail(f"refused: {exc}")
-    except CograilError as exc:
-        fail(f"failed: {type(exc).__name__}: {exc}", EXIT_FAILED)
+            await report_run(store, colleague, ended)
 
 
 @asynccontextmanager
@@ -393,7 +267,7 @@ def decide(
     Exit codes: 0 evaluated; 1 error (invalid workspace, unknown table, bad or missing input,
     no rule matched under hit_policy first); 2 usage error.
     """
-    loaded = _load(workspace)
+    loaded = load_or_fail(workspace)
     try:
         found = table_for(loaded.decisions, table)
         outcome = found.evaluate(parse_inputs(found.decision, inputs or []))
