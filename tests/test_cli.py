@@ -493,3 +493,28 @@ def test_cost_counts_the_newest_limit_runs_across_all_protocols(
     assert leave == [
         "leave_request", "2", "2", "110000", "50000", "0", "0", "0", "$0.2100", "$0.1050",
     ]  # fmt: skip
+
+
+# Issue #251: a Harness with a dollar budget and no price for the fake model.
+BUDGETED = """\
+loop: {usd_budget_per_run: 0.50}
+tiers: {small: m, standard: m, strong: m}
+pricing: {m: {input_per_mtok: 1.0, output_per_mtok: 2.0}}
+"""
+
+
+def test_fake_script_needs_no_price_for_the_fake_model_under_a_dollar_budget(
+    shared_store: InMemoryRunStore, tmp_path: Path
+) -> None:
+    copy = tmp_path / "ws"
+    shutil.copytree(DEMO, copy)
+    (copy / "harness.yaml").write_text(BUDGETED)
+    args = ["run", str(copy), "--protocol", "record_item", "--as", ALICE, *ASK]
+    started = runner.invoke(app, [*args, "--fake-script", script(tmp_path, RUN_SCRIPT)])
+    assert started.exit_code == cograil.cliexit.EXIT_AWAITING_APPROVAL, started.output
+    assert "loop_budget_exceeded" not in started.output
+    rest = ["--fake-script", script(tmp_path, REST_SCRIPT, "rest.yaml")]
+    resumed = runner.invoke(app, ["approve", token_in(started.output), "--as", MANAGER, *rest])
+    assert resumed.exit_code == 0, resumed.output
+    (run,) = asyncio.run(shared_store.list_runs())
+    assert run.status is RunStatus.completed
