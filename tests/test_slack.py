@@ -3,6 +3,7 @@ buttons decide as the Principal the clicking member maps to, and members map to 
 through principals.yaml. A fake Poster stands in for Slack; no test calls Slack."""
 
 import shutil
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -25,7 +26,7 @@ from cograil.channels.slack import (
     principal_for_slack_user,
     slack_settings,
 )
-from cograil.channels.slack.blocks import APPROVE_ACTION, DECLINE_ACTION
+from cograil.channels.slack.blocks import APPROVE_ACTION, DECLINE_ACTION, MAX_TEXT, args_text
 from cograil.channels.slack.bolt import (
     BoltPoster,
     SlackListeners,
@@ -38,7 +39,9 @@ from cograil.errors import SlackNotConfigured, WorkspaceError
 from cograil.workspace import load_workspace
 
 ALICE, MANAGER, OUTSIDER = "U_ALICE", "U_MANAGER", "U_OUTSIDER"
-DM = "D1"
+DM = "D1"  # Alice's direct message with the bot, where her Run's thread is
+MANAGER_DM = "D2"  # the manager's: Slack gives each member their own conversation
+DMS = {ALICE: DM, MANAGER: MANAGER_DM, OUTSIDER: "D3"}
 ALICE_ID = "alice@example.com"
 
 
@@ -47,13 +50,26 @@ class FakePoster:
         self.posts: list[dict[str, Any]] = []
         self.whispers: list[dict[str, Any]] = []
         self.replaced: list[dict[str, Any]] = []
+        self.refuse_dm = False
 
     async def post(
-        self, channel: str, thread_ts: str, text: str, blocks: list[dict[str, Any]] | None = None
+        self,
+        channel: str,
+        thread_ts: str | None,
+        text: str,
+        blocks: list[dict[str, Any]] | None = None,
     ) -> None:
         self.posts.append(
             {"channel": channel, "thread_ts": thread_ts, "text": text, "blocks": blocks}
         )
+
+    async def open_dm(self, user: str) -> str:
+        if self.refuse_dm:
+            raise RuntimeError("missing_scope")
+        return DMS[user]
+
+    def in_channel(self, channel: str) -> list[dict[str, Any]]:
+        return [p for p in self.posts if p["channel"] == channel]
 
     async def whisper(self, channel: str, thread_ts: str, user: str, text: str) -> None:
         self.whispers.append({"user": user, "text": text})
@@ -113,7 +129,9 @@ async def start(env: Env, channel: SlackChannel, poster: FakePoster, **kwargs: A
 async def decide(
     channel: SlackChannel, poster: FakePoster, *, user: str = MANAGER, decision: Any = "approved"
 ) -> None:
-    await channel.on_decision(user, DM, "100.1", "100.2", poster.token(), decision, poster)
+    """A click on the prompt, in the clicking member's own conversation with the bot."""
+    where = DMS.get(user, "D9")
+    await channel.on_decision(user, where, "300.1", "300.1", poster.token(), decision, poster)
 
 
 # Messages to the bot start or continue a run; one thread per run
@@ -129,7 +147,7 @@ async def test_a_message_starts_a_run_and_answers_in_its_thread(
     assert run.context["slack"] == {"channel": DM, "thread_ts": "100.1"}
     assert run.context["input"]["message"] == "record 42"
     assert run.status is RunStatus.awaiting_approval
-    assert {p["thread_ts"] for p in poster.posts} == {"100.1"}
+    assert {p["thread_ts"] for p in poster.in_channel(DM)} == {"100.1"}
     assert [b["action_id"] for b in poster.buttons()] == [APPROVE_ACTION, DECLINE_ACTION]
 
 
@@ -150,8 +168,9 @@ async def test_a_message_in_a_runs_thread_continues_it_without_starting_another(
     await start(env, channel, poster)
     await channel.on_message(say("any news?", dm=False), poster)  # no mention, still the thread
     assert len(await services.store.list_runs()) == 1
-    assert len(poster.buttons()) == 4  # the gate is asked again, in the same thread
-    assert {p["thread_ts"] for p in poster.posts} == {"100.1"}
+    assert len(poster.buttons()) == 2  # the approver is not sent the gate a second time
+    assert poster.in_channel(DM)[-1]["text"] == f"Waiting for <@{MANAGER}> to approve."
+    assert {p["thread_ts"] for p in poster.in_channel(DM)} == {"100.1"}
 
 
 async def test_a_finished_runs_thread_says_so_and_starts_nothing(
@@ -186,7 +205,10 @@ async def test_the_approvers_click_approves_and_the_run_goes_on(
     await decide(channel, poster)
     (run,) = await services.store.list_runs()
     assert run.status is RunStatus.completed
-    assert poster.replaced == [{"ts": "100.2", "text": f"Approved by <@{MANAGER}>."}]
+    assert poster.replaced == [
+        {"ts": "300.1", "text": f"Approved by <@{MANAGER}>: `demo.record` (step 2)."}
+    ]
+    assert (poster.posts[-1]["channel"], poster.posts[-1]["thread_ts"]) == (DM, "100.1")
     assert poster.posts[-1]["text"] == "Recorded"
     resumed = [
         e for e in await services.store.list_audit_events(run.id) if e.kind == "gate.resumed"
@@ -232,6 +254,125 @@ async def test_a_second_click_changes_nothing(env: Env, channel: SlackChannel) -
     await decide(channel, poster)
     await decide(channel, poster)
     assert "not paused" in poster.whispers[0]["text"]  # the Run went on at the first decision
+
+
+# The prompt goes to the approver, with what is being approved (#242)
+
+
+async def test_the_prompt_reaches_the_approver_not_the_requesters_thread(
+    env: Env, channel: SlackChannel, services: Services
+) -> None:
+    poster = FakePoster()
+    await start(env, channel, poster)
+    assert poster.buttons() and all(p["blocks"] is None for p in poster.in_channel(DM))
+    (prompt,) = poster.in_channel(MANAGER_DM)  # their own conversation, top level
+    assert prompt["thread_ts"] is None and prompt["blocks"] is not None
+    assert poster.in_channel(DM)[-1]["text"] == f"Waiting for <@{MANAGER}> to approve."
+    # The click comes from the approver's conversation, a different one from the requester's.
+    env.run_scripts.append(env.script(REST_SCRIPT))
+    await decide(channel, poster)
+    (run,) = await services.store.list_runs()
+    assert run.status is RunStatus.completed
+    assert [r["ts"] for r in poster.replaced] == ["300.1"]
+    assert (poster.posts[-1]["channel"], poster.posts[-1]["text"]) == (DM, "Recorded")
+
+
+async def test_the_requester_cannot_decide_from_their_own_conversation(
+    env: Env, channel: SlackChannel, services: Services
+) -> None:
+    poster = FakePoster()
+    await start(env, channel, poster)
+    await channel.on_decision(ALICE, DM, "100.1", "100.1", poster.token(), "approved", poster)
+    (run,) = await services.store.list_runs()
+    assert run.status is RunStatus.awaiting_approval
+    assert "not the approver" in poster.whispers[0]["text"]
+
+
+async def test_the_prompt_names_the_requester_the_tool_the_step_and_the_arguments(
+    env: Env, channel: SlackChannel
+) -> None:
+    poster = FakePoster()
+    await start(env, channel, poster)
+    text = poster.in_channel(MANAGER_DM)[0]["blocks"][0]["text"]["text"]
+    assert f"<@{ALICE}>" in text and "`demo.record`" in text and "step 2" in text
+    assert '"item": "42"' in text
+
+
+@pytest.mark.parametrize(
+    ("args", "clipped"),
+    [({"item": "42"}, False), ({"item": "x" * 5000}, True)],
+)
+def test_arguments_are_clipped_with_a_pointer_to_the_approval_page(
+    args: dict[str, str], clipped: bool
+) -> None:
+    text = args_text(args)
+    assert ("The rest is on the approval page" in text) == clipped
+    assert len(text) < MAX_TEXT
+
+
+def test_arguments_cannot_ping_or_close_the_code_block() -> None:
+    text = args_text({"note": "<!channel> ``` <@U1>"})
+    assert "<" not in text and ">" not in text
+    assert text.count("```") == 2
+
+
+async def test_an_approver_without_a_slack_id_is_told_nothing_in_slack(
+    tmp_path: Path, pack: Path
+) -> None:
+    people = [
+        {"id": "alice@example.com", "slack_id": ALICE, "groups": ["staff"]},
+        {"id": "manager@example.com", "groups": ["staff"]},
+    ]
+    (pack / "principals.yaml").write_text(yaml.safe_dump({"principals": people}))
+    env = Env(tmp_path, root=pack)
+    channel = SlackChannel(env.app.state.cograil_services)
+    poster = FakePoster()
+    await start(env, channel, poster)
+    assert poster.buttons() == [] and {p["channel"] for p in poster.posts} == {DM}
+    said = poster.posts[-1]["text"]
+    assert "manager@example.com" in said and "email" in said and "approval page" in said
+
+
+async def test_a_prompt_slack_will_not_deliver_is_said_in_the_thread(
+    env: Env, channel: SlackChannel
+) -> None:
+    poster = FakePoster()
+    poster.refuse_dm = True
+    await start(env, channel, poster)
+    assert poster.buttons() == [] and "approval page" in poster.posts[-1]["text"]
+
+
+# What the thread says is what the Runner recorded
+
+
+async def test_an_approval_past_its_deadline_is_announced_as_expired(
+    env: Env, channel: SlackChannel, services: Services
+) -> None:
+    poster = FakePoster()
+    await start(env, channel, poster)
+    token = poster.token()
+    stale = env.store._approvals[token]  # type: ignore[attr-defined]
+    past = datetime.now(UTC) - timedelta(minutes=1)
+    env.store._approvals[token] = stale.model_copy(update={"expires_at": past})  # type: ignore[attr-defined]
+    await decide(channel, poster)  # the button said Approve
+    (run,) = await services.store.list_runs()
+    assert run.status is RunStatus.escalated
+    (replaced,) = poster.replaced
+    assert replaced["text"].startswith("Expired") and "Approved" not in replaced["text"]
+
+
+async def test_a_run_that_fails_after_an_approval_is_reported_in_its_thread(
+    env: Env, channel: SlackChannel, services: Services
+) -> None:
+    poster = FakePoster()
+    await start(env, channel, poster)
+    await decide(channel, poster)  # no script for the next Step: it raises, and the Run fails
+    (run,) = await services.store.list_runs()
+    assert run.status is RunStatus.failed
+    assert poster.whispers == []  # not shown to the clicker as a refusal
+    assert poster.replaced[0]["text"].startswith("Approved")  # the buttons are gone
+    assert (poster.posts[-1]["channel"], poster.posts[-1]["thread_ts"]) == (DM, "100.1")
+    assert "failed after the decision" in poster.posts[-1]["text"]
 
 
 # Slack user mapped to a principal and groups via workspace config
@@ -353,6 +494,18 @@ def test_the_app_serves_slack_only_when_it_is_set_up(
     settings = SlackSettings.model_validate({"bot_token": "xoxb-1", "signing_secret": "s"})
     assert answer(None) == 404  # Slack is off
     assert answer(settings) == 401  # on, and an unsigned request is refused
+
+
+async def test_a_direct_message_is_opened_with_the_approver() -> None:
+    opened: list[dict[str, Any]] = []
+
+    class Client:
+        async def conversations_open(self, **kwargs: Any) -> dict[str, Any]:
+            opened.append(kwargs)
+            return {"channel": {"id": "D9"}}
+
+    assert await BoltPoster(cast(AsyncWebClient, Client())).open_dm(MANAGER) == "D9"
+    assert opened == [{"users": MANAGER}]
 
 
 async def test_posted_messages_are_not_unfurled() -> None:

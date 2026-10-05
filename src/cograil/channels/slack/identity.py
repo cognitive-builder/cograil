@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from cograil.audience import resolve_principal
 from cograil.domain import Principal, Workspace
+from cograil.identity import same_principal
 
 
 def principal_for_slack_user(workspace: Workspace, slack_id: str) -> Principal | None:
@@ -17,10 +18,17 @@ def principal_for_slack_user(workspace: Workspace, slack_id: str) -> Principal |
     return resolve_principal(workspace, known.id) if known else None
 
 
+def slack_id_of(workspace: Workspace, principal_id: str) -> str | None:
+    """The `slack_id` principals.yaml gives a principal: the map of `principal_for_slack_user`,
+    reversed. None when the principal is not listed or has no Slack id."""
+    known = next((p for p in workspace.principals if same_principal(p.id, principal_id)), None)
+    return known.slack_id if known else None
+
+
 def slack_mention(workspace: Workspace, principal_id: str) -> str:
     """How to name a principal in a message: `<@U...>` if they have a Slack id, else their id."""
-    known = next((p for p in workspace.principals if p.id == principal_id), None)
-    return f"<@{known.slack_id}>" if known and known.slack_id else escape(principal_id)
+    slack_id = slack_id_of(workspace, principal_id)
+    return f"<@{slack_id}>" if slack_id else escape(principal_id)
 
 
 def escape(text: str) -> str:

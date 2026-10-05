@@ -17,7 +17,8 @@ image) and set two environment variables:
 In your Slack app, point both the Events API and Interactivity request URLs at
 `https://<your service>/slack/events`. Subscribe the bot to `app_mention` and `message.im`
 (add `message.channels` and `message.groups` if replies in a channel thread should continue a
-Run), and give it the `chat:write` scope. The route has no sign-in of its own: Slack's signature
+Run), and give it the `chat:write` and `im:write` scopes (`im:write` lets it open a direct
+message with an approver). The route has no sign-in of its own: Slack's signature
 is checked first, and a request without a valid one gets a 401.
 
 ## Who is who
@@ -40,32 +41,39 @@ id and starts nothing.
 - A direct message to the bot, or an `@mention`, is a message. It is routed to a Colleague and
   Protocol the member may start, as in the web chat, and starts a Run. Everything about that Run
   is posted in the thread of the message: **one thread per Run**.
-- A message in the thread of a Run continues it. If the Run waits at a gate the prompt is posted
-  again; if it is still working, or over, the reply says so. A thread starts a second Run only if its Run is no longer among the
-  requester's 50 newest.
-- A gate is posted as a prompt with **Approve** and **Decline** buttons. A click is a decision
-  by the Principal the clicking member maps to. The Runner refuses anyone but the approver,
-  including the Run's own requester, and writes a `gate.refused` AuditEvent; the click is
-  recorded on `gate.resumed` as `via: slack`. The refusal is shown only to the person who clicked.
+- A message in the thread of a Run continues it. If the Run waits at a gate the reply says whom
+  it waits for; if it is still working, or over, the reply says so. A thread starts a second Run
+  only if its Run is no longer among the requester's 50 newest.
+- A gate's prompt goes to its **approver**, not to the requester's thread. The bot opens a direct
+  message with the approver (the approver's `slack_id` in `principals.yaml`, the same map
+  reversed) and posts the prompt there: who asked, the Tool, the Step, the call's arguments as
+  the approval page shows them (clipped to 1000 characters, with a pointer to the page for the
+  rest), and **Approve** and **Decline** buttons. The Run's thread gets a line, "Waiting for
+  <approver> to approve.", and no buttons. A message in the thread asking again repeats that line;
+  it does not send the approver the prompt a second time.
+- An approver with no `slack_id` (or one Slack will not open a direct message with, for example
+  because the app lacks `im:write`) is sent nothing in Slack, and the thread says so and points
+  to the link in their email and to the approval page.
+- A click is a decision by the Principal the clicking member maps to. The Runner refuses anyone
+  but the approver, including the Run's own requester, and writes a `gate.refused` AuditEvent; the
+  click is recorded on `gate.resumed` as `via: slack`. The refusal is shown only to the person who
+  clicked.
+- After a click, the prompt is replaced by what the Runner recorded, not by the button: approved,
+  declined, or **expired** (an Approval past its deadline is recorded as an expiry and the Run
+  escalates, although the button said Approve). The Run's own outcome follows in its thread. If
+  the Run fails after an accepted decision, the thread says so; it is not shown to the approver
+  as a refusal.
 - Model output is escaped before it is posted, so it cannot ping `@channel` or build a formatted
   link, and Slack is told not to unfurl links, so nothing in it is fetched on its own. A bare URL
   is still shown as a link a person may click.
 
-The prompt names the Tool and the Step, not the call's arguments; the approver sees those on the
-approval page (see [approvals](approvals.md)).
+The full call, and the email link that decides it, are described in [approvals](approvals.md).
 
 ## Known limits
 
 This first version has limits you should know before turning it on. They are tracked and will
 change:
 
-- **Approvals are posted in the requester's thread.** The approver is always someone other than
-  the requester, so the buttons work only when the approver can see that thread (a channel both
-  are in). For a Run started in a direct message, the approver decides with the email link or the
-  approval page. Delivering the prompt to the approver, with the arguments, is #242.
-- **The thread says which button was pressed, not what was recorded.** An Approval that had
-  already expired is recorded as an expiry and escalates, although the thread says "Approved"
-  (#242).
 - **A reply in a channel is visible to everyone in that channel**, entitled or not. Audiences
   and groups decide who may start a Run and what it may read, not who can read the channel. Use
   direct messages for Colleagues that handle protected information (#245).
