@@ -71,14 +71,15 @@ input price in `usd_budget_per_run`.
 
 ## Cost telemetry
 
-A Run's model calls (a Step's turn, a compression, an injection screen) add their dollars to
-the Run's `cost_usd` and their tokens to the Run's tally, which `GET /runs` and `GET /runs/{id}`
-show as `usage`. Two kinds of model call are not charged yet: the routing call
-(`classify_intent`), which happens before the Run is created, and redaction calls, which drop
-their usage (both tracked in #221). The tally keeps four kinds apart, because they are billed at
-different rates: fresh `input_tokens` and `output_tokens`, `cache_read_tokens` and
-`cache_write_tokens`, and `batch_tokens` (all the tokens of a call that went through the
-provider's batch path).
+Every model call made for a Run adds its dollars to the Run's `cost_usd` and its tokens to the
+Run's tally, which `GET /runs` and `GET /runs/{id}` show as `usage`. That is a Step's turn, a
+compression, an injection screen, the small tier's redaction of error text, and the routing call
+that started the Run from a chat message. A refused message starts no Run, so its routing call is
+charged to none. A Run that fails or escalates in the middle of a Step keeps the spend of every
+call made before it stopped, and `usd_budget_per_run` counts all of these calls. The tally keeps
+four kinds apart, because they are billed at different rates: fresh `input_tokens` and
+`output_tokens`, `cache_read_tokens` and `cache_write_tokens`, and `batch_tokens` (all the tokens
+of a call that went through the provider's batch path).
 
 `cograil runs --cost` prints one row per Protocol over the newest `--limit` Runs (default 20):
 the Runs, how many resolved, the tokens by kind, the cost, and the headline number of ADR 0013,

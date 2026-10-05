@@ -2,7 +2,8 @@
 
 Each request that runs something builds a Runner over a ProgressStore, so the AuditEvents and
 finished Steps of the Run stream out as they are written. The decider of an Approval is always
-the signed-in Principal (`decide`); nothing a client sends can name another.
+the signed-in Principal (`decide`); nothing a client sends can name another. The routing of a
+chat message is charged to the Run it starts (issue #221).
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from cograil.api.approval_mail import ApprovalMail
 from cograil.api.schemas import PendingApproval, RunOutcome, RunSummary
 from cograil.api.sse import Emit
 from cograil.audience import check_audience
+from cograil.cost import charge_aside
 from cograil.domain import (
     AuditEvent,
     Colleague,
@@ -32,7 +34,7 @@ from cograil.errors import ToolNotFound, WorkspaceError
 from cograil.identity import same_principal
 from cograil.orchestrator import classify_intent
 from cograil.progress import ProgressStore
-from cograil.providers.base import Provider
+from cograil.providers.base import Provider, Usage
 from cograil.redaction import Redactor
 from cograil.registry import ToolRegistry
 from cograil.run_input import received_run
@@ -103,10 +105,14 @@ class Services:
             yield Runner(provider, registry, store, colleague, harness=harness), store
 
     async def chat(self, principal: Principal, message: str, emit: Emit) -> None:
-        """Route a message, then start and run the Run it asks for, emitting as it goes."""
+        """Route a message, then start and run the Run it asks for, emitting as it goes.
+
+        The Run starts charged with the routing's model calls."""
+        routed: list[tuple[str, Usage]] = []
         routing = await classify_intent(
-            self.workspace, principal, message, self._classifier, self._redactor
-        )
+            self.workspace, principal, message, self._classifier, self._redactor,
+            lambda model, usage: routed.append((model, usage)),
+        )  # fmt: skip
         emit("routed", routing.model_dump(include={"colleague", "protocol", "confidence"}))
         if not routing.matched or routing.protocol is None or routing.colleague is None:
             emit("refusal", {"text": routing.refusal or ""})
@@ -123,6 +129,7 @@ class Services:
                 channel=CHANNEL,
                 message=message,
             )
+            run = charge_aside(self.workspace.harness, run, routed)
             await store.create_run(run)
             emit("run", {"run_id": run.id})
             await store.append_audit_event(_classified(run, routing))
