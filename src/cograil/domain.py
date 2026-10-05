@@ -147,6 +147,22 @@ class Protocol(Entity):
     model_tier: Tier | None = None  # beats the Colleague's default_tier; a Step's own tier beats it
 
 
+class Schedule(Entity):
+    """A cron Trigger of a Colleague: start `protocol` on `cron` as a system principal.
+
+    `principal` names a `kind: system` principal of the workspace's `principals.yaml`, and
+    `audience` names one of its Audiences; the Run's principal holds that Audience's groups and
+    no others, so knowledge and directory lookups pre-filter on them (rule 3). There is no
+    default audience. `cron` is five fields, in UTC. `message` is the Run's input."""
+
+    name: str
+    protocol: str
+    cron: str
+    principal: PrincipalId
+    audience: str
+    message: str = ""
+
+
 class Colleague(Entity):
     name: str
     role: str
@@ -154,6 +170,7 @@ class Colleague(Entity):
     protocols: list[str]
     default_tier: Tier = "standard"  # a tier, never a model name (ADR 0010, 0013)
     audiences: list[str] = Field(default_factory=lambda: ["everyone"])
+    schedules: list[Schedule] = Field(default_factory=list)
 
 
 class Audience(Entity):
@@ -457,6 +474,7 @@ class AuditEvent(Entity):
     kind: Literal[
         "run.started",
         "orchestrator.classified",
+        "schedule.fired",
         "tool.started",
         "tool.called",
         "decision.evaluated",

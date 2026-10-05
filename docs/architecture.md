@@ -183,6 +183,33 @@ with `cograil run`: for a user, the Colleague's and the Protocol's audiences mus
 the principal and the Protocol must allow manual execution; the system actor (a `Principal`
 of kind `system`) is allowed exactly when the Protocol allows scheduled execution.
 
+## Scheduled triggers
+
+A Colleague can start Runs on a cron (issue #32). The `schedules` list of `colleagues/*.yaml`
+holds the Schedules:
+
+```yaml
+schedules:
+  - name: nightly-digest
+    protocol: weekly_digest      # one of the Colleague's protocols
+    cron: "0 2 * * 1-5"          # five fields, UTC; 1-5 is Monday to Friday, as in cron
+    principal: digest-bot        # a `kind: system` principal in principals.yaml
+    audience: all-employees      # an Audience in audiences.yaml; there is no default
+    message: Send the weekly digest
+```
+
+- `load_workspace` refuses a Schedule whose Protocol is not the Colleague's own or does not say
+  `Scheduled execution: allowed`, whose cron is invalid, whose principal is not a `system`
+  principal, or whose audience is not in `audiences.yaml`. A system principal takes its groups
+  from the Schedule's audience, so it carries none of its own.
+- `cograil.scheduler.build_scheduler` puts one APScheduler job per Schedule on the event loop;
+  the web service starts it with the app and stops it at shutdown. Each tick calls
+  `Services.scheduled`, which runs the audience check, writes a `schedule.fired` AuditEvent
+  with the system principal and starts the Run with `Trigger(kind="schedule")`.
+- The Tool gates are unchanged: a scheduled Run that reaches a write Tool pauses for an
+  Approval like any other Run. A tick that raises a `CograilError` is logged as `schedule.failed`.
+- Each service process schedules its own jobs, so run one process per workspace.
+
 ## Not built yet
 
 - Authentication of the CLI: `--as` is not authenticated. The web and Slack channels sign people in.

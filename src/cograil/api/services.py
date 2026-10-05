@@ -28,6 +28,8 @@ from cograil.domain import (
     Routing,
     Run,
     RunStatus,
+    Schedule,
+    Trigger,
     Workspace,
 )
 from cograil.errors import ToolNotFound, WorkspaceError
@@ -39,6 +41,8 @@ from cograil.redaction import Redactor
 from cograil.registry import ToolRegistry
 from cograil.run_input import received_run
 from cograil.runner import Runner
+from cograil.scheduler import CHANNEL as SCHEDULE_CHANNEL
+from cograil.scheduler import scheduled_principal
 from cograil.store import RunStore
 
 type ProviderFactory = Callable[[Protocol, Colleague], Provider]
@@ -142,6 +146,28 @@ class Services:
             ended = await runner.run(run.id, protocol)
             await self._email_approvers(ended)
             emit("done", (await self.outcome(ended)).model_dump(mode="json"))
+
+    async def scheduled(self, colleague: Colleague, schedule: Schedule) -> Run:
+        """Start and run the Run a Schedule asks for, as the system principal it names.
+
+        The audience check and the Tool gates apply as for a chat Run; a write waits for an
+        Approval. The Run starts with a `schedule.fired` AuditEvent naming the Schedule."""
+        protocol, colleague = self.pick(schedule.protocol, colleague.name)
+        principal = scheduled_principal(self.workspace, schedule)
+        check_audience(self.workspace, colleague, protocol, principal)
+        async with self.runner(protocol, colleague, _ignore) as (runner, store):
+            run = received_run(
+                self.workspace.name, self.path, protocol, colleague, principal,
+                channel=SCHEDULE_CHANNEL,
+                message=schedule.message or schedule.name,
+                extra={"schedule": schedule.name},
+                trigger=Trigger(kind="schedule", channel=SCHEDULE_CHANNEL, cron=schedule.cron),
+            )  # fmt: skip
+            await store.create_run(run)
+            await store.append_audit_event(_fired(run, schedule))
+            ended = await runner.run(run.id, protocol)
+            await self._email_approvers(ended)
+            return ended
 
     async def _route(
         self, principal: Principal, message: str, emit: Emit
@@ -257,4 +283,15 @@ def _classified(run: Run, routing: Routing) -> AuditEvent:
         principal_id=run.principal_id,
         kind="orchestrator.classified",
         detail=detail,
+    )
+
+
+def _fired(run: Run, schedule: Schedule) -> AuditEvent:
+    """The Schedule that started the Run, as an AuditEvent with the system principal (rule 6)."""
+    return AuditEvent(
+        run_id=run.id,
+        at=datetime.now(UTC),
+        principal_id=run.principal_id,
+        kind="schedule.fired",
+        detail={"schedule": schedule.name, "cron": schedule.cron, "audience": schedule.audience},
     )
