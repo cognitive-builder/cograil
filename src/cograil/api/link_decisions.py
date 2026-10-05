@@ -3,11 +3,12 @@
 The link (cograil.approval_links) stands for the approver of that one Approval, so these routes
 need no sign-in; they answer 404 unless approval emails are configured. A bad or forged link
 answers 403 and changes nothing. GET only shows the call and two buttons: a mail scanner that
-opens the link decides nothing (an expired link escalates, on GET as on POST). POST decides, as
+opens the link decides nothing, and no GET writes anything (issue #282). POST decides, as
 the approver, through the same Runner rules as the signed-in route (the Run's own principal
 still cannot be the approver) and records `via: email_link` on the AuditEvent. An Approval is
-decided once, so a used link answers 409. A link past its expiry escalates the Run to the
-escalation contact and answers 410.
+decided once, so a used link answers 409. A link past its expiry answers 410 on both; the Run
+is escalated to the escalation contact by the sweep (cograil.approval_sweep), or at once by a
+POST that finds it still pending.
 """
 
 from __future__ import annotations
@@ -47,8 +48,13 @@ class LinkDecision(BaseModel):
     run_status: RunStatus
 
 
-async def _open_approval(token: str, exp: int, sig: str, services: ServicesDep) -> Approval:
-    """The Approval a valid link names, still pending and unexpired; otherwise an HTTP error."""
+async def _open_approval(
+    token: str, exp: int, sig: str, services: ServicesDep, *, expire: bool
+) -> Approval:
+    """The Approval a valid link names, still pending and unexpired; otherwise an HTTP error.
+
+    An expired link answers 410. With `expire` (a POST) it also escalates the Run now; without
+    it (a GET) nothing is written, as the sweep (cograil.approval_sweep) escalates it."""
     mail = services.approval_mail
     if mail is None:
         raise HTTPException(404, "approval links are not enabled")
@@ -60,6 +66,8 @@ async def _open_approval(token: str, exp: int, sig: str, services: ServicesDep) 
     if approval.decision != "pending":
         raise HTTPException(409, "this approval was already decided; the link works once")
     if mail.links.expired(exp, datetime.now(UTC)):
+        if not expire:
+            raise HTTPException(410, "this link has expired; the request is escalated")
         try:
             await services.expire(token)
         except (RunNotPaused, RunNotFound):
@@ -71,7 +79,7 @@ async def _open_approval(token: str, exp: int, sig: str, services: ServicesDep) 
 @router.get("/{token}", response_class=HTMLResponse)
 async def show_link(token: str, exp: Exp, sig: Sig, services: ServicesDep) -> HTMLResponse:
     """The call the gate holds and Approve and Decline buttons; decides nothing itself."""
-    approval = await _open_approval(token, exp, sig, services)
+    approval = await _open_approval(token, exp, sig, services, expire=False)
     run = await services.store.get_run(approval.run_id)
     page = _PAGE.format(
         who=html.escape(run.principal_id),
@@ -87,7 +95,7 @@ async def decide_link(
     token: str, exp: Exp, sig: Sig, body: DecisionRequest, services: ServicesDep
 ) -> LinkDecision:
     """Approve or decline as the approver the link stands for."""
-    await _open_approval(token, exp, sig, services)
+    await _open_approval(token, exp, sig, services, expire=True)
     async with decision_failures(refusal="you may not decide this approval"):
         outcome = await services.decide_by_link(token, body.decision)
     return LinkDecision(decision=body.decision, run_status=outcome.run.status)

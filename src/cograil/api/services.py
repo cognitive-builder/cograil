@@ -33,8 +33,9 @@ from cograil.domain import (
     Trigger,
     Workspace,
 )
-from cograil.errors import ToolNotFound, WorkspaceError
+from cograil.errors import CograilError, ToolNotFound, WorkspaceError
 from cograil.identity import same_principal
+from cograil.observability import log_event
 from cograil.orchestrator import classify_intent
 from cograil.progress import ProgressStore
 from cograil.providers.base import Provider, Usage
@@ -217,6 +218,23 @@ class Services:
         protocol, colleague = self._pick_for(run)
         async with self.runner(protocol, colleague, _ignore) as (runner, _):
             return await runner.expire(token)
+
+    async def sweep_overdue_approvals(self) -> list[str]:
+        """Escalate every Run paused on an Approval past its expiry, with no request asking.
+
+        Returns the tokens it expired. An Approval another workspace owns, or whose Run has
+        moved on since the query, is skipped and logged; the rest of the sweep still runs."""
+        expired: list[str] = []
+        for approval in await self.store.list_overdue_approvals(datetime.now(UTC)):
+            try:
+                run = await self.expire(approval.token)
+            except CograilError as exc:
+                log_event("approval.sweep_skipped", run_id=approval.run_id,
+                          token=approval.token, error=f"{type(exc).__name__}: {exc}")  # fmt: skip
+                continue
+            if run.status is RunStatus.escalated:
+                expired.append(approval.token)
+        return expired
 
     async def _decide(
         self,

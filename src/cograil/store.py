@@ -132,6 +132,11 @@ class RunStore(Protocol):
         """Ordered by token, the same in every implementation."""
         ...
 
+    async def list_overdue_approvals(self, now: datetime) -> list[Approval]:
+        """Every pending Approval of any Run whose `expires_at` is at or before `now`, ordered by
+        token. Read-only: the sweep that escalates them is `Services.sweep_overdue_approvals`."""
+        ...
+
     async def append_audit_event(self, event: AuditEvent) -> None: ...
 
     async def list_audit_events(self, run_id: str) -> list[AuditEvent]: ...
@@ -358,6 +363,20 @@ class PostgresRunStore:
 
     async def list_approvals(self, run_id: str) -> list[Approval]:
         query = select(approvals).where(approvals.c.run_id == run_id).order_by(approvals.c.token)
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [Approval.model_validate(dict(r)) for r in rows]
+
+    async def list_overdue_approvals(self, now: datetime) -> list[Approval]:
+        query = (
+            select(approvals)
+            .where(
+                (approvals.c.decision == "pending")
+                & approvals.c.expires_at.is_not(None)
+                & (approvals.c.expires_at <= now)
+            )
+            .order_by(approvals.c.token)
+        )
         async with self._engine.connect() as conn:
             rows = (await conn.execute(query)).mappings().all()
         return [Approval.model_validate(dict(r)) for r in rows]

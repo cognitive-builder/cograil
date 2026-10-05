@@ -129,8 +129,8 @@ When mail is configured, an approver gets a one-click link: `/approvals/link/{to
 
 1. **Signed for one Approval and one approver.** The signature is HMAC-SHA256 over the Approval's token, the normalised approver and the expiry. It is keyed by `COGRAIL_APPROVAL_LINK_SECRET` (32 characters or more) and compared in constant time. The token is 128 random bits. The Approval row it names fixes the Run, Step, Tool and arguments. No other Approval, approver or expiry verifies, and a forged link answers 403.
 2. **Single use, atomically.** An Approval is decided by a conditional update from `pending`, in one transaction with the Run and the AuditEvent. Of two concurrent clicks, exactly one wins. Any later use answers 409.
-3. **Expiry.** The link expires with its Approval (`approvals.timeout_hours`). A late link escalates the Run and answers 410. The Runner also records an overdue Approval as expired.
-4. **Opening it decides nothing.** GET shows the call. Only a POST with a JSON body decides. The page sends `no-store`, `no-referrer`, a strict Content Security Policy and `frame-ancestors 'none'`.
+3. **Expiry.** The link expires with its Approval (`approvals.timeout_hours`). A sweep inside the service (`cograil.approval_sweep`, at startup and every minute) records every overdue Approval as expired and escalates its Run, whether or not anyone opens the link. A late link answers 410.
+4. **Opening it decides nothing, and no GET writes anything.** GET shows the call, or answers 410 for an expired link without touching the Run or the Approval. Only a POST with a JSON body decides. The page sends `no-store`, `no-referrer`, a strict Content Security Policy and `frame-ancestors 'none'`.
 5. **The Runner's rules still apply.** The link decides as the Approval's approver, who can never be the Run's own principal. A Run started under another harness or tool pack is refused.
 6. **Slack.** Bolt checks Slack's request signature and timestamp. A replay inside Slack's window hits the single-use decision. The decider is the member who clicked, mapped through `slack_id`. Only a `kind: user` principal can be mapped.
 7. **Kept out of the logs.** The service strips the query from approval-link paths in its access log. The link is never written to an AuditEvent.
@@ -141,7 +141,7 @@ When mail is configured, an approver gets a one-click link: `/approvals/link/{to
 - **Request logs in front of the service** still record the full URL, for example Cloud Run's request log or a reverse proxy. Restrict who can read them.
 - **Decision AuditEvents carry the requester as principal.** The approver is in `detail.decided_by`. Tracked in #275.
 - **Rotating the link secret** voids every outstanding link. This fails safe: the approver decides in the web chat instead.
-- **A GET on an expired link escalates the Run.** Nothing escalates an overdue Approval on a timer, so a mail scanner, a link previewer or a forwarded copy that opens the link triggers it: a state change from a GET. The Approval was dead anyway. Tracked in #282.
+- **An overdue Approval waits for the next sweep.** The sweep runs once a minute while the service is up, and once at startup for what fell due while it was down. An Approval can stay `awaiting_approval` for up to a minute past its expiry, and for as long as the service is stopped. A late POST of the link still escalates the Run at once.
 
 ## Secret Handling
 
