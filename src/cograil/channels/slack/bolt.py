@@ -32,7 +32,11 @@ class BoltPoster:
         self._client = client
 
     async def post(
-        self, channel: str, thread_ts: str, text: str, blocks: list[dict[str, Any]] | None = None
+        self,
+        channel: str,
+        thread_ts: str | None,
+        text: str,
+        blocks: list[dict[str, Any]] | None = None,
     ) -> None:
         # No unfurling: Slack fetches a linked URL itself, so a URL that carries what an injected
         # instruction made the model put in it would leave without anyone clicking.
@@ -40,6 +44,11 @@ class BoltPoster:
             channel=channel, thread_ts=thread_ts, text=clip(text), blocks=blocks,
             unfurl_links=False, unfurl_media=False,
         )  # fmt: skip
+
+    async def open_dm(self, user: str) -> str:
+        """Needs the `im:write` scope."""
+        opened = await self._client.conversations_open(users=user)
+        return str(opened["channel"]["id"])
 
     async def whisper(self, channel: str, thread_ts: str, user: str, text: str) -> None:
         await self._client.chat_postEphemeral(

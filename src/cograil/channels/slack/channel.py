@@ -6,10 +6,17 @@ about it goes to that thread, so there is one thread per Run. A later message in
 continues the Run: it answers where the Run stands and, for a Run paused at a gate, asks again.
 The Run itself only moves on a decision (rule 1), never on chat.
 
+A gate's prompt goes to its approver, not to the Run's thread: a direct message with the
+approver's Slack member id (`slack_id` in principals.yaml, reversed) that names the requester, the
+Tool, the Step and the call's arguments. The Run's thread only says who it waits for. An approver
+with no `slack_id`, or one Slack will not open a direct message with, gets nothing in Slack and
+the thread says where to decide.
+
 An approval button decides through `Services.decide`, the code behind POST /approvals/{token},
 as the Principal the clicking Slack member maps to: the Runner refuses anyone but the
 approver and writes the AuditEvent, with `via: slack`. Nothing in a message or a button can
-name another decider (rule 2).
+name another decider (rule 2). What replaces the prompt is built from the Approval the Runner
+recorded, and a Run that fails after an accepted decision says so in its thread.
 """
 
 from __future__ import annotations
@@ -21,12 +28,17 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
-from cograil.api.schemas import RunOutcome
 from cograil.api.services import Services
 from cograil.api.sse import error_body
-from cograil.channels.slack.blocks import approval_blocks, outcome_text
-from cograil.channels.slack.identity import principal_for_slack_user, slack_mention
-from cograil.domain import Principal, Run, RunStatus
+from cograil.channels.slack.blocks import (
+    approval_blocks,
+    decided_text,
+    no_slack_approver_text,
+    outcome_text,
+    waiting_text,
+)
+from cograil.channels.slack.identity import principal_for_slack_user, slack_id_of, slack_mention
+from cograil.domain import Approval, Principal, Run, RunStatus
 from cograil.errors import (
     ApprovalAlreadyDecided,
     ApprovalNotAllowed,
@@ -48,6 +60,11 @@ UNKNOWN_MEMBER = (
     "({user}) to principals.yaml."
 )
 _WORKING = {RunStatus.received, RunStatus.planned, RunStatus.running}
+# Errors that turn a decision away at the gate; anything else came after it was accepted.
+_TURNED_AWAY = (
+    ApprovalNotAllowed, ApprovalNotFound, ApprovalAlreadyDecided, RunNotFound, RunNotPaused,
+    RunClaimLost, WorkspaceError,
+)  # fmt: skip
 type ButtonDecision = Literal["approved", "declined"]
 
 
@@ -55,8 +72,16 @@ class Poster(Protocol):
     """How the channel speaks in Slack; BoltPoster implements it."""
 
     async def post(
-        self, channel: str, thread_ts: str, text: str, blocks: list[dict[str, Any]] | None = None
+        self,
+        channel: str,
+        thread_ts: str | None,
+        text: str,
+        blocks: list[dict[str, Any]] | None = None,
     ) -> None: ...
+
+    async def open_dm(self, user: str) -> str:
+        """The id of the direct message conversation with `user`."""
+        ...
 
     async def whisper(self, channel: str, thread_ts: str, user: str, text: str) -> None: ...
 
@@ -104,20 +129,50 @@ class SlackChannel:
         decision: ButtonDecision,
         poster: Poster,
     ) -> None:
-        """Decide the Approval `token` as the Principal `user` maps to."""
+        """Decide the Approval `token` as the Principal `user` maps to. `channel` is where the
+        click was, the approver's direct message; the Run's own thread is in the Run."""
         with self._tracked():
             principal = self._principal(user)
             if principal is None:
                 await poster.whisper(channel, thread_ts, user, UNKNOWN_MEMBER.format(user=user))
                 return
             try:
-                outcome = await self._services.decide(token, principal, decision, via="slack")
-            except CograilError as exc:
-                await poster.whisper(channel, thread_ts, user, _refusal(exc))
+                await self._services.decide(token, principal, decision, via="slack")
+            except Exception as exc:  # a refusal is whispered; a Run that failed is announced
+                await self._decision_failed(
+                    exc, user, (channel, thread_ts, message_ts), token, poster
+                )
                 return
-            verb = "Approved" if decision == "approved" else "Declined"
-            await poster.replace(channel, message_ts, f"{verb} by <@{user}>.")
-            await self._report(outcome.run.id, channel, thread_ts, poster)
+            approval = await self._services.store.get_approval(token)
+            await poster.replace(channel, message_ts, decided_text(approval, user))
+            run = await self._services.store.get_run(approval.run_id)
+            await self._report(run.id, *_thread_of(run, channel, thread_ts), poster)
+
+    async def _decision_failed(
+        self, exc: Exception, user: str, click: tuple[str, str, str], token: str, poster: Poster
+    ) -> None:
+        """A decision that raised: whisper a refusal to the clicker; but when the Runner had
+        accepted it and the Run then failed, replace the prompt and tell the Run's thread."""
+        channel, thread_ts, message_ts = click
+        approval = await self._decided(token) if not isinstance(exc, _TURNED_AWAY) else None
+        if approval is None:
+            await poster.whisper(channel, thread_ts, user, _refusal(exc))
+            return
+        log_event("slack.decision_failed", logging.ERROR, error=type(exc).__name__)
+        run = await self._services.store.get_run(approval.run_id)
+        await poster.replace(channel, message_ts, decided_text(approval, user))
+        where = _thread_of(run, channel, thread_ts)
+        await poster.post(
+            *where, f"This run {run.status.value} after the decision. The audit log says why."
+        )
+
+    async def _decided(self, token: str) -> Approval | None:
+        """The Approval once it is decided, None while it is still pending (or gone)."""
+        try:
+            approval = await self._services.store.get_approval(token)
+        except ApprovalNotFound:
+            return None
+        return None if approval.decision == "pending" else approval
 
     def _principal(self, slack_id: str) -> Principal | None:
         principal = principal_for_slack_user(self._services.workspace, slack_id)
@@ -160,7 +215,7 @@ class SlackChannel:
     async def _continue(self, run: Run, message: Incoming, poster: Poster) -> None:
         """A message in a Run's thread: re-ask a pending gate, or say where the Run stands."""
         if run.status is RunStatus.awaiting_approval:
-            await self._report(run.id, message.channel, message.thread_ts, poster)
+            await self._report(run.id, message.channel, message.thread_ts, poster, prompt=False)
             return
         if run.status in _WORKING:
             reply = "This run is still working. I'll post here when it stops."
@@ -169,22 +224,42 @@ class SlackChannel:
             reply = f"This run is {status}. Message me in a new thread to start another."
         await poster.post(message.channel, message.thread_ts, reply)
 
-    async def _report(self, run_id: str, channel: str, thread_ts: str, poster: Poster) -> None:
-        """Tell the thread where the Run stands: its answer, or a prompt for each pending gate.
-        A Run's thread is its principal's chat, so every pending gate is shown (as /chat does)."""
+    async def _report(
+        self, run_id: str, channel: str, thread_ts: str, poster: Poster, *, prompt: bool = True
+    ) -> None:
+        """Tell the Run's thread where it stands: its answer, or who each pending gate waits
+        for. With `prompt`, each approver is also sent the gate; a message asking again is not
+        a reason to message the approver again."""
         run = await self._services.store.get_run(run_id)
         outcome = await self._services.outcome(run)
         if (text := outcome_text(outcome)) is not None:
             await poster.post(channel, thread_ts, text)
-        await self._prompt_approvals(outcome, channel, thread_ts, poster)
+        for pending in outcome.awaiting:
+            approval = await self._services.store.get_approval(pending.token)
+            await self._deliver(run, approval, (channel, thread_ts), poster, prompt=prompt)
 
-    async def _prompt_approvals(
-        self, outcome: RunOutcome, channel: str, thread_ts: str, poster: Poster
+    async def _deliver(
+        self, run: Run, approval: Approval, thread: tuple[str, str], poster: Poster, *, prompt: bool
     ) -> None:
-        for approval in outcome.awaiting:
-            mention = slack_mention(self._services.workspace, approval.approver)
-            blocks = approval_blocks(approval, mention)
-            await poster.post(channel, thread_ts, f"Approval needed for {approval.tool}", blocks)
+        """Send the gate to its approver in a direct message and say in the thread whom it
+        waits for; an approver Slack cannot reach is told nothing, and the thread says where
+        to decide."""
+        workspace = self._services.workspace
+        approver = slack_mention(workspace, approval.approver)
+        slack_id = slack_id_of(workspace, approval.approver)
+        if slack_id is None:
+            await poster.post(*thread, no_slack_approver_text(approver))
+            return
+        if prompt:
+            blocks = approval_blocks(approval, slack_mention(workspace, run.principal_id))
+            try:
+                dm = await poster.open_dm(slack_id)
+                await poster.post(dm, None, f"Approval needed for {approval.tool}", blocks)
+            except Exception as exc:  # Slack refused (a missing scope, a deactivated member)
+                log_event("slack.prompt_undelivered", logging.WARNING, error=type(exc).__name__)
+                await poster.post(*thread, no_slack_approver_text(approver))
+                return
+        await poster.post(*thread, waiting_text(approver))
 
     @contextmanager
     def _tracked(self) -> Iterator[None]:
@@ -199,8 +274,16 @@ class SlackChannel:
                 self._services.tasks.discard(task)
 
 
-def _refusal(exc: CograilError) -> str:
+def _thread_of(run: Run, channel: str, thread_ts: str) -> tuple[str, str]:
+    """The Slack thread the Run belongs to; where the click was, for a Run that has none."""
+    here = run.context.get(SLACK_KEY) or {}
+    return here.get("channel", channel), here.get("thread_ts", thread_ts)
+
+
+def _refusal(exc: Exception) -> str:
     """What a member is told when their decision is refused."""
+    if not isinstance(exc, CograilError):
+        return "That could not be completed."
     if isinstance(exc, ApprovalNotAllowed):
         return "You are not the approver of this request."
     if isinstance(exc, ApprovalNotFound | RunNotFound):
