@@ -23,6 +23,7 @@ from cograil.api.approval_mail import ApprovalMail
 from cograil.api.auth import install_auth
 from cograil.api.auth_settings import AuthSettings
 from cograil.api.services import ProviderFactory, RegistryOpener, Services
+from cograil.approval_links import hide_link_queries
 from cograil.channels import web
 from cograil.channels.slack import SlackSettings
 from cograil.domain import Workspace
@@ -84,6 +85,7 @@ def create_app(
         redactor=redactor, approval_mail=approval_mail,
     )  # fmt: skip
     app = FastAPI(title="Cograil", version=__version__, lifespan=lifespan)
+    hide_link_queries()  # a signed approval link must not reach the access log
     app.state.cograil_services = services
     install_auth(app, auth, workspace)
     routers = (

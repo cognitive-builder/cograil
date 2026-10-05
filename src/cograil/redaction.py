@@ -32,7 +32,11 @@ REDACT_TOOL = "redacted"
 
 _MARK = "[REDACTED:{}]"
 
-_KEY_NAMES = r"password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret"
+_KEY_NAMES = (
+    r"password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret"
+    r"|private[_-]?key|sig|signature"
+)
+_NAME_START = r"(?<![A-Za-z0-9])"  # unlike \b, `_` and `-` start a name: access_token, x-api-key
 _VALUE = r"\[REDACTED:\w+\]|\"[^\"]*\"|'[^']*'|[^\s,;&\"'}]+"  # a masked value matches itself
 
 # Order matters: URL userinfo before emails (user:pass@host.com), connection strings before
@@ -47,7 +51,18 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             re.I,
         ),
     ),
-    ("secret", re.compile(rf"(?P<head>\b(?:{_KEY_NAMES})[\"']?\s*[=:]\s*)(?:{_VALUE})", re.I)),
+    (
+        "secret",
+        re.compile(rf"(?P<head>{_NAME_START}(?:{_KEY_NAMES})[\"']?\s*[=:]\s*)(?:{_VALUE})", re.I),
+    ),
+    (
+        "token",
+        re.compile(
+            r"(?P<head>\bAuthorization[\"']?\s*[=:]\s*[\"']?(?:Basic|Token|Digest)\s+)"
+            r"[A-Za-z0-9._~+/=-]{4,}",
+            re.I,
+        ),
+    ),
     ("token", re.compile(r"(?P<head>\bBearer\s+)[A-Za-z0-9._~+/=-]{8,}", re.I)),
     (
         "token",
