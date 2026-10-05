@@ -218,6 +218,7 @@ class Env:
         root: Path | None = None,
         script: str = SCRIPT,
     ) -> None:
+        # `allowed` shapes a made workspace; a given `root` is taken as it stands.
         self.root = root or make_workspace(tmp_path, allowed=allowed)
         if slack is not None:  # the approver, the Colleague's escalation_contact, is on Slack
             people = self.root / "principals.yaml"
