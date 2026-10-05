@@ -1,17 +1,22 @@
 """Scheduled triggers (issue #32): cron in colleagues/*.yaml, a named system principal with an
 explicit audience, and only Protocols that allow scheduled execution."""
 
+import asyncio
 import logging
 import shutil
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi import FastAPI
 
+from cograil.api.app import create_app
 from cograil.api.approval_mail import ApprovalMail
-from cograil.api.services import Services
+from cograil.api.auth_settings import auth_settings
+from cograil.api.services import RegistryOpener, Services
 from cograil.api.wiring import open_registry
 from cograil.approval_links import ApprovalLinks
 from cograil.channels.slack.approver import SlackApprover
@@ -20,7 +25,7 @@ from cograil.errors import AudienceDenied, StoreNotConfigured, WorkspaceError
 from cograil.providers import FakeProvider
 from cograil.providers.base import Provider
 from cograil.providers.fake import load_script
-from cograil.scheduler import build_scheduler, scheduled_principal
+from cograil.scheduler import build_scheduler, cron_trigger, scheduled_principal
 from cograil.store import InMemoryRunStore
 from cograil.workspace import load_workspace
 
@@ -291,3 +296,151 @@ async def test_a_failed_schedule_is_logged_and_does_not_stop_the_scheduler(
         await job.func(*job.args)
     assert "schedule.failed" in caplog.text
     assert "digest-bot" in caplog.text
+
+
+# Cron correctness (#262): weekdays count as in cron, and one restriction of the day only
+
+ALL_DAYS = "sun,mon,tue,wed,thu,fri,sat"
+
+
+def day_of_week(cron: str) -> str:
+    return str(next(f for f in cron_trigger(cron).fields if f.name == "day_of_week"))
+
+
+@pytest.mark.parametrize(
+    ("weekdays", "days"),
+    [
+        ("0-4", "sun,mon,tue,wed,thu"),
+        ("0-6", ALL_DAYS),
+        ("5-7", "sun,fri,sat"),
+        ("7", "sun"),
+        ("0", "sun"),
+        ("sun-thu", "sun,mon,tue,wed,thu"),
+        ("mon-sun", ALL_DAYS),
+        ("1,3,5", "mon,wed,fri"),
+        ("*/2", "sun,tue,thu,sat"),
+        ("*", "*"),
+    ],
+)
+def test_a_weekday_field_stands_for_the_days_it_does_in_cron(weekdays: str, days: str) -> None:
+    assert day_of_week(f"0 9 * * {weekdays}") == days
+
+
+def test_a_weekday_range_that_starts_at_sunday_fires_on_sunday() -> None:
+    trigger = cron_trigger("0 9 * * 0-4")
+    saturday = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
+    assert trigger.get_next_fire_time(None, saturday) == datetime(2026, 10, 11, 9, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("weekdays", ["8", "5-1", "x", "1-5/", "*/0"])
+def test_a_weekday_that_is_not_one_is_an_invalid_cron(weekdays: str) -> None:
+    with pytest.raises(ValueError, match="weekday"):
+        cron_trigger(f"0 9 * * {weekdays}")
+
+
+def test_a_schedule_that_restricts_the_day_of_month_and_the_weekday_does_not_load(
+    tmp_path: Path,
+) -> None:
+    schedule = SCHEDULE.replace("0 2 * * 1-5", "0 9 1 * mon")
+    with pytest.raises(WorkspaceError, match="restrict the day of month or the weekday, not both"):
+        load_workspace(make_workspace(tmp_path, schedule=schedule))
+
+
+@pytest.mark.parametrize("cron", ["0 9 1 * *", "0 9 * * mon", "0 9 */2 * mon", "0 9 1 * */2"])
+def test_a_schedule_that_restricts_only_one_of_them_loads(cron: str) -> None:
+    cron_trigger(cron)
+
+
+# The app starts the scheduler, a tick reaches Services.scheduled, and shutdown drains the Run
+
+
+def scheduled_app(
+    tmp_path: Path,
+    *,
+    opener: RegistryOpener = open_registry,
+    close: Callable[[], Awaitable[None]] | None = None,
+    root: Path | None = None,
+) -> tuple[FastAPI, InMemoryRunStore]:
+    root = root or make_workspace(tmp_path)
+    script = tmp_path / "script.yaml"
+    script.write_text(SCRIPT)
+    provider = FakeProvider(load_script(script))
+    store = InMemoryRunStore()
+    app = create_app(
+        load_workspace(root), root, store,
+        auth=auth_settings({"COGRAIL_AUTH": "dev", "COGRAIL_DEV_PRINCIPAL": "alice@example.com"}),
+        classifier=FakeProvider([]), provider_for=lambda protocol, colleague: provider,
+        open_registry=opener, close=close,
+    )  # fmt: skip
+    return app, store
+
+
+def tick_now(app: FastAPI) -> None:
+    """Make the started scheduler run the nightly job now, instead of at 02:00."""
+    app.state.cograil_scheduler.modify_job("helper/nightly", next_run_time=datetime.now(UTC))
+
+
+async def test_the_app_starts_the_scheduler_with_a_schedule_and_stops_it(tmp_path: Path) -> None:
+    app, _ = scheduled_app(tmp_path)
+    async with app.router.lifespan_context(app):
+        scheduler = app.state.cograil_scheduler
+        assert scheduler.running
+        assert [job.id for job in scheduler.get_jobs()] == ["helper/nightly"]
+    await asyncio.sleep(0)  # APScheduler finishes stopping on the next turn of the loop
+    assert not scheduler.running
+
+
+async def test_the_app_starts_no_scheduler_for_a_workspace_without_schedules(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "plain"
+    shutil.copytree(DEMO, root)
+    app, _ = scheduled_app(tmp_path, root=root)
+    async with app.router.lifespan_context(app):
+        assert app.state.cograil_scheduler is None
+
+
+async def test_a_tick_of_the_started_scheduler_runs_the_schedule_through_the_services(
+    tmp_path: Path,
+) -> None:
+    app, store = scheduled_app(tmp_path)
+    async with app.router.lifespan_context(app):
+        tick_now(app)
+        async with asyncio.timeout(5):
+            while not await store.list_runs():
+                await asyncio.sleep(0.02)
+    [run] = await store.list_runs()
+    assert (run.trigger.kind, run.principal_id, run.context["schedule"]) == (
+        "schedule",
+        "digest-bot",
+        "nightly",
+    )
+
+
+async def test_shutdown_waits_for_a_scheduled_run_in_flight_before_the_store_closes(
+    tmp_path: Path,
+) -> None:
+    entered, release = asyncio.Event(), asyncio.Event()
+    statuses: list[list[RunStatus]] = []
+
+    async def gated(*args: Any) -> Any:
+        entered.set()
+        await release.wait()
+        return await open_registry(*args)
+
+    async def close() -> None:
+        statuses.append([run.status for run in await store.list_runs()])
+
+    app, store = scheduled_app(tmp_path, opener=gated, close=close)
+    lifespan = app.router.lifespan_context(app)
+    await lifespan.__aenter__()
+    tick_now(app)
+    async with asyncio.timeout(5):
+        await entered.wait()  # the Run is in flight
+    leaving = asyncio.create_task(lifespan.__aexit__(None, None, None))
+    await asyncio.sleep(0.1)
+    assert not leaving.done() and statuses == []  # the store is still open under the Run
+    release.set()
+    async with asyncio.timeout(5):
+        await leaving
+    assert statuses == [[RunStatus.escalated]]  # the Run ended before the store closed

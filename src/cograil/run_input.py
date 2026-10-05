@@ -44,7 +44,7 @@ def received_run(
     adds keys to the Run's context, such as the Slack thread the Run belongs to; it cannot
     replace the two keys above."""
     now = datetime.now(UTC)
-    trigger = trigger or Trigger(kind="chat", channel=channel)
+    trigger = trigger if trigger is not None else Trigger(kind="chat", channel=channel)
     return Run(
         id=uuid.uuid4().hex,
         workspace=workspace,
