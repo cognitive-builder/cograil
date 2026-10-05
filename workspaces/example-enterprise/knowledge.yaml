@@ -1,0 +1,9 @@
+# SharePoint-style: one source per site, with libraries as folders. Each library folder may
+# narrow access with its own .acl.yaml (docs/knowledge.md, "Who May See a Document").
+knowledge:
+  - name: it-services-site
+    path: knowledge/sharepoint/it-services
+    acl_groups: [all-employees]
+  - name: finance-site
+    path: knowledge/sharepoint/finance
+    acl_groups: [finance]

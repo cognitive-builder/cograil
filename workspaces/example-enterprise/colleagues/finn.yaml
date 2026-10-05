@@ -1,0 +1,6 @@
+name: finn
+role: Finance Policy Assistant
+escalation_contact: finance-ops@example.com
+default_tier: standard
+audiences: [finance-team]
+protocols: [expense_policy_question]

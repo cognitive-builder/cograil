@@ -1,0 +1,30 @@
+version: 1.0.0
+loop:
+  max_turns: 6
+  token_budget_per_step: 12000
+  usd_budget_per_run: 0.50
+budget:
+  monthly_usd: 50
+  alert_at: 0.8
+tiers:
+  small: claude-haiku-4-5
+  standard: claude-sonnet-5-5
+  strong: claude-opus-5-5
+# Alternative provider block for issue 44: the Anthropic SDK honours a base_url, so a
+# "zai" provider is the same adapter pointed at https://api.z.ai/api/anthropic with
+# small: glm-5.1, standard: glm-5.3, strong: glm-5.3.
+pricing:  # USD per million tokens; a dollar budget needs a price for every tier model
+  claude-haiku-4-5: {input_per_mtok: 1.00, output_per_mtok: 5.00}
+  claude-sonnet-5-5: {input_per_mtok: 2.00, output_per_mtok: 10.00}
+  claude-opus-5-5: {input_per_mtok: 4.00, output_per_mtok: 20.00}
+context:
+  default_prior_steps: 1
+  compression_threshold_tokens: 2000
+defaults:
+  classification_tier: small
+  judgment_tier: standard
+retry:
+  tool_attempts: 2
+  backoff_seconds: 1
+approvals:
+  timeout_hours: 72

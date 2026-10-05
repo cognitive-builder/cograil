@@ -35,6 +35,8 @@ uv run cograil run workspaces/example-smb --protocol leave_request --as alice@ex
 # a paused run prints: cograil approve <token> --as <approver>
 ```
 
+`workspaces/example-enterprise` is a second, larger pack: Entra ID sign-in, two colleagues, SharePoint-style knowledge and a Jira tool over REST (see its `README.md`).
+
 `run` and `approve` need `DATABASE_URL` (and `ANTHROPIC_API_KEY`, or `--fake-script`). They are a local and demo tool: `--as` is not authenticated. See `docs/runbooks.md`, "The command line".
 
 ## Design decisions
