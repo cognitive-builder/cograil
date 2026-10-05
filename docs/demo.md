@@ -2,7 +2,7 @@
 
 A shot-by-shot script for the launch recording. It uses the `example-smb` Workspace and one story: Alice asks the Colleague Harper for three days of annual leave, the write stops at a Gate, an approver decides from an email, and the audit trail shows everything.
 
-Total running time: **2:55**. Every command is copied from [Quickstart](quickstart.md) and works offline except the chat scene, which uses a real model.
+Total running time: **2:55**. Every command comes from [Quickstart](quickstart.md), [Approvals](approvals.md) and [API](api.md), and works offline except the chat scene, which uses a real model.
 
 | # | Scene | Time | Length |
 | --- | --- | --- | --- |
@@ -51,7 +51,8 @@ Everything in this section happens off camera.
    ```
 
    Dev mode signs every request in as one Principal (`docs/auth.md`). It is for local work and
-   demos only; the recording never shows the startup warning.
+   demos only. The service logs an `auth.dev_mode` warning at start-up, so keep the terminal
+   running it out of the frame.
 
 4. Open three browser tabs, in this order:
 
@@ -78,7 +79,7 @@ Everything in this section happens off camera.
 write step.
 
 **Say:** "Cograil turns a Markdown runbook into an AI colleague that follows it step by step.
-This is Harper's leave protocol: four Steps, each naming the only Tools it may use. The write
+This is Harper's leave protocol: four Steps, each restricted to the Tools it names. The write
 Tool sits behind a Gate."
 
 ### 2. Validate and compile — 0:20–0:40
@@ -122,14 +123,18 @@ Let the camera stay on the streaming page: `Routed to harper · leave_request`, 
 finishing, the `hris.get_balance` call with Alice's 25 days, then the Run stops and a card
 appears: *Waiting for hr-ops@example.com to approve. Only they can decide.*
 
+The approver the card names is Harper's escalation contact: whichever tier the decision table
+returns, the Gate waits on that contact today (see [Quickstart](quickstart.md)).
+
 **Say:** "Alice asks in the chat. Harper checks her balance in the HR system, confirms the
 dates, and stops at the Gate before submitting anything. Alice cannot approve her own request."
 
 ### 5. The Gate and the email — 1:45–2:20
 
 **Show:** Tab 2, Mailpit. A new email to `hr-ops@example.com`: the exact Tool, its arguments,
-and one link. Open the link: a page with the call and two buttons. Press **Approve**. The Run
-continues and completes on the same page.
+and one link. Open the link: a page with the call and two buttons. Press **Approve**. The page
+answers *Recorded: approved.* — a decision POST is answered only after the rest of the Run has
+run, so by then Harper has already submitted and notified.
 
 **Say:** "The approver gets one signed link: it stands for them, it works once, and opening it
 decides nothing. One click, and the Run resumes exactly where it stopped."
