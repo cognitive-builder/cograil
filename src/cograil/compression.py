@@ -10,8 +10,8 @@ declares this Step's output sees the summary too, so the saving holds.
 The raw output goes to the small model inside a data block (rule 7). Each compression is an
 AuditEvent (`context.compressed`) with the Run's principal, and its tokens and cost count against
 the Step and the Run like any model call. The Window Ledger keeps the raw and the compressed
-size of what was compressed, per Step. A compression that fails raises, and the Run fails closed:
-the raw output is never passed on in its place.
+size of what was compressed, per Step. A compression that fails raises with its call charged, and
+the Run fails closed: the raw output is never passed on in its place.
 """
 
 from __future__ import annotations
@@ -91,14 +91,14 @@ class Compressor:
         messages = [data_message([(f"tool {call['tool']}", call["result"])])]
         with model_span(model):
             plan = await self._provider.plan(guide, messages, [], model=model)
+            usage = plan.usage
+            progress.tokens += usage.input_tokens + usage.output_tokens
+            run = self._claims.charge(run, plan.model, usage)
             summary = (
                 plan.text or (plan.step_complete.output if plan.step_complete else "")
             ).strip()
             if not summary:
                 raise ProviderError(f"compression of {call['tool']} returned no summary")
-            usage = plan.usage
-            progress.tokens += usage.input_tokens + usage.output_tokens
-            run = self._claims.charge(run, plan.model, usage)
         compressed = estimate_tokens(dump(compressed_result(summary)))
         detail = {"step": step.number, "tool": call["tool"], "raw_tokens": raw,
                   "compressed_tokens": compressed, "threshold": threshold}  # fmt: skip

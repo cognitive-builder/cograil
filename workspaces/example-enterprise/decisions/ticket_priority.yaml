@@ -1,0 +1,21 @@
+name: ticket_priority
+version: 1
+hit_policy: first
+inputs:
+  impact: {type: string}
+  urgency: {type: string}
+outputs:
+  priority: {type: string}
+rules:
+  - id: p1
+    when: {impact: company, urgency: high}
+    then: {priority: Highest}
+  - id: p2
+    when: {impact: team, urgency: high}
+    then: {priority: High}
+  - id: p3
+    when: {impact: individual, urgency: high}
+    then: {priority: Medium}
+  - id: default
+    when: {}
+    then: {priority: Low}

@@ -5,7 +5,8 @@ from typing import Any
 import pytest
 
 from cograil.context import compression_ledger, format_ledger, window_ledger
-from cograil.domain import Colleague, ContextSettings, Harness, Run, RunStatus, Tool
+from cograil.cost import RunUsage, run_usage
+from cograil.domain import Colleague, ContextSettings, Harness, Price, Run, RunStatus, Tool
 from cograil.errors import ProviderError
 from cograil.injection import REMOVED
 from cograil.parser import parse_protocol
@@ -37,10 +38,16 @@ def registry(store: InMemoryRunStore) -> ToolRegistry:
 
 
 async def run_demo(
-    store: InMemoryRunStore, registry: ToolRegistry, script: list[Any], threshold: int = 100
+    store: InMemoryRunStore,
+    registry: ToolRegistry,
+    script: list[Any],
+    threshold: int = 100,
+    pricing: dict[str, Price] | None = None,
 ) -> tuple[FakeProvider, Run]:
     provider = FakeProvider(script)
-    harness = Harness(context=ContextSettings(compression_threshold_tokens=threshold))
+    harness = Harness(
+        context=ContextSettings(compression_threshold_tokens=threshold), pricing=pricing or {}
+    )
     runner = Runner(provider, registry, store, HARPER, harness=harness)
     return provider, await runner.run("r1", parse_protocol(PROTOCOL))
 
@@ -114,11 +121,20 @@ async def test_the_window_ledger_shows_raw_and_compressed_sizes(
     assert "raw_tokens" not in format_ledger(window_ledger(run))[0]
 
 
+# Issue #239: the failing compression's call is charged before the empty summary is found, so the
+# failed Run keeps its dollars and tokens (fake-model is priced at $1 per million tokens, in and
+# out, so a Run's dollars are its tokens / 1e6).
+PER_TOKEN = 1 / 1_000_000
+ONE_DOLLAR = Price(input_per_mtok=1.0, output_per_mtok=1.0)
+
+
 async def test_a_compression_that_returns_nothing_fails_the_run_closed(
     store: InMemoryRunStore, registry: ToolRegistry
 ) -> None:
-    plans = [scripted("", CALL), scripted("  ")]
+    plans = [scripted("", CALL), scripted("  ", input_tokens=1_000, output_tokens=200)]
     with pytest.raises(ProviderError, match="no summary"):
-        await run_demo(store, registry, plans)
+        await run_demo(store, registry, plans, pricing={"fake-model": ONE_DOLLAR})
     failed = await store.get_run("r1")
     assert failed.status is RunStatus.failed and failed.cursor == 0
+    assert run_usage(failed) == RunUsage(input_tokens=1_010, output_tokens=205)
+    assert failed.cost_usd == pytest.approx(1_215 * PER_TOKEN)
