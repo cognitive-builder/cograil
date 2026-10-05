@@ -34,7 +34,7 @@ If no channel can reach the approver, the Run records `approval.undeliverable`. 
 | AuditEvent | When | Detail |
 | --- | --- | --- |
 | `approval.emailed` | The email was sent. | `approver`, `token`, `step`, `tool`, `expires_at`. Never the link. |
-| `approval.email_failed` | The provider refused it. The Run is not failed, and the approver can still use the web card. | The same, plus `error`. |
+| `approval.email_failed` | The provider refused it. The Run is not failed, and the approver can still use the web card. If no other channel reached the approver, `approval.undeliverable` follows. | The same, plus `error`. |
 | `approval.slack_sent` | The Slack direct message was sent. | `approver`, `token`, `step`, `tool`. |
 | `approval.slack_failed` | Slack refused it (a missing `im:write` scope, a deactivated member). | The same, plus `error`, the error's type. |
 | `approval.undeliverable` | No channel reached the approver. The principal is the Run's. | `approver`, `token`, `step`, `tool`, `tried`, the channels that were offered the Approval. |
