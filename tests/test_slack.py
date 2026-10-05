@@ -5,12 +5,13 @@ through principals.yaml. A fake Poster stands in for Slack; no test calls Slack.
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import yaml
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from slack_sdk.web.async_client import AsyncWebClient
 from test_api import DEMO, REST_SCRIPT, RUN_SCRIPT, Env
 
 from cograil.api.app import create_app
@@ -25,7 +26,12 @@ from cograil.channels.slack import (
     slack_settings,
 )
 from cograil.channels.slack.blocks import APPROVE_ACTION, DECLINE_ACTION
-from cograil.channels.slack.bolt import SlackListeners, incoming_from_event, slack_router
+from cograil.channels.slack.bolt import (
+    BoltPoster,
+    SlackListeners,
+    incoming_from_event,
+    slack_router,
+)
 from cograil.channels.slack.identity import escape
 from cograil.domain import RunStatus
 from cograil.errors import SlackNotConfigured, WorkspaceError
@@ -347,3 +353,16 @@ def test_the_app_serves_slack_only_when_it_is_set_up(
     settings = SlackSettings.model_validate({"bot_token": "xoxb-1", "signing_secret": "s"})
     assert answer(None) == 404  # Slack is off
     assert answer(settings) == 401  # on, and an unsigned request is refused
+
+
+async def test_posted_messages_are_not_unfurled() -> None:
+    # Slack fetches a linked URL by itself, so model output must never be unfurled.
+    posted: list[dict[str, Any]] = []
+
+    class Client:
+        async def chat_postMessage(self, **kwargs: Any) -> None:
+            posted.append(kwargs)
+
+    poster = BoltPoster(cast(AsyncWebClient, Client()))
+    await poster.post("C1", "1.1", "see https://example.com/?q=secret")
+    assert posted[0]["unfurl_links"] is False and posted[0]["unfurl_media"] is False

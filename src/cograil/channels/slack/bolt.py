@@ -34,9 +34,12 @@ class BoltPoster:
     async def post(
         self, channel: str, thread_ts: str, text: str, blocks: list[dict[str, Any]] | None = None
     ) -> None:
+        # No unfurling: Slack fetches a linked URL itself, so a URL that carries what an injected
+        # instruction made the model put in it would leave without anyone clicking.
         await self._client.chat_postMessage(
-            channel=channel, thread_ts=thread_ts, text=clip(text), blocks=blocks
-        )
+            channel=channel, thread_ts=thread_ts, text=clip(text), blocks=blocks,
+            unfurl_links=False, unfurl_media=False,
+        )  # fmt: skip
 
     async def whisper(self, channel: str, thread_ts: str, user: str, text: str) -> None:
         await self._client.chat_postEphemeral(
