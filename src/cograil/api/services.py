@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -24,6 +24,7 @@ from cograil.cost import charge_aside
 from cograil.domain import (
     AuditEvent,
     Colleague,
+    Harness,
     Principal,
     Protocol,
     Routing,
@@ -34,6 +35,7 @@ from cograil.domain import (
     Workspace,
 )
 from cograil.errors import CograilError, MessageTooLong, ToolNotFound, WorkspaceError
+from cograil.gates import Gates, utc_now
 from cograil.identity import same_principal
 from cograil.observability import log_event
 from cograil.orchestrator import classify_intent
@@ -215,25 +217,31 @@ class Services:
         approval = await self.store.get_approval(token)
         return await self._decide(token, approval.approver, decision, via="email_link")
 
-    async def expire(self, token: str) -> Run:
-        """Escalate the Run paused on this Approval if it is past its expiry (an expired link)."""
+    async def expire(self, token: str, *, via: str) -> Run:
+        """Escalate the Run paused on this Approval if it is past its expiry.
+
+        Needs the Run's Colleague (for its escalation_contact) but no Runner and no Protocol:
+        a Run started on a Protocol version the workspace has since dropped still expires
+        (issue #290). `via` says what found it overdue: `sweep` or `email_link`."""
         run = await self.store.get_run((await self.store.get_approval(token)).run_id)
-        protocol, colleague = self._pick_for(run)
-        async with self.runner(protocol, colleague, _ignore) as (runner, _):
-            return await runner.expire(token)
+        colleague = self._colleague_of(run)
+        timeout = timedelta(hours=(self.workspace.harness or Harness()).approvals.timeout_hours)
+        return await Gates(self.store, colleague, timeout=timeout, clock=utc_now).expire(
+            token, via=via
+        )
 
     async def sweep_overdue_approvals(self) -> list[str]:
         """Escalate every Run paused on an Approval past its expiry, with no request asking.
 
         Returns the tokens it expired. Only this workspace's Approvals are swept. One whose Run has
-        moved on since the query, or was started on a Protocol version this workspace no longer
-        has, is skipped and logged; the rest of the sweep still runs."""
+        moved on since the query, or whose Colleague this workspace no longer has, is skipped and
+        logged; the rest of the sweep still runs. Its AuditEvents carry `via: sweep`."""
         expired: list[str] = []
         for approval in await self.store.list_overdue_approvals(
             self.workspace.name, datetime.now(UTC)
         ):
             try:
-                run = await self.expire(approval.token)
+                run = await self.expire(approval.token, via="sweep")
             except CograilError as exc:
                 log_event("approval.sweep_skipped", run_id=approval.run_id,
                           token=approval.token, error=f"{type(exc).__name__}: {exc}")  # fmt: skip
@@ -258,6 +266,14 @@ class Services:
             )
         ended = await self.notify_approvers(ended)
         return await self.outcome(ended, approver=decider)
+
+    def _colleague_of(self, run: Run) -> Colleague:
+        """The Colleague a stored Run of this workspace belongs to."""
+        colleague = next((c for c in self.workspace.colleagues if c.name == run.colleague), None)
+        if run.workspace != self.workspace.name or colleague is None:
+            raise WorkspaceError(f"run {run.id} belongs to {run.workspace}/{run.colleague}, "
+                                 "which this workspace does not have")  # fmt: skip
+        return colleague
 
     def _pick_for(self, run: Run) -> tuple[Protocol, Colleague]:
         """The Protocol and Colleague a stored Run started with, if the workspace still has them."""

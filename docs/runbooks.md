@@ -87,9 +87,12 @@ tool call the model plans in a turn is checked before any of them runs:
 - A declined Approval, or one past its `expires_at`, escalates the run instead. The timeout comes
   from `harness.yaml` (`approvals.timeout_hours`, 72 by default). The status becomes `escalated`,
   and a `run.escalated` AuditEvent names the Colleague's `escalation_contact`.
-  `Runner.expire(token)` escalates an overdue Approval; then `decided_by` is empty. The service
-  calls it from a sweep at startup and every minute (`Services.sweep_overdue_approvals`), so an
-  Approval nobody opens still escalates.
+  `Gates.expire(token)` escalates an overdue Approval; then `decided_by` is empty. It needs only
+  the store and the clock, so an Approval of a Run on a Protocol version the workspace no longer
+  has still expires. The service calls it from a sweep at startup and every minute
+  (`Services.sweep_overdue_approvals`), so an Approval nobody opens still escalates; the
+  `run.escalated` AuditEvent says `via: sweep`, or `via: email_link` when a POST to an expired
+  link found it still pending.
 - `GateRequired` is still raised when a racing call spent the Approval first (the run fails
   closed), and when `run` is called on a run that is awaiting approval.
 - `RunEnded` is raised when `run` is called on a run that has escalated, failed or completed. Such
