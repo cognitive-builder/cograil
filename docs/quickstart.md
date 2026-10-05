@@ -85,6 +85,9 @@ Save this as `leave-rest.yaml`. It covers what happens after the Approval.
 - {text: "Alice has been told.", done: true}
 ```
 
+The example Harness prices the FakeProvider's model, `fake-model`, at zero. Without a price a Run
+under `usd_budget_per_run` is refused, because its cost cannot be bounded (see [Models](models.md)).
+
 If a script runs out of plans, the Run fails with a "script exhausted" error. If a Run behaves oddly, check that your plans match the Steps in `workspaces/example-smb/protocols/leave_request.md`.
 
 ## 7. Run The Protocol
@@ -103,6 +106,10 @@ The command ends with a line like this:
 ```text
 awaiting hr-ops@example.com to approve hris.submit_leave (step 3): cograil approve <token> --as hr-ops@example.com
 ```
+
+Each trace span of the Run is also printed as a JSON line on stderr (see
+[Observability](observability.md)); add `2>/dev/null` to hide them, or set
+`OTEL_EXPORTER_OTLP_ENDPOINT` to send them to a backend instead.
 
 The exit code is 3, which means awaiting approval. Today the approver is the Colleague's `escalation_contact`. In this Workspace that is set in `colleagues/harper.yaml`. The Run's own principal can never approve it.
 
