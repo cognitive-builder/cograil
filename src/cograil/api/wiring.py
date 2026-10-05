@@ -6,6 +6,8 @@
 - COGRAIL_AUTH and the settings of its mode: see cograil.api.auth_settings and docs/auth.md
 - COGRAIL_EMAIL and its settings, COGRAIL_PUBLIC_URL, COGRAIL_APPROVAL_LINK_SECRET: approval
   emails, see cograil.channels.mail and docs/approvals.md
+- SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET: the Slack channel, see cograil.channels.slack and
+  docs/slack.md
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from fastapi import FastAPI
 from cograil.api.app import create_app
 from cograil.api.approval_mail import ApprovalMail
 from cograil.api.auth_settings import auth_settings
+from cograil.channels.slack import slack_settings
 from cograil.domain import Workspace
 from cograil.errors import StoreNotConfigured
 from cograil.knowledge.store import PostgresKnowledgeStore
@@ -72,4 +75,5 @@ def app_from_env() -> FastAPI:
         close=store.dispose,
         redactor=redactor,
         approval_mail=ApprovalMail.from_env(os.environ),
+        slack=slack_settings(os.environ),
     )

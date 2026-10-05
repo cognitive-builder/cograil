@@ -1,5 +1,7 @@
 principals:
   - id: alice@example.com
+    slack_id: U0ALICE001
     groups: [all-employees]
   - id: bob@example.com
+    slack_id: U0BOB00001
     groups: [all-employees, managers]

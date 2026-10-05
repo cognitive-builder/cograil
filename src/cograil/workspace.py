@@ -5,8 +5,8 @@ connections.yaml, audiences.yaml, knowledge.yaml, principals.yaml and decisions/
 optional and default to empty; harness.yaml is optional and defaults to the Harness defaults
 (ADR 0012). Each decision table must be named after its file and pass the checks of
 decisions.py, and each `decision` Tool must name a table that loaded (ADR 0009). No principal
-id or alias may name two principals once normalised (cograil.identity), and no Colleague's
-escalation_contact may be an alias.
+id, alias, oid or Slack id may name two principals once normalised (cograil.identity), and no
+Colleague's escalation_contact may be an alias.
 Every failure is a WorkspaceError whose message names the offending file. `check_workspace`
 keeps going after a failure and reports every problem it can find; `load_workspace` raises one
 WorkspaceError carrying all of them, one per line.
@@ -126,12 +126,12 @@ def _unknown_tables(workspace: Workspace, file: Path) -> list[str]:
 
 
 def _shared_names(workspace: Workspace, file: Path) -> list[str]:
-    """An id, alias or oid naming two principals would let one sign in as the other."""
+    """An id, alias, oid or Slack id naming two principals would let one act as the other."""
     owners: dict[str, str] = {}
     shared: list[str] = []
     for principal in workspace.principals:
-        oids = [principal.oid] if principal.oid else []
-        for name in dict.fromkeys([principal.id, *principal.aliases, *oids]):
+        extra = [name for name in (principal.oid, principal.slack_id) if name]
+        for name in dict.fromkeys([principal.id, *principal.aliases, *extra]):
             if owners.setdefault(name, principal.id) != principal.id:
                 shared.append(f"{file}: {name} names both {owners[name]} and {principal.id}")
     return shared
