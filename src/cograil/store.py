@@ -43,6 +43,7 @@ from cograil.errors import (
 )
 from cograil.store_budget import month_usage
 from cograil.store_memory import RUN_MUTABLE, InMemoryRunStore
+from cograil.store_queries import audit_events_page, overdue_approvals
 from cograil.store_rows import (
     approval_values,
     call_values,
@@ -130,6 +131,10 @@ class RunStore(Protocol):
 
     async def list_approvals(self, run_id: str) -> list[Approval]:
         """Ordered by token, the same in every implementation."""
+        ...
+
+    async def list_overdue_approvals(self, workspace: str, now: datetime) -> list[Approval]:
+        """Pending Approvals of the workspace's Runs at or past `expires_at`, ordered by token."""
         ...
 
     async def append_audit_event(self, event: AuditEvent) -> None: ...
@@ -362,6 +367,10 @@ class PostgresRunStore:
             rows = (await conn.execute(query)).mappings().all()
         return [Approval.model_validate(dict(r)) for r in rows]
 
+    async def list_overdue_approvals(self, workspace: str, now: datetime) -> list[Approval]:
+        async with self._engine.connect() as conn:
+            return await overdue_approvals(conn, workspace, now)
+
     async def append_audit_event(self, event: AuditEvent) -> None:
         await self._insert(
             audit_events, event_values(event), what="audit event", run_id=event.run_id
@@ -382,17 +391,8 @@ class PostgresRunStore:
         limit: int = 50,
         offset: int = 0,
     ) -> list[AuditEvent]:
-        query = select(audit_events).join(runs, runs.c.id == audit_events.c.run_id)
-        if owner_id is not None:
-            query = query.where(runs.c.principal_id == owner_id)
-        if run_id is not None:
-            query = query.where(audit_events.c.run_id == run_id)
-        if principal_id is not None:
-            query = query.where(audit_events.c.principal_id == principal_id)
-        query = query.order_by(audit_events.c.id).limit(limit).offset(offset)
         async with self._engine.connect() as conn:
-            rows = (await conn.execute(query)).mappings().all()
-        return [AuditEvent.model_validate(without(r, "id")) for r in rows]
+            return await audit_events_page(conn, owner_id, run_id, principal_id, limit, offset)
 
 
 __all__ = ["ApprovalDecision", "InMemoryRunStore", "PostgresRunStore", "RunStore"]

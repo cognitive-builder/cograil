@@ -144,3 +144,9 @@ curl -s -o /dev/null -w '%{time_total}s\n' "$URL/health"
 and confirm in the Cloud Run console (metric "Container instance count") that the count fell to zero before the request.
 
 If a cold start is too slow for your users, set `--min-instances=1` on the service. It costs a running instance all month.
+
+### Background work needs a running instance
+
+Two things run inside the service process, on a timer: the **approval sweep** (it expires and escalates overdue Approvals, once a minute) and the **scheduler** for a Colleague's Schedules (docs/architecture.md). Cloud Run gives a process CPU only while it serves a request, and with `--min-instances=0` there is no process at all while the service is idle. So with the workflow as shipped, a Schedule does not fire and an overdue Approval is not escalated until a request wakes the service (the startup sweep then catches up what fell due, and a Schedule's missed tick is dropped after a minute).
+
+If you use Schedules, or you must not leave an Approval waiting after its deadline, deploy with `--min-instances=1 --no-cpu-throttling`. It costs a running instance all month; the decision is tracked in #289.
