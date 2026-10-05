@@ -48,3 +48,6 @@ jobs:
         run: uv run pytest -m integration --maxfail=0 || [ $? -eq 5 ]
       - name: End-to-end tests
         run: uv run pytest -m e2e --maxfail=0 || [ $? -eq 5 ]
+      # A broken link or a strict-mode warning must fail the pull request, not the Pages deploy.
+      - name: Docs
+        run: uv run --only-group docs mkdocs build --strict
