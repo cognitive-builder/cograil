@@ -13,9 +13,12 @@ from cograil.identity import same_principal
 
 
 def principal_for_slack_user(workspace: Workspace, slack_id: str) -> Principal | None:
-    """The workspace's Principal whose `slack_id` is `slack_id`, or None."""
+    """The workspace's Principal whose `slack_id` is `slack_id`, or None. People only, as at web
+    sign-in: a system principal (a Schedule's actor) given a `slack_id` maps to nobody."""
     known = next((p for p in workspace.principals if p.slack_id == slack_id), None)
-    return resolve_principal(workspace, known.id) if known else None
+    if known is None or known.kind != "user":
+        return None
+    return resolve_principal(workspace, known.id)
 
 
 def slack_id_of(workspace: Workspace, principal_id: str) -> str | None:

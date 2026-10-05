@@ -5,12 +5,16 @@ the approver and the expiry, keyed by COGRAIL_APPROVAL_LINK_SECRET. Whoever hold
 the approver for that one Approval: `verify` accepts no other token, approver or expiry. The
 link expires with its Approval (`approvals.timeout_hours`) and is single-use because an
 Approval is decided once: after a decision the link only answers that it was decided.
+
+A link is a working credential until then, so `hide_link_queries` keeps its signature out of the
+web server's access log (docs/threat-model.md).
 """
 
 from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import math
 from datetime import UTC, datetime
 from urllib.parse import urlencode
@@ -21,6 +25,8 @@ from cograil.identity import normalise_principal_id
 
 MIN_SECRET_CHARS = 32
 LINK_PATH = "/approvals/link"
+ACCESS_LOGGER = "uvicorn.access"
+HIDDEN_QUERY = "?[REDACTED:link]"
 
 
 class ApprovalLinks:
@@ -52,3 +58,26 @@ class ApprovalLinks:
     def _sign(self, token: str, approver: str, exp: int) -> str:
         payload = f"{token}\n{normalise_principal_id(approver)}\n{exp}".encode()
         return hmac.new(self._key, payload, hashlib.sha256).hexdigest()
+
+
+class LinkQueryFilter(logging.Filter):
+    """Replaces the query (`exp` and `sig`) of an approval link in a log record's arguments,
+    where uvicorn puts the request path; the record is kept."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(_without_link_query(arg) for arg in record.args)
+        return True
+
+
+def _without_link_query(value: object) -> object:
+    if isinstance(value, str) and f"{LINK_PATH}/" in value and "?" in value:
+        return value.partition("?")[0] + HIDDEN_QUERY
+    return value
+
+
+def hide_link_queries(logger_name: str = ACCESS_LOGGER) -> None:
+    """Install LinkQueryFilter on the access logger, once however often the app is built."""
+    logger = logging.getLogger(logger_name)
+    if not any(isinstance(f, LinkQueryFilter) for f in logger.filters):
+        logger.addFilter(LinkQueryFilter())
