@@ -17,7 +17,7 @@ from typing import Any, Literal
 
 from cograil.api.approval_mail import ApprovalMail
 from cograil.api.approver_notice import ApproverChannel, notify_approvers
-from cograil.api.schemas import PendingApproval, RunOutcome, RunSummary
+from cograil.api.schemas import MAX_MESSAGE_CHARS, PendingApproval, RunOutcome, RunSummary
 from cograil.api.sse import Emit
 from cograil.audience import check_audience
 from cograil.cost import charge_aside
@@ -33,7 +33,7 @@ from cograil.domain import (
     Trigger,
     Workspace,
 )
-from cograil.errors import CograilError, ToolNotFound, WorkspaceError
+from cograil.errors import CograilError, MessageTooLong, ToolNotFound, WorkspaceError
 from cograil.identity import same_principal
 from cograil.observability import log_event
 from cograil.orchestrator import classify_intent
@@ -125,7 +125,10 @@ class Services:
 
         `channel` names where the message came from; `context` is extra data for the Run's
         context (the Slack thread of a Run). The Run starts charged with the routing's model
-        calls."""
+        calls. A message over MAX_MESSAGE_CHARS is refused before it reaches a model, whatever
+        the channel."""
+        if len(message) > MAX_MESSAGE_CHARS:
+            raise MessageTooLong(f"a message is at most {MAX_MESSAGE_CHARS} characters")
         routing, routed = await self._route(principal, message, emit)
         if not routing.matched or routing.protocol is None or routing.colleague is None:
             emit("refusal", {"text": routing.refusal or ""})

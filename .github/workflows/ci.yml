@@ -51,3 +51,24 @@ jobs:
       # A broken link or a strict-mode warning must fail the pull request, not the Pages deploy.
       - name: Docs
         run: uv run --only-group docs mkdocs build --strict
+
+  # Every commit of the branch, history included, is scanned for credentials (issue #37).
+  # A fake secret a test needs carries a `gitleaks:allow` comment on its line (.gitleaksignore).
+  secrets:
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.28.0
+      GITLEAKS_SHA256: a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: |
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$archive"
+          echo "$GITLEAKS_SHA256  $archive" | sha256sum --check
+          tar -xzf "$archive" gitleaks
+      - name: Scan for secrets
+        run: ./gitleaks git . --redact --no-banner --verbose

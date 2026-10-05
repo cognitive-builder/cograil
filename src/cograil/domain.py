@@ -182,14 +182,18 @@ class Audience(Entity):
     claims: list[str] = Field(default_factory=list)
 
 
+MAX_CHUNK_CHARS = 4000  # a Chunk is retrieved whole into a Step's context (issue #37)
+
+
 class KnowledgeSource(Entity):
-    """A folder of Markdown and PDF files. `chunk_size` and `chunk_overlap` count characters;
-    `acl_groups` is the default for files without an ACL file, which can only narrow it."""
+    """A folder of Markdown and PDF files. `chunk_size` and `chunk_overlap` count characters,
+    and `chunk_size` is at most MAX_CHUNK_CHARS; `acl_groups` is the default for files without
+    an ACL file, which can only narrow it."""
 
     name: str
     path: str
     acl_groups: list[str] = Field(min_length=1)
-    chunk_size: int = Field(default=800, gt=0)
+    chunk_size: int = Field(default=800, gt=0, le=MAX_CHUNK_CHARS)
     chunk_overlap: int = Field(default=120, ge=0)
 
     @model_validator(mode="after")

@@ -111,7 +111,7 @@ The model proposes every Tool call, arguments included. Injected text that gets 
 - **Unknown keys reach REST Tools.** An `args_schema` that does not set `additionalProperties: false` lets extra keys through into the query string or body. Pack authors should close their schemas. Tracked in #273.
 - **REST Tools act as the service account.** On-behalf-of calls are not supported yet. A free-form query Tool sees whatever the service account sees.
 - **MCP arguments are checked against the server's own schema,** as listed by the server. An MCP tool the pack does not list is write scope and gated.
-- **Argument size is bounded only by the provider's output limit.** Size caps are issue #37.
+- **Argument size is bounded only by the provider's output limit.** A cap is tracked in #286.
 - **An ungated write is a way out.** A write Tool with `confirm_before_write: false` and a free recipient can send data anywhere if the model is steered. The example pack's `notify.send` is a mock. Gate real ones.
 
 ## Approval Link Replay
@@ -177,6 +177,7 @@ An attacker wants one of them from:
     - The review and auto-merge jobs run only for branches of this repository.
     - The `@claude` jobs answer only owners, members and collaborators.
     - The deploy and the lane 3 job run only on a tag or when started by hand.
+    - **History is scanned for secrets.** A `secrets` job runs gitleaks 8.28.0 (pinned, checksum verified) over the full git history of every pull request and every push to `main`. A new fake secret that a test needs carries a `gitleaks:allow` comment on its line. The six fake tokens already in `tests/test_redaction.py` are listed in `.gitleaksignore` by their fingerprints.
     - **The deploy identity must be pinned.** Other workflows here, including the ones that run a model on text from issues, also request an identity token, so the Workload Identity condition names the deploy workflow on a version tag and not just the repository (`docs/deploy.md`). More hardening is a decision for the owner: #285.
 
 ### Known Limits
@@ -204,9 +205,12 @@ An attacker wants one of them from:
     - An Approval is visible only to its approver.
     - Audit events are visible to the Run's owner and to auditors listed in `principals.yaml`.
 5. **The web pages insert server text with `textContent` only,** under a Content Security Policy.
+6. **Size and rate limits.** A request body over 1 MiB answers 413. A chat message is 1 to 8000 characters, on the web chat and in Slack. `POST /chat` is rate limited for each Principal (429 with `Retry-After`; see `docs/api.md`).
 
 ### Known Limits
 
+- **The chat rate limit is held in each process.** With several workers or replicas, the real limit is the limit times the number of processes.
+- **Slack messages are not rate limited.** Only `POST /chat` is.
 - **Signing out clears the browser's copy only.** A copied cookie stays valid until its 8 hours are up, and so do the groups fixed at sign-in. Rotate `COGRAIL_SESSION_SECRET` to end every session at once.
 - **`COGRAIL_AUTH=dev` signs everyone in as one principal.** It is for a laptop, never for a reachable service. Refusing it in production is tracked in #276.
 - **The OpenAPI docs at `/docs` are public.** They list the routes and hold no data.
@@ -238,5 +242,5 @@ No finding was high severity. None bypasses the Step whitelist, a Gate, or the k
 | An email link is a bearer credential | Medium | Documented above |
 | Successful Tool output is stored raw | Medium | Documented above, by design |
 | Sign-out does not revoke a copied cookie | Low | Documented above |
-| No argument size cap | Low | Issue #37 |
+| No argument size cap | Low | Issue #286 |
 | `http://` base URLs; placeholder secrets pass the length check; public OpenAPI docs | Info | Documented above |

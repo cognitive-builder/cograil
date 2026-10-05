@@ -8,6 +8,8 @@
   emails, see cograil.channels.mail and docs/approvals.md
 - SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET: the Slack channel, see cograil.channels.slack and
   docs/slack.md
+- COGRAIL_CHAT_RATE_LIMIT: chat messages per principal, `<requests>/<seconds>` (default
+  `20/60`) or `off`, see cograil.api.limits
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from fastapi import FastAPI
 from cograil.api.app import create_app
 from cograil.api.approval_mail import ApprovalMail
 from cograil.api.auth_settings import auth_settings
+from cograil.api.limits import chat_rate_limit
 from cograil.channels.slack import slack_settings
 from cograil.domain import Workspace
 from cograil.errors import StoreNotConfigured
@@ -76,4 +79,5 @@ def app_from_env() -> FastAPI:
         redactor=redactor,
         approval_mail=ApprovalMail.from_env(os.environ),
         slack=slack_settings(os.environ),
+        chat_rate=chat_rate_limit(os.environ),
     )
