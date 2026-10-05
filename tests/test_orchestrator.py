@@ -183,7 +183,8 @@ async def test_the_routing_and_its_snippet_redaction_are_both_charged() -> None:
         ws, ALICE, "leave for bob@example.com ok?", classifier, redactor,
         lambda model, usage: charged.append((model, usage)),
     )  # fmt: skip
-    assert sorted((u.input_tokens, u.output_tokens) for _, u in charged) == [(300, 40), (1000, 200)]
+    shown = sorted((model, u.input_tokens, u.output_tokens) for model, u in charged)
+    assert shown == [("fake-model", 300, 40), ("fake-model", 1000, 200)]
 
 
 # Audience checks (issue #20): the closed list and the refusal are pre-filtered by audience.
