@@ -92,7 +92,8 @@ def test_eval_runs_every_case_on_the_fake_model_without_cograil_live(
     monkeypatch.chdir(ROOT)  # the default golden set is tests/evals/<workspace name>.jsonl
     result = runner.invoke(app, ["eval", "workspaces/example-smb"])
     assert result.exit_code == 0, result.output
-    assert "level fake, 31 cases" in result.output and "passed 31/31" in result.output
+    assert f"level fake, {len(CASES)} cases" in result.output
+    assert f"passed {len(CASES)}/{len(CASES)}" in result.output
 
 
 class LiveStandIn:

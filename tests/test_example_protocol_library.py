@@ -80,8 +80,13 @@ async def test_every_library_case_passes_on_the_fake_model(name: str) -> None:
     assert [(r.id, r.mismatches) for r in results if not r.passed] == []
 
 
+# example-smb's notifier is an in-process mock that writes nowhere, so it is not gated; the
+# enterprise notifier is a real REST write and is (see example-enterprise/tools.yaml).
+UNGATED_MOCKS = {("example-smb", "notify.send")}
+
+
 @pytest.mark.parametrize("name", WORKSPACES)
-def test_a_write_in_the_library_is_gated(name: str) -> None:
+def test_every_write_in_the_library_is_gated_except_the_mock_notifier(name: str) -> None:
     workspace = _workspace(name)
     tools = {t.name: t for t in workspace.tools}
     library: list[Protocol] = [p for p in workspace.protocols if p.name in LIBRARY]
@@ -90,13 +95,23 @@ def test_a_write_in_the_library_is_gated(name: str) -> None:
         for protocol in library
         for step in protocol.steps
         for tool in step.tools
-        if tools[tool].scope == "write" and tool != "notify.send"
+        if tools[tool].scope == "write" and (name, tool) not in UNGATED_MOCKS
     }
     assert written and all(tools[t].confirm_before_write for t in written)
 
 
+@pytest.mark.parametrize("name", WORKSPACES)
+def test_the_example_hris_submits_leave_once_per_request_id(name: str) -> None:
+    hris = _load_tool(name, "hris")
+    first = hris.submit_leave("alice", "2026-11-02", "2026-11-04", "annual", "req-1")
+    assert hris.submit_leave("alice", "2026-11-02", "2026-11-04", "annual", "req-1") is first
+    assert hris.get_balance("alice")["annual"] == 22
+    with pytest.raises(ToolExecutionError, match="insufficient annual balance"):
+        hris.submit_leave("alice", "2026-11-02", "2026-12-31", "annual", "req-2")
+
+
 def test_the_example_access_register_is_idempotent_and_refuses_what_is_held() -> None:
-    it = _load_it()
+    it = _load_tool("example-smb", "it")
     first = it.request_access("alice", "crm", "read", "req-1")
     assert it.request_access("alice", "crm", "read", "req-1") is first
     with pytest.raises(ToolExecutionError, match="already holds"):
@@ -105,8 +120,9 @@ def test_the_example_access_register_is_idempotent_and_refuses_what_is_held() ->
         it.request_access("alice", "mainframe", "read", "req-3")
 
 
-def _load_it() -> Any:
-    spec = importlib.util.spec_from_file_location("it", ROOT / "workspaces/example-smb/tools/it.py")
+def _load_tool(workspace: str, module_name: str) -> Any:
+    path = ROOT / "workspaces" / workspace / "tools" / f"{module_name}.py"
+    spec = importlib.util.spec_from_file_location(f"{workspace}_{module_name}", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

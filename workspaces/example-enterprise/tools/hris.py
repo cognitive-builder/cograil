@@ -21,25 +21,12 @@ BALANCES: dict[str, dict[str, int]] = {
     "bob": {"annual": 20, "sick": 10},
     "carol": {"annual": 15, "sick": 10},
 }
-MANAGERS: dict[str, str] = {
-    "alice": "bob",
-    "bob": "carol",
-    "carol": "hr-ops@example.com",
-}
 _SUBMITTED: dict[tuple[str, str], dict[str, Any]] = {}
 
 
 def get_balance(employee: str) -> dict[str, int]:
     """Days remaining per tracked leave type, as of the last submit."""
     return dict(_balances(employee))
-
-
-def get_manager(employee: str) -> dict[str, str]:
-    """The approving manager for an employee."""
-    manager = MANAGERS.get(employee)
-    if manager is None:
-        raise ToolExecutionError(f"unknown employee {employee!r}")
-    return {"employee": employee, "manager": manager}
 
 
 def submit_leave(
