@@ -18,6 +18,7 @@ from cograil.domain import (
     Principal,
     Run,
     RunStatus,
+    Tiers,
     Tool,
     Trigger,
 )
@@ -186,6 +187,27 @@ async def test_a_run_that_escalates_on_a_loop_bound_keeps_the_call_that_breached
     stored = await store.get_run("r1")
     assert run_usage(stored) == RunUsage(input_tokens=10, output_tokens=5)
     assert stored.cost_usd == pytest.approx(15 * PER_TOKEN)
+
+
+async def test_a_call_on_an_unpriced_model_keeps_its_tokens_on_the_escalated_run(
+    store: InMemoryRunStore,
+) -> None:
+    # The harness prices every tier model, but the provider reports fake-model, which has no
+    # price: the turn's 15 tokens reach the Run's tally at $0, then the bound escalates (#240).
+    harness = Harness(tiers=Tiers(small="other-model", standard="other-model",
+                                  strong="other-model"),
+                      pricing={"other-model": ONE_DOLLAR},
+                      loop=LoopBounds(usd_budget_per_run=1.0))  # fmt: skip
+    provider = FakeProvider([scripted("12 days")])
+    run = await Runner(provider, ToolRegistry(store), store, HARPER, harness=harness).run(
+        "r1", parse_protocol('Protocol: leave_request\n1. Step "A": Answer.')
+    )
+    assert run.status is RunStatus.escalated and len(provider.calls) == 1
+    stored = await store.get_run("r1")
+    assert run_usage(stored) == RunUsage(input_tokens=10, output_tokens=5)
+    assert stored.cost_usd == 0.0
+    [bounded] = [e for e in await store.list_audit_events("r1") if e.kind == "loop.bounded"]
+    assert bounded.detail["bound"] == "usd_budget_per_run"
 
 
 async def test_the_dollar_budget_counts_a_runs_redactions(store: InMemoryRunStore) -> None:
