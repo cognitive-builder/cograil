@@ -149,7 +149,9 @@ async def test_a_runs_redaction_calls_are_charged_to_it(store: InMemoryRunStore)
     expected = RunUsage(input_tokens=2 * 10 + 4 * 1000, output_tokens=2 * 5 + 4 * 100)
     stored = await store.get_run("r1")
     assert run_usage(stored) == expected
-    assert stored.cost_usd == pytest.approx(expected.total_tokens * PER_TOKEN)
+    assert stored.cost_usd == pytest.approx(
+        (expected.input_tokens + expected.output_tokens) * PER_TOKEN
+    )
 
 
 async def test_a_run_that_fails_keeps_the_spend_of_its_calls(store: InMemoryRunStore) -> None:
@@ -165,7 +167,9 @@ async def test_a_run_that_fails_keeps_the_spend_of_its_calls(store: InMemoryRunS
     expected = RunUsage(input_tokens=2 * 10 + 2 * 1000, output_tokens=2 * 5 + 2 * 100)
     assert stored.status is RunStatus.failed and len(redactor.calls) == 2
     assert run_usage(stored) == expected
-    assert stored.cost_usd == pytest.approx(expected.total_tokens * PER_TOKEN)
+    assert stored.cost_usd == pytest.approx(
+        (expected.input_tokens + expected.output_tokens) * PER_TOKEN
+    )
 
 
 async def test_a_run_that_escalates_on_a_loop_bound_keeps_the_call_that_breached_it(
