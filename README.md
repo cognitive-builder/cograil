@@ -165,7 +165,7 @@ Cograil is built in four phases, ending with the v0.4 launch on November 3, 2026
 - A Context Graph: decision traces a Protocol may consult, with decay and review policy.
 - A workspace pack registry: install an example pack with one command.
 
-The v0.5 plan is being scoped in the open on the issue tracker. For the detail, see `docs/Product Plan.md`.
+The v0.5 plan is being scoped in the open in issue #43. For the detail, see `docs/Product Plan.md`.
 
 ## Learn more
 
